@@ -56,8 +56,36 @@ Además del panel en el navegador hay una **app de escritorio** que lanza el
 servidor y abre el panel en su propia ventana, sin necesitar Chrome:
 
 ```
-electron/dist/MiDescargador-2.0.0-portable.exe   ← .exe portable listo
+electron/dist/MiDescargador-Setup-2.0.1.exe     ← instalador (con auto-update)
+electron/dist/MiDescargador-2.0.1-portable.exe  ← portable (sin auto-update)
 ```
+
+### Auto-actualización
+
+La **versión instalada** (Setup) se actualiza sola: al arrancar y cada 4 horas
+consulta los releases de GitHub, avisa cuando hay versión nueva, la descarga
+en segundo plano y al reiniciar instala y vuelve a abrir la app. Tus datos
+(config, logs, descargas) viven fuera de la carpeta de la app y nunca se tocan.
+
+El **portable** no puede auto-actualizarse (se auto-extrae a una carpeta
+temporal y no puede reemplazarse a sí mismo); descarga la versión nueva
+manualmente cuando haya.
+
+Para publicar una versión nueva (requiere `gh` autenticado):
+
+```
+cd electron
+npm run dist                                   # genera Setup + portable + latest.yml
+gh release create vX.Y.Z \
+  dist/MiDescargador-Setup-X.Y.Z.exe \
+  dist/MiDescargador-Setup-X.Y.Z.exe.blockmap \
+  dist/MiDescargador-X.Y.Z-portable.exe \
+  dist/latest.yml \
+  --repo luiggiberaldi/Midescargador --title "MiDescargador X.Y.Z"
+```
+
+Las apps instaladas detectan el release nuevo automáticamente (sin firmar,
+Windows puede pedir confirmación: *Más información → Ejecutar de todas formas*).
 
 - La app (Electron) lanza el backend compilado (`servidor.exe`, hecho con
   PyInstaller) y muestra el panel en `http://127.0.0.1:17890`. Al cerrar la
