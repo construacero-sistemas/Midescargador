@@ -1,0 +1,1580 @@
+# -*- coding: utf-8 -*-
+"""
+MiDescargador - Servidor local.
+Sirve la interfaz web en http://127.0.0.1:17890 y la API REST que la
+extensión de Chrome usa para añadir descargas.
+
+API:
+  POST /api/descargar   {"url", "segmentos"?, "carpeta"?}
+  GET  /api/estado
+  POST /api/pausar      {"id"}
+  POST /api/reanudar    {"id"}
+  POST /api/cancelar    {"id"}
+  POST /api/borrar      {"id"}        (quita de la lista)
+  POST /api/abrir       {"id"}        (abre la carpeta en el explorador)
+"""
+
+import json
+import os
+import re
+import sys
+import time
+import uuid
+import tempfile
+import subprocess
+import threading
+import urllib.parse
+import concurrent.futures as _futuros
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import motor
+import hosters
+import mega
+import zonaleros
+import cuenta
+import descomprimir
+import torrents
+
+PUERTO = 17890
+CARPETA_DEFECTO = os.path.join(os.path.expanduser("~"), "Downloads", "MiDescargador")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+
+def _base_dir():
+    """Dónde viven los recursos del programa. En modo empaquetado
+    (PyInstaller) los binarios y el panel se extraen a sys._MEIPASS."""
+    if getattr(sys, "_MEIPASS", None):
+        return sys._MEIPASS
+    return BASE_DIR
+
+
+def _dir_datos():
+    """Carpeta de datos persistentes (logs): en el empaquetado el _MEIPASS es
+    temporal, así que los logs van a %LOCALAPPDATA%\MiDescargador."""
+    if getattr(sys, "_MEIPASS", None):
+        d = os.path.join(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()),
+                         "MiDescargador")
+        try:
+            os.makedirs(d, exist_ok=True)
+        except OSError:
+            pass
+        return d
+    return BASE_DIR
+
+
+LOG_RUTA = os.path.join(_dir_datos(), "errores.log")
+LOG_SERVIDOR = os.path.join(_dir_datos(), "servidor.log")
+LOG_MAX = 400          # máximo de líneas que se guardan
+
+
+def _log_servidor(msg):
+    """Anota arranque/parada/fallos del servidor en servidor.log, para que
+    'no arranca' deje rastro aunque la ventana de consola se cierre."""
+    try:
+        with open(LOG_SERVIDOR, "a", encoding="utf-8") as f:
+            f.write("[%s] %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg))
+    except Exception:
+        pass
+
+
+def _registrar_error(trabajo):
+    """Escribe un error en errores.log con hora, id, url y detalle."""
+    try:
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        url = getattr(trabajo, "url", "?")
+        tid = getattr(trabajo, "id", "?")
+        err = (getattr(trabajo, "error", None) or "?").replace("\n", " ")
+        linea = f"[{ts}] id={tid} url={url}\n    ERROR: {err}\n"
+        with open(LOG_RUTA, "a", encoding="utf-8") as f:
+            f.write(linea)
+        _recortar_log()
+    except Exception:
+        pass
+
+
+motor.on_error = _registrar_error        # el motor avisa aquí cuando algo falla
+
+
+def _recortar_log():
+    try:
+        with open(LOG_RUTA, "r", encoding="utf-8") as f:
+            lineas = f.readlines()
+        if len(lineas) > LOG_MAX * 2:
+            with open(LOG_RUTA, "w", encoding="utf-8") as f:
+                f.writelines(lineas[-LOG_MAX * 2:])
+    except Exception:
+        pass
+
+
+def _leer_log(n=200):
+    try:
+        with open(LOG_RUTA, "r", encoding="utf-8", errors="replace") as f:
+            lineas = f.read().splitlines()
+        return lineas[-n:]
+    except OSError:
+        return []
+
+# Dominios de páginas que casi siempre necesitan yt-dlp (videos, mediafire...)
+DOMINIOS_YTDLP = (
+    "youtube.com", "youtu.be", "tiktok.com", "instagram.com", "instagr.am",
+    "facebook.com", "fb.watch", "twitter.com", "x.com", "twitch.tv",
+    "vimeo.com", "dailymotion.com", "mediafire.com", "soundcloud.com",
+    "bilibili.com", "reddit.com", "pinterest.com", "threads.net",
+    "vk.com", "rumble.com", "kick.com",
+)
+
+
+def _usar_ytdlp(url):
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    return any(host == d or host.endswith("." + d) for d in DOMINIOS_YTDLP)
+
+
+def _es_cdn_directo(url):
+    """URLs tipo downloadN.host.com/... son CDNs de archivos directos
+    (MediaFire, etc.): van al motor segmentado, no a yt-dlp."""
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    return (host.startswith("download")
+            or host.startswith("srv")
+            or host.startswith("dl")
+            or "userstorage" in host)
+
+
+def _es_mega(url):
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    return any(host == d or host.endswith("." + d)
+               for d in ("mega.nz", "mega.co.nz", "mega.io"))
+
+
+# ---------------------------------------------------------- servidor origen
+# nombre amigable del servidor desde el que se descarga
+SERVIDORES = [
+    ("youtube.com", "YouTube"), ("youtu.be", "YouTube"),
+    ("tiktok.com", "TikTok"), ("instagram.com", "Instagram"),
+    ("instagr.am", "Instagram"), ("facebook.com", "Facebook"),
+    ("fb.watch", "Facebook"), ("twitter.com", "Twitter"),
+    ("x.com", "X"), ("twitch.tv", "Twitch"), ("vimeo.com", "Vimeo"),
+    ("dailymotion.com", "Dailymotion"), ("soundcloud.com", "SoundCloud"),
+    ("bilibili.com", "Bilibili"), ("reddit.com", "Reddit"),
+    ("pinterest.com", "Pinterest"), ("threads.net", "Threads"),
+    ("vk.com", "VK"), ("rumble.com", "Rumble"), ("kick.com", "Kick"),
+    ("mediafire.com", "MediaFire"), ("mega.nz", "Mega"),
+    ("mega.co.nz", "Mega"), ("rootz.so", "Rootz"),
+    ("fireload.com", "Fireload"), ("megaup.net", "MegaUp"),
+    ("gofile.io", "GoFile"),
+]
+
+
+def _nombre_servidor(url):
+    host = (urllib.parse.urlparse(url or "").hostname or "").lower()
+    if not host:
+        return None
+    for d, nombre in SERVIDORES:
+        if host == d or host.endswith("." + d):
+            return nombre
+    # dominio base genérico (ej. download1234.mediafire.com -> mediafire.com)
+    partes = host.split(".")
+    if len(partes) > 2:
+        return ".".join(partes[-2:])
+    return host
+
+
+def _ytdlp_disponible():
+    import shutil
+    if shutil.which("yt-dlp") or shutil.which("ytdlp"):
+        return True
+    base = _base_dir()
+    for p in (os.path.join(base, "venv", "Scripts", "yt-dlp.exe"),
+              os.path.join(base, "venv", "bin", "yt-dlp")):
+        if os.path.exists(p):
+            return True
+    return False
+
+
+def _cmd_ytdlp():
+    """Devuelve cómo invocar yt-dlp (prioriza el venv del proyecto)."""
+    base = _base_dir()
+    for p in (os.path.join(base, "venv", "Scripts", "yt-dlp.exe"),
+              os.path.join(base, "venv", "bin", "yt-dlp")):
+        if os.path.exists(p):
+            return [p]
+    import shutil
+    for nombre in ("yt-dlp", "ytdlp"):
+        p = shutil.which(nombre)
+        if p:
+            return [p]
+    return ["yt-dlp"]
+
+
+# ---------------------------------------------------------- organización
+# Categorías por extensión de archivo (para carpetas automáticas)
+CATEGORIAS = [
+    ("Videos", (".mp4", ".mkv", ".webm", ".avi", ".mov", ".wmv", ".flv",
+                 ".m4v", ".mpg", ".mpeg", ".ts", ".3gp", ".ogv")),
+    ("Musica", (".mp3", ".m4a", ".aac", ".flac", ".wav", ".ogg", ".opus",
+                 ".wma", ".aiff")),
+    ("Imagenes", (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp",
+                   ".svg", ".heic", ".tiff", ".ico")),
+    ("Comprimidos", (".zip", ".rar", ".7z", ".tar", ".gz", ".bz2",
+                      ".xz", ".zst", ".iso", ".cab", ".tgz")),
+    ("Documentos", (".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt",
+                     ".pptx", ".txt", ".md", ".csv", ".epub", ".odt")),
+    ("Programas", (".exe", ".msi", ".apk", ".bat", ".cmd", ".deb",
+                    ".rpm", ".dmg", ".jar")),
+    ("Otros", ()),
+]
+
+ORGANIZAR_POR_TIPO = True   # se puede cambiar desde el panel
+DESCOMPRESION_AUTO = False  # descomprimir automáticamente al terminar
+PASSWORD_DESCOMPRESION = ""  # contraseña para comprimidos protegidosCONFIG_RUTA = os.path.join(_dir_datos(), "config.json")
+
+
+def _cargar_config():
+    """Carga la configuración persistida (organizar, simultáneas,
+    descompresión y contraseña) desde config.json si existe."""
+    global ORGANIZAR_POR_TIPO, MAX_SIMULTANEAS
+    global DESCOMPRESION_AUTO, PASSWORD_DESCOMPRESION
+    try:
+        with open(CONFIG_RUTA, encoding="utf-8") as f:
+            c = json.load(f)
+        ORGANIZAR_POR_TIPO = bool(c.get("organizar", ORGANIZAR_POR_TIPO))
+        MAX_SIMULTANEAS = max(1, min(int(c.get(
+            "max_simultaneas", MAX_SIMULTANEAS)), 10))
+        DESCOMPRESION_AUTO = bool(c.get(
+            "descompresion_auto", DESCOMPRESION_AUTO))
+        PASSWORD_DESCOMPRESION = str(c.get(
+            "password_descompresion", "") or "")
+    except Exception:
+        pass
+
+
+def _guardar_config():
+    """Persiste la configuración actual a config.json."""
+    try:
+        with open(CONFIG_RUTA, "w", encoding="utf-8") as f:
+            json.dump({
+                "organizar": ORGANIZAR_POR_TIPO,
+                "max_simultaneas": MAX_SIMULTANEAS,
+                "descompresion_auto": DESCOMPRESION_AUTO,
+                "password_descompresion": PASSWORD_DESCOMPRESION,
+            }, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _categoria(nombre):
+    ext = os.path.splitext(nombre or "")[1].lower()
+    for cat, exts in CATEGORIAS:
+        if ext in exts:
+            return cat
+    return "Otros"
+
+
+def _organizar(trabajo):
+    """Mueve el archivo descargado a su subcarpeta por tipo (Videos, etc.)."""
+    if not ORGANIZAR_POR_TIPO:
+        return
+    nombre = getattr(trabajo, "nombre", None) or getattr(trabajo, "_nombre", None)
+    carpeta = getattr(trabajo, "carpeta", None)
+    if not nombre or not carpeta or not os.path.isdir(carpeta):
+        return
+    origen = os.path.join(carpeta, nombre)
+    if not os.path.exists(origen):
+        # yt-dlp pudo nombrar el archivo distinto. Buscar por TÍTULO
+        # (el template es %(title).120s.%(ext)s) y NUNCA tocar .part de
+        # otra descarga en curso
+        try:
+            candidatos = [os.path.join(carpeta, f) for f in os.listdir(carpeta)
+                          if os.path.isfile(os.path.join(carpeta, f))
+                          and not f.endswith(".part")]
+            if not candidatos:
+                return
+            nombre_base = (nombre or "").strip()[:120]
+            por_titulo = [c for c in candidatos
+                          if nombre_base and os.path.basename(c).startswith(nombre_base)]
+            if por_titulo:
+                origen = max(por_titulo, key=os.path.getmtime)
+            else:
+                origen = max(candidatos, key=os.path.getmtime)
+        except Exception:
+            return
+    sub = os.path.join(carpeta, _categoria(os.path.basename(origen)))
+    # registrar la categoría real en el trabajo para el panel
+    try:
+        trabajo.categoria = os.path.basename(sub)
+    except Exception:
+        pass
+    if sub == carpeta:
+        try:
+            trabajo._archivo_final = origen
+        except Exception:
+            pass
+        return
+    try:
+        os.makedirs(sub, exist_ok=True)
+        destino = os.path.join(sub, os.path.basename(origen))
+        if os.path.abspath(origen) != os.path.abspath(destino):
+            os.replace(origen, destino)
+        try:
+            trabajo._archivo_final = destino   # donde quedó el archivo
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+motor.on_completada = _organizar        # y aquí cuando termina bien
+mega.on_error = _registrar_error        # mega avisa aquí cuando algo falla
+mega.on_completada = _organizar
+
+
+def _al_error(trabajo):
+    try:
+        _registrar_error(trabajo)
+    except Exception:
+        pass
+    _procesar_cola()   # un fallo libera hueco: entra la siguiente
+
+
+def _cookies_sesion_activas():
+    """Argumentos --cookies de las sesiones activas (YouTube y TikTok).
+    Cada elemento es una lista de argumentos extra para yt-dlp."""
+    extras = []
+    for p in ("youtube", "tiktok"):
+        if cuenta._sesion_activa(p):
+            extras.append(["--cookies", cuenta._ruta_cookies(p)])
+    return extras
+
+
+def _variantes_ytdlp():
+    """Estrategias de extractor para evitar el 403 anti-bot de YouTube.
+    Cada elemento es una lista de argumentos extra para yt-dlp.
+    """
+    variantes = [
+        # cliente android: funciona sin cookies y esquiva el 403 anti-bot
+        ["--extractor-args", "youtube:player_client=android"],
+        # cliente web + android con fallback (el más compatible)
+        ["--extractor-args", "youtube:player_client=default,android"],
+        # cliente tv (otro camino, a veces esquiva el bloqueo)
+        ["--extractor-args", "youtube:player_client=tv"],
+    ]
+    # sesiones iniciadas (YouTube/TikTok) como respaldo
+    variantes.extend(_cookies_sesion_activas())
+    return variantes
+
+
+def _ruta_ffmpeg():
+    """Localiza ffmpeg como ffmpeg.exe (copia local con el nombre que yt-dlp espera)."""
+    base = _base_dir()
+    local = os.path.join(base, "bin", "ffmpeg.exe")
+    if os.path.exists(local):
+        return local
+    try:
+        import imageio_ffmpeg
+        origen = imageio_ffmpeg.get_ffmpeg_exe()
+        os.makedirs(os.path.dirname(local), exist_ok=True)
+        import shutil
+        shutil.copy2(origen, local)
+        return local
+    except Exception:
+        import shutil
+        return shutil.which("ffmpeg")
+
+
+# caché de calidades por video: consultar el mismo enlace otra vez es instantáneo
+_FORMATOS_CACHE = {}        # clave -> (timestamp, lista, titulo)
+_FORMATOS_CACHE_TTL = 1800  # 30 minutos
+_FORMATOS_LOCK = threading.Lock()
+
+
+def _clave_video(url):
+    """Clave de caché: el ID del video para YouTube, la URL completa si no."""
+    import re as _re
+    m = _re.search(r"(?:v=|youtu\.be/|shorts/)([\w-]{11})", url)
+    return m.group(1) if m else url
+
+
+def _ytdlp_info(url, extra, timeout=30):
+    """Una consulta -J a yt-dlp con un cliente concreto. Devuelve
+    (json, stderr) o (None, stderr) si falla/expira."""
+    cmd = _cmd_ytdlp() + [
+        "--no-playlist", "--no-warnings", "--skip-download", "-J",
+    ] + extra + [url]
+    try:
+        r = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=timeout,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if r.returncode != 0:
+            return None, r.stderr or ""
+        return json.loads(r.stdout), ""
+    except Exception as e:
+        return None, str(e)
+
+
+def _formato_sin_marca(selector):
+    """Preferir formatos SIN marca de agua (TikTok marca el suyo con
+    format_note='watermarked'): aplica el filtro a cada alternativa del
+    selector y deja el selector original como último recurso, para que si
+    solo existe la versión con marca se descargue igual en vez de fallar."""
+    if not selector:
+        return selector
+    ramas = [r for r in selector.split("/") if r.strip()]
+    return ("/".join(r + "[format_note!=watermarked]" for r in ramas)
+            + "/" + selector)
+
+
+def _fusionar_formatos(info, mejores):
+    """Vuelca los formatos de un JSON de yt-dlp en el diccionario de mejores
+    por altura, prefiriendo mp4 y el tamaño mayor."""
+    for f in info.get("formats") or []:
+        if (f.get("vcodec") or "none") == "none":
+            continue
+        h = f.get("height") or 0
+        if h <= 0:
+            continue
+        ext = f.get("ext") or "?"
+        tam = f.get("filesize") or f.get("filesize_approx")
+        actual = mejores.get(h)
+        if actual is None:
+            mejores[h] = (ext, tam)
+        elif ext == "mp4" and actual[0] != "mp4":
+            mejores[h] = (ext, tam)
+        elif ext == actual[0] and tam and (not actual[1] or tam > actual[1]):
+            mejores[h] = (ext, tam)
+
+
+def _formatos(url):
+    """Consulta a yt-dlp TODAS las resoluciones disponibles del video, rápido:
+    los dos clientes principales corren EN PARALELO (≈ 2-3 s en vez de 4
+    secuenciales), los demás solo como respaldo, y el resultado se guarda
+    en caché 30 minutos por video. Devuelve
+    [{"altura", "etiqueta", "ext", "tamano", "formato"}] o [] si falla.
+    """
+    clave = _clave_video(url)
+    with _FORMATOS_LOCK:
+        if clave in _FORMATOS_CACHE:
+            ts, lista, _titulo = _FORMATOS_CACHE[clave]
+            if time.time() - ts < _FORMATOS_CACHE_TTL:
+                return lista
+
+    variantes = [
+        ["--extractor-args", "youtube:player_client=default,android"],
+        ["--extractor-args", "youtube:player_client=android"],
+        ["--extractor-args", "youtube:player_client=tv"],
+        ["--cookies-from-browser", "chrome",
+         "--extractor-args", "youtube:player_client=default,android"],
+    ]
+    # si hay sesión de Google iniciada (botón 🔑), pruébala antes que los
+    # clientes sin sesión — pasa los videos bloqueados por el anti-bot
+    if cuenta._sesion_activa("youtube"):
+        variantes.insert(2, ["--cookies", cuenta._ruta_cookies("youtube"),
+                             "--extractor-args",
+                             "youtube:player_client=default,android"])
+    if cuenta._sesion_activa("tiktok"):
+        variantes.append(["--cookies", cuenta._ruta_cookies("tiktok")])
+    mejores = {}   # altura -> (ext, tamano)
+    titulo = None
+    errores = []
+
+    def _correr(extras):
+        nonlocal titulo
+        info, err = _ytdlp_info(url, extras)
+        if err:
+            errores.append(err)
+        if info:
+            _fusionar_formatos(info, mejores)
+            if not titulo:
+                titulo = info.get("title") or None
+
+    # 1) vía rápida: los dos clientes más fiables, en paralelo.
+    #    Normalmente el primero responde en 1-3 s con todas las calidades.
+    ex = _futuros.ThreadPoolExecutor(max_workers=2)
+    futuros = [ex.submit(_correr, v) for v in variantes[:2]]
+    _futuros.wait(futuros, timeout=20)
+    ex.shutdown(wait=False)
+
+    # 2) respaldo (solo si no salió nada): tv y cookies de Chrome, en paralelo
+    if not mejores:
+        ex2 = _futuros.ThreadPoolExecutor(max_workers=2)
+        futuros2 = [ex2.submit(_correr, v) for v in variantes[2:]]
+        _futuros.wait(futuros2, timeout=25)
+        ex2.shutdown(wait=False)
+
+    if not mejores:
+        # si YouTube pide iniciar sesión, dímoselo claro (no es un error
+        # de red ni nuestro)
+        texto = "\n".join(errores)
+        if "Sign in to confirm" in texto or "confirm you" in texto:
+            return {"error": ("YouTube pide iniciar sesión para este video "
+                              "('Sign in to confirm you're not a bot'). "
+                              "Pulsa el botón 🔑 Sesión y entra con tu "
+                              "cuenta de Google, o abre el video en Chrome "
+                              "e inicia sesión; luego reintenta.")}
+        return []
+    lista = []
+    for h in sorted(mejores, reverse=True):
+        ext, tam = mejores[h]
+        lista.append({
+            "altura": h,
+            "etiqueta": f"{h}p · {ext}",
+            "ext": ext,
+            "tamano": tam,
+            # altura EXACTA primero (para que no baje de resolución en
+            # silencio), y si ese cliente no la expone, cae a la mejor <=h:
+            # así una 4K no falla solo porque el cliente android no la traiga
+            "formato": _formato_sin_marca(
+                f"bv[height={h}]+ba/bv[height<={h}]+ba/b"),
+        })
+    lista.append({"altura": 0, "etiqueta": "Solo audio (mp3)",
+                  "ext": "mp3", "tamano": None, "formato": "audio"})
+    with _FORMATOS_LOCK:
+        _FORMATOS_CACHE[clave] = (time.time(), lista, titulo)
+    return lista
+
+
+# ------------------------------------------------------- enlaces (zona-leros)
+# URLs que claramente no son una página de juego (imágenes, comprimidos...):
+# extraer enlaces de ellas lanzaría Chrome para nada.
+_EXT_ARCHIVO = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg",
+                ".avif", ".ico", ".zip", ".rar", ".7z", ".tar", ".gz",
+                ".exe", ".mp4", ".mkv", ".pdf")
+
+
+def _es_url_archivo(url):
+    p = urllib.parse.urlparse(url).path.lower()
+    return p.endswith(_EXT_ARCHIVO)
+
+
+_HILO_SESION = None          # hilo del inicio de sesión de Google
+_ENLACES_CACHE = {}          # url -> (timestamp, resultado)
+_ENLACES_TTL = 12 * 3600     # 12 horas: los enlaces rara vez cambian
+_ENLACES_LOCK = threading.Lock()
+_ENLACES_TAREAS = {}         # id -> {url, estado, resultado, ts} (en curso)
+
+
+def _enlaces_zonaleros(url):
+    """(síncrono) Lista los enlaces de descarga de una página de zona-leros.com.
+    Usa el Chrome real del usuario para pasar Cloudflare; el resultado se
+    guarda en caché 12 horas (la extracción tarda ~1-3 minutos)."""
+    if "zona-leros.com" not in url:
+        return {"error": "no parece un enlace de zona-leros.com"}
+    with _ENLACES_LOCK:
+        if url in _ENLACES_CACHE:
+            ts, r = _ENLACES_CACHE[url]
+            if time.time() - ts < _ENLACES_TTL:
+                return r
+        resultado = zonaleros.extraer(url)
+        # solo se cachea si salió al menos un enlace (una extracción vacía
+        # no merece quedar guardada)
+        if (not resultado.get("error") and any(
+                s.get("enlaces") for s in resultado.get("servidores", []))):
+            _ENLACES_CACHE[url] = (time.time(), resultado)
+        return resultado
+
+
+def _enlaces_lanzar(url):
+    """Devuelve la extracción si ya está en caché, o la arranca en un hilo
+    y devuelve un id de tarea para sondearla. Así el panel no mantiene una
+    conexión HTTP de 1-3 minutos que se cae con 'Failed to fetch' cuando
+    el servidor se reinicia o la red hace un corte transitorio."""
+    if "zona-leros.com" not in url:
+        return {"error": "no parece un enlace de zona-leros.com"}
+    if _es_url_archivo(url):
+        return {"error": ("esa URL es un archivo o imagen, no una página de "
+                          "juego. Pega la URL de la página "
+                          "(ej. .../juegos-pc/<nombre-del-juego>).")}
+    with _ENLACES_LOCK:
+        if url in _ENLACES_CACHE:
+            ts, r = _ENLACES_CACHE[url]
+            if time.time() - ts < _ENLACES_TTL:
+                return r
+    # si ya hay una extracción en curso de esta misma url, reusa la tarea
+    for tid, t in list(_ENLACES_TAREAS.items()):
+        if t.get("url") == url and t["estado"] == "trabajando":
+            return {"tarea": tid}
+    tid = uuid.uuid4().hex[:8]
+    _ENLACES_TAREAS[tid] = {"url": url, "estado": "trabajando",
+                            "resultado": None, "ts": time.time()}
+
+    def _trabajo():
+        try:
+            _ENLACES_TAREAS[tid]["resultado"] = _enlaces_zonaleros(url)
+        except Exception as e:
+            _ENLACES_TAREAS[tid]["resultado"] = {
+                "error": "error extrayendo: %s" % e}
+        finally:
+            _ENLACES_TAREAS[tid]["estado"] = "listo"
+            _ENLACES_TAREAS[tid]["ts"] = time.time()
+
+    threading.Thread(target=_trabajo, daemon=True).start()
+    return {"tarea": tid}
+
+
+def _estado_enlaces_tarea(tid):
+    """Devuelve (datos, codigo) del estado de una extracción en curso."""
+    t = _ENLACES_TAREAS.get(tid)
+    if not t:
+        return {"error": "tarea no encontrada"}, 404
+    if t["estado"] == "trabajando":
+        return {"estado": "trabajando"}, 200
+    # limpieza de tareas viejas (más de 1 hora) para no acumular memoria
+    for k, v in list(_ENLACES_TAREAS.items()):
+        if time.time() - v["ts"] > 3600:
+            _ENLACES_TAREAS.pop(k, None)
+    return {"estado": "listo", "resultado": t["resultado"]}, 200
+
+
+class _TrabajoYtdlp:
+    """Descarga vía yt-dlp (videos, MediaFire, etc.) con progreso por líneas."""
+
+    def __init__(self, url, carpeta, formato=None, conexiones=None):
+        self.id = uuid.uuid4().hex[:8]
+        self.url = url
+        self.carpeta = carpeta
+        self.formato = formato or "mejor"
+        self.conexiones = conexiones or 8
+        self.nombre = urllib.parse.urlparse(url).path.rsplit("/", 1)[-1] or "video"
+        self.total = None
+        self.descargado = 0
+        self.velocidad = 0.0
+        self.estado = "esperando"
+        self.error = None
+        self._proc = None
+        self._hilo = None
+        self._cancelar = threading.Event()
+        self._salida = []
+        self._cmd_activo = None     # comando que se está/reanudará usando
+        self._reanudando = False
+        self._pausado = False
+        # acumulación de progreso multi-stream (video + audio)
+        self._archivo_progreso = None
+        self._descargado_archivo = 0
+        self._total_archivo = 0
+        self._acum_descargado = 0
+        self._acum_total = 0
+        self.calidad = None
+        self.calidad_real = None   # resolución REAL leída con ffmpeg al terminar
+        self._archivo_final = None
+
+    def iniciar(self):
+        self._hilo = threading.Thread(target=self._run, daemon=True)
+        self._hilo.start()
+        return self
+
+    def _obtener_titulo(self):
+        """Pide el título real a yt-dlp sin descargar nada (rápido)."""
+        # si ya se consultaron las calidades de este video, el título ya está
+        # en caché (viene en el mismo JSON) -> cero segundos
+        with _FORMATOS_LOCK:
+            clave = _clave_video(self.url)
+            if clave in _FORMATOS_CACHE:
+                ts, _lista, titulo = _FORMATOS_CACHE[clave]
+                if time.time() - ts < _FORMATOS_CACHE_TTL and titulo:
+                    return titulo[:120]
+        env = dict(os.environ)
+        env["PYTHONIOENCODING"] = "utf-8"
+        for extra in _variantes_ytdlp():
+            try:
+                cmd = _cmd_ytdlp() + [
+                    "--no-playlist", "--no-warnings", "--skip-download",
+                    "--print", "%(title)s",
+                ] + extra + [self.url]
+                r = subprocess.run(
+                    cmd, capture_output=True, text=True, encoding="utf-8",
+                    errors="replace", timeout=90, env=env,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                if r.returncode == 0 and r.stdout.strip():
+                    return r.stdout.strip().splitlines()[0][:120]
+            except Exception:
+                continue
+        return None
+
+    def _run(self):
+        os.makedirs(self.carpeta, exist_ok=True)
+        # Al reanudar, reutilizar el comando que ya funcionaba; con
+        # --continue yt-dlp continúa el archivo .part donde quedó.
+        # Si falla (p. ej. YouTube bloquea de nuevo), cae a un intento fresco.
+        if self._cmd_activo and self._reanudando:
+            self._reanudando = False
+            self._salida = []
+            cmd = self._cmd_activo + ["--continue", "--no-overwrites"]
+            codigo, detalle = self._ejecutar(cmd)
+            if codigo == 0:
+                return
+            errores_resume = [f"reanudar: {detalle or codigo}"]
+            # intento fresco desde cero si el reanudado no funcionó
+            for intento, extra in enumerate(self._variantes()):
+                if self._cancelar.is_set() or self._pausado:
+                    return
+                cmd = self._cmd_base(extra)
+                self._cmd_activo = cmd
+                codigo, detalle = self._ejecutar(cmd)
+                if codigo == 0:
+                    return
+                if codigo == -2:
+                    return
+                errores_resume.append(f"intento {intento + 1}: {detalle or codigo}")
+            self.estado = "error"
+            self.error = "yt-dlp falló: " + " // ".join(errores_resume[-3:])
+            _registrar_error(self)
+            return
+        # título real para mostrarlo en el panel en lugar de "watch"
+        titulo = self._obtener_titulo()
+        if titulo:
+            self.nombre = titulo
+        self.estado = "descargando"
+        self._salida = []
+
+        errores = []
+        for intento, extra in enumerate(self._variantes()):
+            if self._cancelar.is_set():
+                return
+            if self._pausado:
+                return  # quedó pausado a mitad de intento
+            cmd = self._cmd_base(extra)
+            self._cmd_activo = cmd
+            # mismo cliente con reintento: si falla a mitad (caída de red,
+            # 403 puntual), se vuelve a lanzar CON --continue y retoma el
+            # .part donde quedó en lugar de descargar los GB otra vez
+            for reintento in range(3):
+                if self._cancelar.is_set() or self._pausado:
+                    return
+                reint_cmd = cmd
+                if reintento:
+                    reint_cmd = cmd + ["--continue", "--no-overwrites"]
+                codigo, detalle = self._ejecutar(reint_cmd)
+                if codigo == 0:
+                    return
+                if codigo == -2:
+                    return  # pausado por el usuario
+                if reintento < 2:
+                    time.sleep(5)   # respiro antes de retomar el .part
+            errores.append(f"intento {intento + 1}: {detalle or 'código ' + str(codigo)}")
+        # todos los intentos fallaron
+        self.estado = "error"
+        self.error = "yt-dlp falló en todos los intentos: " + " // ".join(errores[-3:])
+        _registrar_error(self)
+
+    @staticmethod
+    def _variantes():
+        """Estrategias de descarga en cadena, de la más completa a la más simple.
+        default,android expone TODAS las calidades (web primero, android de
+        respaldo contra el 403); las cookies de la sesión 🔑 van antes que
+        las de chrome (que fallan con DPAPI si el navegador está abierto).
+        """
+        variantes = [
+            ["--extractor-args", "youtube:player_client=default,android"],
+            ["--extractor-args", "youtube:player_client=android"],
+            ["--extractor-args", "youtube:player_client=tv"],
+            ["--cookies-from-browser", "chrome",
+             "--extractor-args", "youtube:player_client=default,android"],
+            [],
+        ]
+        if cuenta._sesion_activa("youtube"):
+            variantes.insert(2, ["--cookies",
+                                 cuenta._ruta_cookies("youtube"),
+                                 "--extractor-args",
+                                 "youtube:player_client=default,android"])
+        if cuenta._sesion_activa("tiktok"):
+            variantes.append(["--cookies", cuenta._ruta_cookies("tiktok")])
+        return variantes
+
+    def _cmd_base(self, extra):
+        cmd = _cmd_ytdlp() + [
+            "--newline", "--no-playlist", "--no-warnings",
+            # alta calidad = archivos de GB con miles de fragmentos:
+            # más reintentos para aguantar caídas puntuales
+            "--retries", "10", "--fragment-retries", "10",
+            "--file-access-retries", "5",
+            # descarga fragmentos en paralelo (como hace el reproductor de
+            # YouTube) — acelera mucho y es estable porque no parece bot
+            "--concurrent-fragments", str(self.conexiones or 8),
+            # progreso en JSON por línea: archivo, bajado, total, altura, velocidad
+            "--progress-template",
+            "download:{'f':'%(info.filename)s','d':%(progress.downloaded_bytes)s,"
+            "'t':%(progress.total_bytes)s,'h':'%(info.height)s',"
+            "'s':%(progress.speed)s}",
+        ]
+        if self.formato == "audio":
+            cmd += ["-f", "ba/b", "-x", "--audio-format", "mp3"]
+        elif self.formato == "mejor":
+            # prefiere el formato limpio (TikTok etiqueta el suyo como
+            # 'watermarked') y cae al con marca solo si no hay otra opción
+            cmd += ["-f", "bv*+ba[format_note!=watermarked]"
+                    "/b[format_note!=watermarked]/bv*+ba/b"]
+        else:
+            cmd += ["-f", _formato_sin_marca(self.formato)]
+        ff = _ruta_ffmpeg()
+        if ff:
+            cmd += ["--ffmpeg-location", os.path.dirname(ff)]
+        cmd += extra + [
+            "-o", os.path.join(self.carpeta, "%(title).120s.%(ext)s"),
+            self.url,
+        ]
+        return cmd
+
+    def _ejecutar(self, cmd):
+        """Ejecuta un comando yt-dlp, actualizando progreso. Devuelve (código, detalle)."""
+        self.estado = "descargando"
+        # reiniciar acumuladores por si se reintenta
+        self._archivo_progreso = None
+        self._descargado_archivo = 0
+        self._total_archivo = 0
+        self._acum_descargado = 0
+        self._acum_total = 0
+        try:
+            self._proc = subprocess.Popen(
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                text=True, encoding="utf-8", errors="replace",
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except Exception as e:
+            return -1, f"yt-dlp no disponible: {e}"
+        while True:
+            linea = self._proc.stdout.readline()
+            if not linea:
+                break
+            linea = linea.strip()
+            if linea.startswith("{'f':") and "'t':" in linea:
+                self._parsear_json(linea)
+            elif linea.startswith("ERROR"):
+                self._salida.append(linea)
+        codigo = self._proc.wait()
+        if self._pausado:
+            return -2, "pausada"
+        if codigo == 0:
+            self.estado = "completa"
+            self._verificar_y_organizar()
+            return 0, ""
+        detalle = " | ".join(self._salida[-3:])
+        return codigo, detalle
+
+    def _verificar_y_organizar(self):
+        """Lee el archivo final con ffmpeg: tamaño y resolución REALES.
+        Así comprobamos que YouTube entregó la calidad elegida (o cuál dio).
+        """
+        import re as _re
+        ff = _ruta_ffmpeg()
+        if ff and os.path.exists(self.carpeta):
+            try:
+                # preferir el archivo que vimos en el progreso; si no,
+                # el más reciente de la carpeta (evita coger el de otra
+                # descarga si hay varias corriendo a la vez)
+                cand = [os.path.join(self.carpeta, f)
+                        for f in os.listdir(self.carpeta)
+                        if os.path.isfile(os.path.join(self.carpeta, f))]
+                ruta = None
+                # 1) por el TÍTULO del video: el template de salida es
+                #    "%(title).120s.%(ext)s", así que el archivo empieza
+                #    por el nombre de la descarga. Con descargas a la vez
+                #    esto es lo único fiable (el "más reciente" puede ser
+                #    el archivo de OTRA descarga)
+                nombre_base = (self.nombre or "").strip()[:120]
+                if nombre_base:
+                    for c in cand:
+                        if os.path.basename(c).startswith(nombre_base):
+                            ruta = c
+                            break
+                # 2) por el archivo que vimos en el progreso
+                if ruta is None and self._archivo_progreso:
+                    for c in cand:
+                        if os.path.basename(c) == os.path.basename(self._archivo_progreso):
+                            ruta = c
+                            break
+                # 3) último recurso: el más reciente
+                if ruta is None and cand:
+                    ruta = max(cand, key=os.path.getmtime)
+                if ruta:
+                    self._archivo_final = ruta
+                    self.total = os.path.getsize(ruta)
+                    self.descargado = self.total
+                    # resolución real con ffmpeg -i (stderr trae los streams)
+                    r = subprocess.run(
+                        [ff, "-i", ruta], capture_output=True, text=True,
+                        encoding="utf-8", errors="replace", timeout=30,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                    m = _re.search(r"(\d{3,4})x(\d{3,4})", r.stderr)
+                    if m:
+                        h = int(m.group(2))
+                        self.calidad_real = f"{h}p"
+            except Exception:
+                pass
+        _al_completar(self)
+
+    def _parsear_json(self, linea):
+        """Procesa la línea de progreso JSON de yt-dlp.
+        Como YouTube descarga video y audio por separado, acumulamos los bytes
+        de cada stream para que la barra muestre el progreso TOTAL del archivo.
+        Usamos regex para extraer los valores (las rutas de Windows y los
+        apóstrofes en títulos romperían eval/json.loads directo).
+        El total puede venir como None (DASH de alta calidad no siempre
+        anuncia el tamaño): se tolera para que el progreso no se congele.
+        """
+        import re as _re
+        m = _re.search(
+            r"'f':'(.*?)','d':(\d+),'t':([^,]+),'h':'(.*?)','s':([^,}]+)", linea)
+        if not m:
+            return
+        fname = m.group(1)
+        try:
+            d = int(m.group(2))
+            t_raw = m.group(3).strip()
+            t = int(t_raw) if t_raw not in ("None", "NA", "") else 0
+            h = m.group(4)
+            s_raw = m.group(5).strip()
+            s = float(s_raw) if s_raw not in ("NA", "None", "") else 0.0
+        except (TypeError, ValueError):
+            return
+        if h:
+            try:
+                self.calidad = str(int(h)) + "p"
+            except (TypeError, ValueError):
+                pass
+        # categoría real en vivo: el archivo que se está bajando ya tiene
+        # extensión (ej. .webm), así la tarjeta dice "Videos" desde el inicio
+        try:
+            base = os.path.basename(fname)
+            if base and "." in base:
+                self.categoria = _categoria(base)
+        except Exception:
+            pass
+        # Detectar cambio de stream (video -> audio): cambia el nombre del
+        # archivo o el contador de bytes se reinicia (d baja). En ese caso
+        # sumamos lo ya descargado al acumulado para mostrar el TOTAL real.
+        if (self._archivo_progreso is not None
+                and (fname != self._archivo_progreso
+                     or d < self._descargado_archivo)):
+            self._acum_descargado += self._descargado_archivo
+            self._acum_total += self._total_archivo
+            self._descargado_archivo = 0
+            self._total_archivo = 0
+        self._archivo_progreso = fname
+        self._descargado_archivo = max(self._descargado_archivo, d)
+        self._total_archivo = max(self._total_archivo, t)
+        self.descargado = self._acum_descargado + self._descargado_archivo
+        self.total = (self._acum_total + self._total_archivo) if t else None
+        self.velocidad = float(s or 0)
+
+    def pausar(self):
+        self._pausado = True
+        self.estado = "pausada"
+        self._terminar()
+
+    def reanudar(self):
+        if self.estado == "pausada":
+            self._pausado = False
+            self._reanudando = True
+            self.iniciar()
+
+    def cancelar(self):
+        self._cancelar.set()
+        self.estado = "cancelada"
+        self._terminar()
+
+    def reintentar(self):
+        """Vuelve a lanzar la descarga desde cero (tras cancelar/error)."""
+        self._cancelar.clear()
+        self._pausado = False
+        self._reanudando = False
+        self._cmd_activo = None
+        self._salida = []
+        self.error = None
+        self.descargado = 0
+        self.total = None
+        self.estado = "esperando"
+        self.iniciar()
+
+    def _terminar(self):
+        if self._proc and self._proc.poll() is None:
+            try:
+                self._proc.terminate()
+            except Exception:
+                pass
+
+    def progreso(self):
+        calidad = None
+        if self.formato == "audio":
+            calidad = "mp3"
+        elif self.formato == "mejor":
+            calidad = "Mejor"
+        else:
+            import re
+            # altura EXACTA (height=1080) o el respaldo "mejor" (height<=1080)
+            m = re.search(r"height(?:<=|=)(\d+)", self.formato or "")
+            if m:
+                calidad = m.group(1) + "p"
+        # si el archivo ya se guardó, la categoría real está en self.categoria
+        categoria = getattr(self, "categoria", None) or _categoria(self.nombre)
+        return {
+            "id": self.id, "url": self.url, "nombre": self.nombre,
+            "estado": self.estado, "total": self.total,
+            "descargado": self.descargado, "velocidad": self.velocidad,
+            "eta": None, "error": self.error, "tipo": "yt-dlp",
+            "categoria": categoria,
+            "calidad": calidad,
+            "calidad_real": self.calidad_real,
+        }
+
+
+class Gestor:
+    def __init__(self):
+        self.trabajos = {}
+        self._lock = threading.Lock()
+
+    def agregar(self, url, segmentos=8, carpeta=None, formato=None,
+                iniciar_auto=True, origen=None):
+        carpeta = carpeta or CARPETA_DEFECTO
+        # file hosters (rootz.so, etc.): resuelve primero a la URL directa
+        # para que el motor segmentado baje con Range, pausa y reanudación
+        resuelto = None
+        try:
+            resuelto = hosters.resolver(url)
+        except Exception as e:
+            resuelto = {"error": str(e)}
+        if resuelto and resuelto.get("error"):
+            t = motor.Descarga(url, carpeta, segmentos=segmentos)
+            t.nombre = "⚠ " + resuelto["error"]
+            t.error = resuelto["error"]
+            t.estado = "error"
+            _registrar_error(t)
+        elif resuelto:
+            t = motor.Descarga(resuelto["url"], carpeta, segmentos=segmentos,
+                               nombre=resuelto.get("nombre"),
+                               total=resuelto.get("tamano"),
+                               post=resuelto.get("post"))
+            t.nombre = resuelto.get("nombre") or t.nombre
+            t.pagina = resuelto.get("pagina") or url
+        elif _es_mega(url):
+            # mega.nz: descarga cifrada (AES-CTR) con el motor propio de Mega
+            try:
+                info = mega.resolver(url)
+            except Exception as e:
+                t = motor.Descarga(url, carpeta, segmentos=segmentos)
+                t.nombre = "⚠ " + str(e)[:80]
+                t.error = str(e)
+                t.estado = "error"
+                _registrar_error(t)
+                info = None
+            if info is not None:
+                t = mega.Descarga(info, carpeta, segmentos=segmentos)
+                t.pagina = url
+        elif torrents.es_torrent(url):
+            # magnet / .torrent / zetrrent.com -> BitTorrent con aria2c
+            t = torrents.TrabajoTorrent(url, carpeta)
+            t.pagina = url
+        elif _usar_ytdlp(url) and not _es_cdn_directo(url) and _ytdlp_disponible():
+            t = _TrabajoYtdlp(url, carpeta, formato=formato,
+                              conexiones=segmentos)
+        else:
+            t = motor.Descarga(url, carpeta, segmentos=segmentos)
+        t.id = uuid.uuid4().hex[:8]
+        t.origen = origen or ""   # "zonaleros": contraseña automática al descomprimir
+        with self._lock:
+            self.trabajos[t.id] = t
+        if iniciar_auto:
+            t.iniciar()
+        else:
+            t.estado = "en cola"
+        return t.id
+
+    def estado(self):
+        with self._lock:
+            lista = []
+            for t in self.trabajos.values():
+                p = t.progreso()
+                # si el motor directo no calculó categoría, usa la extensión
+                if not p.get("categoria"):
+                    p["categoria"] = _categoria(p.get("nombre") or "")
+                # servidor de origen: la URL original del usuario si existe
+                url = getattr(t, "pagina", None) or p.get("url") or ""
+                p["servidor"] = _nombre_servidor(url)
+                p["origen"] = getattr(t, "origen", "") or ""
+                if getattr(t, "descompresion_estado", None):
+                    p["descompresion"] = t.descompresion_estado
+                    p["descompresion_msg"] = getattr(
+                        t, "descompresion_msg", "") or ""
+                lista.append(p)
+            return lista
+
+    def accion(self, tid, accion):
+        with self._lock:
+            t = self.trabajos.get(tid)
+        if not t:
+            return False
+        getattr(t, accion)()
+        return True
+
+    def borrar(self, tid):
+        with self._lock:
+            t = self.trabajos.get(tid)
+            if t:
+                t.cancelar()
+                del self.trabajos[tid]
+        # depuración inteligente: borra los fragmentos de la descarga borrada
+        nombre = getattr(t, "nombre", None)
+        if nombre:
+            motor.borrar_parts_de(nombre)
+            try:
+                destino = os.path.join(getattr(t, "carpeta", ""), nombre)
+                if destino.endswith(".part") and os.path.exists(destino):
+                    os.remove(destino)
+            except Exception:
+                pass
+        motor.depurar()
+        return t is not None
+
+    def abrir(self, tid):
+        with self._lock:
+            t = self.trabajos.get(tid)
+        if not t:
+            return False
+        carpeta = getattr(t, "carpeta", None)
+        if carpeta and os.path.isdir(carpeta):
+            os.startfile(carpeta)  # Windows
+        return True
+
+
+GESTOR = Gestor()
+
+
+# ---------------------------------------------------------- lote (cola)
+# Descargas en SIMULTÁNEO: la cola arranca hasta MAX_SIMULTANEAS a la vez.
+MAX_SIMULTANEAS = 3        # por defecto; cambiable desde el panel
+
+
+def _contar_activas():
+    return sum(1 for t in GESTOR.trabajos.values()
+               if t.estado in ("descargando", "uniendo", "esperando"))
+
+
+def _hay_activa():
+    return _contar_activas() > 0
+
+
+_cola_lock = threading.Lock()
+
+
+def _en_cola():
+    return [t for t in GESTOR.trabajos.values() if t.estado == "en cola"]
+
+
+def _procesar_cola():
+    """Arranca de la cola tantas descargas como permita MAX_SIMULTANEAS.
+    Los encolados son tarjetas visibles con estado "en cola"; aquí se
+    lanzan los que quepan en el máximo. Se marca "esperando" antes de
+    arrancar para que el hilo en probe no se cuente dos veces."""
+    with _cola_lock:
+        con = _contar_activas()
+        for t in _en_cola():
+            if con >= MAX_SIMULTANEAS:
+                break
+            t.estado = "esperando"   # sale de la cola: ya no se re-arranca
+            t.iniciar()
+            con += 1
+
+
+def _encolar_lote(urls, segmentos, origen=None):
+    """Cada URL se convierte en una tarjeta visible con estado "en cola".
+    Si hay hueco en el máximo de simultáneas, arrancan ya; si no, esperan
+    su turno. Devuelve el número de URLs aceptadas."""
+    for url in urls:
+        GESTOR.agregar(url, segmentos=segmentos, iniciar_auto=False,
+                       origen=origen)
+    _procesar_cola()
+    return len(urls)
+
+
+# ------------------------------------------------- descompresión automática
+# Cuando una descarga termina y DESCOMPRESION_AUTO está activo, los
+# comprimidos (.rar/.zip/.7z/...) se extraen solos. Los enlaces que vienen
+# de zona-leros llevan origen "zonaleros" y usan su contraseña automática.
+_PENDIENTES_DESCOMPRESION = {}   # ruta -> (trabajo, contraseña)
+
+
+def _marcar_descompresion(trabajo, estado, msg=""):
+    try:
+        trabajo.descompresion_estado = estado
+        trabajo.descompresion_msg = msg
+    except Exception:
+        pass
+
+
+def _en_descarga(nombre):
+    """True si algún trabajo activo va a producir ese nombre de archivo
+    (una parte del conjunto que todavía está bajando)."""
+    for t in GESTOR.trabajos.values():
+        n = getattr(t, "nombre", None) or getattr(t, "_nombre", None)
+        if n == nombre and t.estado in ("descargando", "uniendo",
+                                        "esperando", "en cola"):
+            return True
+    return False
+
+
+def _faltan_partes(ruta):
+    """True si falta una parte del conjunto multiparte que aún se está
+    descargando (entonces conviene esperar antes de extraer)."""
+    import re as _re
+    nombre = os.path.basename(ruta)
+    carpeta = os.path.dirname(ruta)
+    # el número de parte es el ÚLTIMO antes de la extensión
+    m = _re.search(r"\.part(\d+)\.[^.]*$", nombre)
+    if m:
+        base = _re.sub(r"\.part\d+\.[^.]*$", "", nombre)
+        n = int(m.group(1)) + 1
+        while n <= 99:
+            parte = "%s.part%d%s" % (base, n, os.path.splitext(nombre)[1])
+            if not os.path.exists(os.path.join(carpeta, parte)):
+                return _en_descarga(parte)
+            n += 1
+        return False
+    m = _re.search(r"\.r(\d{2,3})$", nombre)
+    if m:
+        base = _re.sub(r"\.r\d{2,3}$", "", nombre)
+        n = int(m.group(1)) + 1
+        for suf in ("%02d" % n, "%03d" % n):
+            parte = "%s.r%s" % (base, suf)
+            if not os.path.exists(os.path.join(carpeta, parte)):
+                return _en_descarga(parte)
+    return False
+
+
+def _descomprimir_si_aplica(trabajo):
+    """Encola la extracción del archivo si aplica (toggle activo, archivo
+    comprimido, no es parte de continuación). Corre en segundo plano."""
+    if not DESCOMPRESION_AUTO:
+        return
+    ruta = getattr(trabajo, "_archivo_final", None)
+    carpeta = getattr(trabajo, "carpeta", None)
+    nombre = getattr(trabajo, "nombre", None) or getattr(trabajo, "_nombre", None)
+    if not ruta or not os.path.exists(ruta):
+        # _organizar pudo mover el archivo a su subcarpeta por tipo
+        r = None
+        if carpeta and nombre:
+            r = os.path.join(carpeta, nombre)
+            if not os.path.exists(r):
+                r = os.path.join(carpeta, _categoria(nombre), nombre)
+        if not r or not os.path.exists(r):
+            return
+        ruta = r
+    if not ruta or not os.path.exists(ruta):
+        return
+    nombre = os.path.basename(ruta)
+    if not descomprimir.es_comprimido(nombre):
+        return
+    if descomprimir.es_parte_secundaria(nombre):
+        return
+    # contraseña: los enlaces de zona-leros usan "zonaleros" automáticamente
+    if getattr(trabajo, "origen", "") == "zonaleros":
+        password = "zonaleros"
+    else:
+        password = PASSWORD_DESCOMPRESION
+    if _faltan_partes(ruta):
+        # el resto del conjunto sigue bajando: se reintenta al completar
+        _PENDIENTES_DESCOMPRESION[ruta] = (trabajo, password)
+        _marcar_descompresion(trabajo, "esperando",
+                              "Esperando el resto de partes…")
+        return
+    threading.Thread(target=_ejecutar_descompresion,
+                     args=(trabajo, ruta, password), daemon=True).start()
+
+
+def _ejecutar_descompresion(trabajo, ruta, password):
+    _marcar_descompresion(trabajo, "extrayendo", "")
+    try:
+        ok, msg = descomprimir.descomprimir(ruta, password)
+        _marcar_descompresion(trabajo, "ok" if ok else "error", msg)
+    except Exception as e:
+        _marcar_descompresion(trabajo, "error", str(e)[:200])
+    finally:
+        _PENDIENTES_DESCOMPRESION.pop(ruta, None)
+
+
+def _reintentar_descompresiones():
+    """Cuando completa otra parte del conjunto, reintenta las extracciones
+    que estaban esperando por el resto de partes."""
+    for ruta, (trabajo, password) in list(_PENDIENTES_DESCOMPRESION.items()):
+        if os.path.exists(ruta) and not _faltan_partes(ruta):
+            _PENDIENTES_DESCOMPRESION.pop(ruta, None)
+            threading.Thread(target=_ejecutar_descompresion,
+                             args=(trabajo, ruta, password),
+                             daemon=True).start()
+
+
+def _al_completar(trabajo):
+    try:
+        _organizar(trabajo)
+    except Exception:
+        pass
+    try:
+        _descomprimir_si_aplica(trabajo)
+        _reintentar_descompresiones()
+    except Exception:
+        pass
+    # una descarga terminó (o falló): entra la siguiente de la cola
+    _procesar_cola()
+
+
+motor.on_completada = _al_completar
+mega.on_completada = _al_completar
+torrents.on_completada = _al_completar
+motor.on_error = _al_error
+mega.on_error = _al_error
+torrents.on_error = _al_error
+
+
+class Manejador(BaseHTTPRequestHandler):
+    def _json(self, datos, codigo=200):
+        cuerpo = json.dumps(datos, ensure_ascii=False).encode("utf-8")
+        self.send_response(codigo)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(cuerpo)))
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+        self.wfile.write(cuerpo)
+
+    def _leer_cuerpo(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        if not n:
+            return {}
+        try:
+            return json.loads(self.rfile.read(n).decode("utf-8"))
+        except Exception:
+            return {}
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
+    def do_GET(self):
+        ruta = urllib.parse.urlparse(self.path).path
+        if ruta in ("/", "/index.html"):
+            self._servir_ui()
+        elif ruta.startswith("/static/") or ruta in ("/logo.svg", "/favicon.ico", "/favicon.svg"):
+            nombre = os.path.basename(ruta)
+            if ruta.startswith("/static/"):
+                nombre = ruta[len("/static/"):]
+            base = _base_dir()
+            fpath = os.path.join(base, "static", nombre)
+            if os.path.isfile(fpath):
+                ctype = "image/svg+xml" if fpath.endswith(".svg") else "image/x-icon" if fpath.endswith(".ico") else "application/octet-stream"
+                try:
+                    with open(fpath, "rb") as f:
+                        cuerpo = f.read()
+                    self.send_response(200)
+                    self.send_header("Content-Type", ctype)
+                    self.send_header("Content-Length", str(len(cuerpo)))
+                    self.end_headers()
+                    self.wfile.write(cuerpo)
+                    return
+                except OSError:
+                    pass
+            self._json({"error": "no encontrado"}, 404)
+        elif ruta == "/api/estado":
+            self._json(GESTOR.estado())
+        elif ruta == "/api/version":
+            self._json({"nombre": "MiDescargador", "version": "1.0"})
+        elif ruta == "/api/log":
+            self._json({"lineas": _leer_log(200), "ruta": LOG_RUTA})
+        elif ruta == "/api/config":
+            self._json({"organizar": ORGANIZAR_POR_TIPO,
+                        "max_simultaneas": MAX_SIMULTANEAS,
+                        "descompresion_auto": DESCOMPRESION_AUTO,
+                        "password_descompresion": PASSWORD_DESCOMPRESION})
+        elif ruta == "/api/hosters":
+            self._json({"hosters": hosters.hosters_soportados()})
+        elif ruta == "/api/lote":
+            self._json({"pendientes": len(_en_cola()),
+                        "descargando": _hay_activa()})
+        elif ruta == "/api/sesion":
+            self._json({"youtube": cuenta.estado("youtube"),
+                        "tiktok": cuenta.estado("tiktok")})
+        elif ruta == "/api/enlaces/estado":
+            qs = urllib.parse.parse_qs(
+                urllib.parse.urlparse(self.path).query)
+            tid = (qs.get("tarea") or [""])[0]
+            datos, codigo = _estado_enlaces_tarea(tid)
+            self._json(datos, codigo)
+        else:
+            self._json({"error": "no encontrado"}, 404)
+
+    def do_POST(self):
+        ruta = urllib.parse.urlparse(self.path).path
+        datos = self._leer_cuerpo()
+        if ruta == "/api/descargar":
+            url = (datos.get("url") or "").strip()
+            if not url:
+                self._json({"error": "falta url"}, 400)
+                return
+            try:
+                seg = int(datos.get("segmentos") or 8)
+            except (TypeError, ValueError):
+                seg = 8
+            tid = GESTOR.agregar(url, seg, datos.get("carpeta"),
+                                 datos.get("formato"),
+                                 origen=datos.get("origen"))
+            self._json({"id": tid})
+        elif ruta == "/api/formatos":
+            url = (datos.get("url") or "").strip()
+            if not url:
+                self._json({"error": "falta url"}, 400)
+                return
+            res = _formatos(url)
+            if isinstance(res, dict) and res.get("error"):
+                self._json(res, 422)
+            else:
+                self._json({"formatos": res})
+        elif ruta == "/api/enlaces":
+            url = (datos.get("url") or "").strip()
+            if not url:
+                self._json({"error": "falta url"}, 400)
+                return
+            self._json(_enlaces_lanzar(url))
+        elif ruta == "/api/lote":
+            urls = datos.get("urls") or []
+            if isinstance(urls, str):
+                urls = [u.strip() for u in urls.splitlines() if u.strip()]
+            urls = [u.strip() for u in urls if u and u.strip().startswith(("http://", "https://"))]
+            if not urls:
+                self._json({"error": "no hay enlaces válidos"}, 400)
+                return
+            try:
+                seg = int(datos.get("segmentos") or 8)
+            except (TypeError, ValueError):
+                seg = 8
+            n = _encolar_lote(urls, seg, origen=datos.get("origen"))
+            self._json({"ok": True, "encolados": n,
+                        "pendientes": len(_en_cola()),
+                        "descargando": _hay_activa()})
+        elif ruta == "/api/pausar":
+            self._json({"ok": GESTOR.accion(datos.get("id"), "pausar")})
+        elif ruta == "/api/reanudar":
+            self._json({"ok": GESTOR.accion(datos.get("id"), "reanudar")})
+        elif ruta == "/api/reintentar":
+            self._json({"ok": GESTOR.accion(datos.get("id"), "reintentar")})
+        elif ruta == "/api/cancelar":
+            self._json({"ok": GESTOR.accion(datos.get("id"), "cancelar")})
+        elif ruta == "/api/borrar":
+            self._json({"ok": GESTOR.borrar(datos.get("id"))})
+        elif ruta == "/api/abrir":
+            self._json({"ok": GESTOR.abrir(datos.get("id"))})
+        elif ruta == "/api/sesion/iniciar":
+            # corre en segundo plano: la ventana de Chrome queda esperando
+            # a que el usuario inicie sesión; el panel consulta /api/sesion
+            global _HILO_SESION
+            plataforma = datos.get("plataforma") or "youtube"
+            if plataforma not in cuenta.plataformas():
+                self._json({"ok": False,
+                            "error": "plataforma desconocida: "
+                                      + str(plataforma)}, 400)
+            elif not _HILO_SESION or not _HILO_SESION.is_alive():
+                def _trabajo():
+                    try:
+                        cuenta.iniciar_sesion(plataforma)
+                    except Exception:
+                        pass
+                _HILO_SESION = threading.Thread(target=_trabajo, daemon=True)
+                _HILO_SESION.start()
+            self._json({"ok": True})
+        elif ruta == "/api/sesion/borrar":
+            plataforma = datos.get("plataforma") or "youtube"
+            if plataforma not in cuenta.plataformas():
+                self._json({"ok": False,
+                            "error": "plataforma desconocida: "
+                                      + str(plataforma)}, 400)
+            else:
+                self._json(cuenta.borrar(plataforma))
+        elif ruta == "/api/log/limpiar":
+            try:
+                with open(LOG_RUTA, "w", encoding="utf-8") as f:
+                    f.write("")
+                self._json({"ok": True})
+            except OSError as e:
+                self._json({"ok": False, "error": str(e)}, 500)
+        elif ruta == "/api/config":
+            global ORGANIZAR_POR_TIPO, MAX_SIMULTANEAS
+            global DESCOMPRESION_AUTO, PASSWORD_DESCOMPRESION
+            if "organizar" in datos:
+                ORGANIZAR_POR_TIPO = bool(datos["organizar"])
+            if "max_simultaneas" in datos:
+                try:
+                    MAX_SIMULTANEAS = max(1, min(int(datos["max_simultaneas"]), 10))
+                except (TypeError, ValueError):
+                    pass
+                _procesar_cola()   # si subimos el límite, arranca más
+            if "descompresion_auto" in datos:
+                DESCOMPRESION_AUTO = bool(datos["descompresion_auto"])
+            if "password_descompresion" in datos:
+                PASSWORD_DESCOMPRESION = str(datos["password_descompresion"] or "")
+            _guardar_config()
+            self._json({"ok": True, "organizar": ORGANIZAR_POR_TIPO,
+                        "max_simultaneas": MAX_SIMULTANEAS,
+                        "descompresion_auto": DESCOMPRESION_AUTO,
+                        "password_descompresion": PASSWORD_DESCOMPRESION})
+        else:
+            self._json({"error": "no encontrado"}, 404)
+
+    def _servir_ui(self):
+        base = _base_dir()
+        ruta = os.path.join(base, "static", "index.html")
+        try:
+            with open(ruta, "rb") as f:
+                cuerpo = f.read()
+        except OSError:
+            self._json({"error": "interfaz no encontrada"}, 404)
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(cuerpo)))
+        self.end_headers()
+        self.wfile.write(cuerpo)
+
+    def log_message(self, fmt, *args):
+        pass
+
+
+def main():
+    os.makedirs(CARPETA_DEFECTO, exist_ok=True)
+    motor.limpiar_restos()   # quita .partes viejas y fragmentos huérfanos
+
+    def _depurar_periodico():
+        while True:
+            time.sleep(600)      # cada 10 minutos
+            try:
+                motor.depurar()
+            except Exception:
+                pass
+
+    threading.Thread(target=_depurar_periodico, daemon=True).start()
+
+    _cargar_config()   # restaura toggle/contraseña guardados en config.json
+
+    try:
+        srv = ThreadingHTTPServer(("127.0.0.1", PUERTO), Manejador)
+    except OSError as e:
+        _log_servidor("FALLO al arrancar (¿puerto %d ocupado?): %s"
+                      % (PUERTO, e))
+        raise
+    _log_servidor("Servidor en http://127.0.0.1:%d (carpeta: %s)"
+                  % (PUERTO, CARPETA_DEFECTO))
+    print(f"MiDescargador en http://127.0.0.1:{PUERTO}")
+    print(f"Carpeta de descargas: {CARPETA_DEFECTO}")
+    print("Presiona Ctrl+C para detener.")
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        _log_servidor("Servidor detenido.")
+
+
+if __name__ == "__main__":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+    main()

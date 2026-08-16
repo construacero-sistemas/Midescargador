@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "MiDescargador",
+  "version": "1.0",
+  "description": "Añade un botón de descarga sobre cada video de la página y lo envía a MiDescargador local.",
+  "permissions": ["downloads", "storage"],
+  "host_permissions": ["http://127.0.0.1:17890/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "action": {
+    "default_title": "MiDescargador",
+    "default_popup": "popup.html"
+  }
+}

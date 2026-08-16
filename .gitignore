@@ -1,0 +1,20 @@
+# Entornos y dependencias
+venv/
+__pycache__/
+*.pyc
+electron/node_modules/
+
+# Builds y artefactos
+backend/
+electron/dist/
+build_mei/
+dist/
+
+# Binarios de terceros (se descargan aparte, ver README)
+bin/
+
+# Logs
+*.log
+
+# Interno de la herramienta de edición
+.freebuff/

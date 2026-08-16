@@ -1,0 +1,47 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- Background Gradient -->
+    <linearGradient id="mdBg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#161e31"/>
+      <stop offset="100%" stop-color="#0b101d"/>
+    </linearGradient>
+
+    <!-- Accent Ring Gradient -->
+    <linearGradient id="mdRing" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#3b82f6"/>
+      <stop offset="50%" stop-color="#8b5cf6"/>
+      <stop offset="100%" stop-color="#06b6d4"/>
+    </linearGradient>
+
+    <!-- Energy Core Gradient -->
+    <linearGradient id="mdCore" x1="32" y1="12" x2="32" y2="44" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#60a5fa"/>
+      <stop offset="100%" stop-color="#a78bfa"/>
+    </linearGradient>
+
+    <!-- Inner Glow -->
+    <filter id="mdGlow" x="0" y="0" width="64" height="64" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <!-- Base Squircle Container -->
+  <rect x="3" y="3" width="58" height="58" rx="18" fill="url(#mdBg)" stroke="url(#mdRing)" stroke-width="2"/>
+  
+  <!-- Subtle Ambient Glow -->
+  <circle cx="32" cy="32" r="18" fill="#3b82f6" fill-opacity="0.16" filter="url(#mdGlow)"/>
+
+  <!-- Parallel Speed Segments (Multi-Connection Streams) -->
+  <path d="M21 16V24" stroke="url(#mdRing)" stroke-width="3" stroke-linecap="round" stroke-opacity="0.8"/>
+  <path d="M32 13V22" stroke="#38bdf8" stroke-width="3.5" stroke-linecap="round"/>
+  <path d="M43 16V24" stroke="url(#mdRing)" stroke-width="3" stroke-linecap="round" stroke-opacity="0.8"/>
+
+  <!-- Dynamic Quantum Down Arrow -->
+  <path d="M21 30L32 41L43 30" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M32 22V40" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- High-Speed Base Tray with Status Pulse -->
+  <path d="M19 48H45" stroke="url(#mdRing)" stroke-width="3" stroke-linecap="round"/>
+  <circle cx="32" cy="48" r="2.5" fill="#38bdf8"/>
+</svg>

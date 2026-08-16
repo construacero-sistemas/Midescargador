@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --bg-base: #0b0f17;
+    --bg-surface: #131926;
+    --border: rgba(255, 255, 255, 0.08);
+    --text-primary: #f8fafc;
+    --text-secondary: #94a3b8;
+    --primary: #3b82f6;
+    --primary-gradient: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+    --success: #10b981;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    width: 290px;
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-family: "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif;
+    padding: 16px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+  }
+  .logo {
+    width: 32px;
+    height: 32px;
+    border-radius: 10px;
+    background: var(--primary-gradient);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+  }
+  h1 { font-size: 15px; font-weight: 700; }
+  .badge {
+    font-size: 10px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 9999px;
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+  }
+  p {
+    font-size: 12px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin-bottom: 14px;
+  }
+  .status-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 8px 12px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 14px;
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--success);
+    box-shadow: 0 0 8px var(--success);
+  }
+  .btn-open {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    background: var(--primary-gradient);
+    color: #ffffff;
+    text-decoration: none;
+    padding: 10px 14px;
+    border-radius: 10px;
+    font-size: 13px;
+    font-weight: 700;
+    box-shadow: 0 4px 16px rgba(59, 130, 246, 0.3);
+    transition: transform 0.15s;
+  }
+  .btn-open:hover {
+    filter: brightness(1.08);
+  }
+</style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo">
+      <svg width="34" height="34" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="popBg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#161e31"/>
+            <stop offset="100%" stop-color="#0b101d"/>
+          </linearGradient>
+          <linearGradient id="popRing" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#3b82f6"/>
+            <stop offset="50%" stop-color="#8b5cf6"/>
+            <stop offset="100%" stop-color="#06b6d4"/>
+          </linearGradient>
+        </defs>
+        <rect x="3" y="3" width="58" height="58" rx="18" fill="url(#popBg)" stroke="url(#popRing)" stroke-width="2.5"/>
+        <path d="M21 16V24" stroke="url(#popRing)" stroke-width="3" stroke-linecap="round" stroke-opacity="0.85"/>
+        <path d="M32 13V22" stroke="#38bdf8" stroke-width="3.5" stroke-linecap="round"/>
+        <path d="M43 16V24" stroke="url(#popRing)" stroke-width="3" stroke-linecap="round" stroke-opacity="0.85"/>
+        <path d="M21 30L32 41L43 30" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M32 22V40" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M19 48H45" stroke="url(#popRing)" stroke-width="3" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <div>
+      <h1>MiDescargador <span class="badge">2.0</span></h1>
+    </div>
+  </div>
+
+  <p>Al reproducir videos en la web verás el botón flotante <b>“Descargar”</b> sobre cada reproductor para transferirlo al gestor.</p>
+
+  <div class="status-box">
+    <span class="dot"></span>
+    <span>Servidor local listo (127.0.0.1:17890)</span>
+  </div>
+
+  <a class="btn-open" href="http://127.0.0.1:17890" target="_blank">
+    <span>Abrir Panel 2.0</span>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+      <polyline points="15 3 21 3 21 9"></polyline>
+      <line x1="10" y1="14" x2="21" y2="3"></line>
+    </svg>
+  </a>
+</body>
+</html>

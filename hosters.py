@@ -1,0 +1,484 @@
+# -*- coding: utf-8 -*-
+"""
+MiDescargador - Extractores de enlaces de "file hosters" (estilo JDownloader).
+Convierte una página de descarga (rootz.so, etc.) en la URL directa del archivo,
+para que el motor segmentado pueda descargarla con Range, pausa y reanudación.
+
+Flujo rootz.so (descubierto experimentalmente, rediseño 2026):
+  Enlaces nuevos (formato /download/<uuid> y carpetas /folder/<id>):
+    1. GET /api/files/download/<fileId> -> JSON con fileName, size, status...
+    2. GET /api/files/proxy-download/<fileId> -> redirige a la URL firmada
+       (Cloudflare R2, ~24 h de validez). No requiere token.
+  Enlaces clásicos (formato /d/<shortId>, siguen circulando):
+    1. GET https://www.rootz.so/d/<shortId>  -> el HTML trae el "pageToken" en
+       el payload RSC de Next.js (regex sobre 'pageToken\\":\\"<token>')
+    2. GET /api/files/download-by-short?shortId=<id>  con cabecera X-Page-Token
+       -> JSON con fileName, size (bytes), fileId, etc.
+    3. GET /api/files/proxy-download/<fileId>  con X-Page-Token
+       -> redirige a la URL firmada (Cloudflare R2)
+  Carpetas (formato /folder/<id>):
+    1. GET /api/folders/share/<id> -> JSON con la lista de archivos
+    2. Cada archivo se descarga como /download/<fileId> (o /d/<shortId>)
+"""
+
+import json
+import os
+import re
+import time
+import urllib.parse
+import urllib.request
+import urllib.error
+import ssl
+
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+TIMEOUT = 40
+_CTX = ssl.create_default_context()
+
+# dominios que este módulo sabe resolver (extensible)
+SOPORTADOS = ("rootz.so", "www.rootz.so", "fireload.com", "www.fireload.com",
+              "megaup.net", "www.megaup.net", "gofile.io", "www.gofile.io",
+              "mediafire.com", "www.mediafire.com")
+
+# etiquetas amigables por dominio (para la lista del panel)
+ETIQUETAS = {
+    "rootz.so": "Rootz", "fireload.com": "Fireload", "megaup.net": "MegaUp",
+    "gofile.io": "GoFile", "mediafire.com": "MediaFire",
+}
+
+
+def hosters_soportados():
+    """Lista de {dominio, nombre} para mostrar en el panel."""
+    vistos = set()
+    out = []
+    for d in SOPORTADOS:
+        # dominio base: las dos últimas etiquetas (rootz.so, mediafire.com...)
+        partes = d.split(".")
+        base = ".".join(partes[-2:]) if len(partes) > 1 else d
+        if base in vistos:
+            continue
+        vistos.add(base)
+        out.append({"dominio": base, "nombre": ETIQUETAS.get(base, base)})
+    return out
+
+
+def _pedir(url, cabeceras=None, metodo="GET"):
+    h = {"User-Agent": UA, "Accept": "*/*"}
+    if cabeceras:
+        h.update(cabeceras)
+    req = urllib.request.Request(url, headers=h, method=metodo)
+    return urllib.request.urlopen(req, timeout=TIMEOUT, context=_CTX)
+
+
+def _rootz_metadatos(ident):
+    """Pide los metadatos de un archivo rootz.so por su identificador (UUID).
+    Devuelve (file_id, datos) o lanza RuntimeError con mensaje claro."""
+    try:
+        with _pedir(
+            f"https://www.rootz.so/api/files/download/{urllib.parse.quote(ident)}",
+        ) as r:
+            datos = json.loads(r.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(
+            f"rootz.so no encontró el archivo (HTTP {e.code}); "
+            f"¿enlace caducado o borrado?") from e
+    except Exception as e:
+        raise RuntimeError(f"rootz.so rechazó la consulta del archivo: {e}") from e
+    if not datos.get("success"):
+        raise RuntimeError("rootz.so: " + str(datos.get("error") or "error desconocido"))
+    d = datos.get("data") or {}
+    if d.get("status") == "deleted":
+        raise RuntimeError("rootz.so: el archivo fue borrado o el enlace caducó")
+    if d.get("passwordProtected"):
+        raise RuntimeError("rootz.so: el archivo está protegido con contraseña "
+                           "(ábrelo en el navegador y copia el enlace directo)")
+    if not d.get("downloadAllowed"):
+        raise RuntimeError("rootz.so: la descarga no está permitida para este archivo")
+    return ident, d
+
+
+def _rootz_directa(file_id, cabeceras=None):
+    """Pide la URL firmada de descarga (la API redirige)."""
+    try:
+        with _pedir(
+            f"https://www.rootz.so/api/files/proxy-download/{file_id}",
+            cabeceras=cabeceras,
+        ) as r:
+            return r.geturl()
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(
+            f"rootz.so falló al generar la descarga (HTTP {e.code}); "
+            f"¿archivo borrado o caducado?") from e
+    except Exception:
+        raise RuntimeError("rootz.so no entregó la URL directa del archivo")
+
+
+def _extraer_rootz(url):
+    """Resuelve un enlace rootz.so a su URL directa firmada.
+
+    Acepta los tres formatos actuales:
+      /d/<shortId>      (clásico, sigue circulando)
+      /download/<uuid>  (nuevo)
+      /folder/<id>      (carpeta: se resuelve el primer archivo)
+
+    Devuelve dict con: url (directa), nombre, tamano (bytes), pagina.
+    Lanza RuntimeError con mensaje claro si algo falla.
+    """
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    if host not in SOPORTADOS:
+        raise RuntimeError(f"dominio no soportado: {host}")
+
+    # ---- carpeta: lista de archivos, resolvemos el primero ----
+    fm = re.search(r"/folder/([A-Za-z0-9_-]+)", url)
+    if fm:
+        try:
+            with _pedir(
+                "https://www.rootz.so/api/folders/share/"
+                + urllib.parse.quote(fm.group(1)),
+            ) as r:
+                datos = json.loads(r.read().decode("utf-8", errors="replace"))
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(f"rootz.so no encontró la carpeta (HTTP {e.code})") from e
+        except Exception as e:
+            raise RuntimeError(f"rootz.so rechazó la consulta de la carpeta: {e}") from e
+        archivos = ((datos.get("data") or {}).get("files")) or []
+        if not archivos:
+            raise RuntimeError("rootz.so: la carpeta está vacía")
+        # cada archivo: /d/<short_id> si lo tiene, si no /download/<id>
+        f = archivos[0]
+        enlace = (f"/d/{f.get('short_id')}" if f.get("short_id")
+                  else f"/download/{f.get('id')}")
+        nombre = f.get("name") or f.get("fileName") or "descarga"
+        tamano = f.get("size")
+        ident, _d = _rootz_metadatos(f.get("id") or f.get("fileId"))
+        directa = _rootz_directa(ident)
+        return {"url": directa, "nombre": nombre, "tamano": tamano,
+                "pagina": url}
+
+    # ---- archivo individual: /download/<uuid> (nuevo) o /d/<shortId> (clásico) ----
+    m = re.search(r"/(?:d|download|file)/([A-Za-z0-9_-]+)", url)
+    if not m:
+        raise RuntimeError("enlace rootz.so sin código de archivo "
+                           "(formatos: /d/XXX, /download/XXX o /folder/XXX)")
+    ident = m.group(1)
+    directa = None
+    nombre = "descarga"
+    tamano = None
+
+    if "/d/" in url:
+        # flujo clásico: pageToken de la página + download-by-short
+        try:
+            with _pedir(url) as r:
+                html = r.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as e:
+            raise RuntimeError(f"rootz.so bloqueó la página (HTTP {e.code}); "
+                               f"prueba abrirla antes en el navegador") from e
+        except Exception as e:
+            raise RuntimeError(f"no se pudo abrir la página rootz.so: {e}") from e
+        tm = re.search(r'pageToken\\":\\"([^\\]+)\\"', html)
+        if not tm:
+            raise RuntimeError("no encontré el token de la página rootz.so "
+                               "(¿cambió el sitio?)")
+        token = tm.group(1)
+        try:
+            with _pedir(
+                "https://www.rootz.so/api/files/download-by-short"
+                f"?shortId={urllib.parse.quote(ident)}",
+                cabeceras={"X-Page-Token": token},
+            ) as r:
+                datos = json.loads(r.read().decode("utf-8", errors="replace"))
+        except Exception as e:
+            raise RuntimeError(f"rootz.so rechazó la consulta del archivo: {e}") from e
+        if not datos.get("success"):
+            raise RuntimeError("rootz.so: " + str(datos.get("error") or "error desconocido"))
+        d = datos.get("data") or {}
+        if d.get("status") == "deleted":
+            raise RuntimeError("rootz.so: el archivo fue borrado o el enlace caducó")
+        if d.get("passwordProtected"):
+            raise RuntimeError("rootz.so: el archivo está protegido con contraseña "
+                               "(ábrelo en el navegador y copia el enlace directo)")
+        file_id = d.get("fileId")
+        if not file_id:
+            raise RuntimeError("rootz.so no devolvió el identificador del archivo")
+        nombre = d.get("fileName") or "descarga"
+        tamano = d.get("size")
+        directa = _rootz_directa(file_id, cabeceras={"X-Page-Token": token})
+    else:
+        # flujo nuevo: la API resuelve el UUID directamente, sin token
+        _ident, d = _rootz_metadatos(ident)
+        nombre = d.get("fileName") or "descarga"
+        tamano = d.get("size")
+        directa = _rootz_directa(ident)
+
+    return {
+        "url": directa,
+        "nombre": nombre,
+        "tamano": tamano,
+        "pagina": url,
+    }
+
+
+def _extraer_fireload(url):
+    """Fireload: la URL directa firmada viene en window.Fl dentro del HTML.
+    La pedimos con cookies de sesión + token CSRF y seguimos el redirect
+    hasta la URL del servidor de descarga.
+    """
+    import http.cookiejar
+    cj = http.cookiejar.CookieJar()
+    op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+    op.addheaders = [("User-Agent", UA)]
+    try:
+        with op.open(url, timeout=TIMEOUT) as r:
+            html = r.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"fireload bloqueó la página (HTTP {e.code})") from e
+    except Exception as e:
+        raise RuntimeError(f"no se pudo abrir la página fireload: {e}") from e
+
+    tm = re.search(r"name='authenticity_token' value='([^']+)'", html)
+    dm = re.search(r'"dlink": "([^"]+)"', html)
+    if not dm:
+        raise RuntimeError("no encontré el enlace de descarga en fireload "
+                           "(¿archivo borrado?)")
+    token = tm.group(1) if tm else ""
+    dlink = dm.group(1)
+
+    # pedir el dlink con sesión + token CSRF -> 206 con URL real
+    cab = {"User-Agent": UA, "Referer": url, "Accept": "*/*",
+           "Range": "bytes=0-0"}
+    if token:
+        cab["X-CSRF-Token"] = token
+    req = urllib.request.Request(dlink, headers=cab)
+    try:
+        r = op.open(req, timeout=TIMEOUT)
+        r.read(1)
+        directa = r.geturl()
+        nombre = None
+        cd = r.headers.get("Content-Disposition", "")
+        m = re.search(r"filename\*?=(?:UTF-8'')?\"?([^\";]+)\"?", cd, re.I)
+        if m:
+            nombre = urllib.parse.unquote(m.group(1))
+        tam = None
+        cr = r.headers.get("Content-Range", "")
+        m = re.search(r"/(\d+)$", cr)
+        if m:
+            tam = int(m.group(1))
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"fireload falló al generar la descarga (HTTP {e.code})") from e
+    except Exception as e:
+        raise RuntimeError(f"fireload no entregó la URL directa: {e}") from e
+
+    return {"url": directa, "nombre": nombre or "descarga",
+            "tamano": tam, "pagina": url}
+
+
+def _extraer_megaup(url):
+    """Megaup: la URL de descarga viene en el HTML (countdown de 2 s).
+    download.megaup.net está detrás de un reto de Cloudflare: si falla aquí,
+    la descarga se intentará igualmente (con cookies de Chrome como respaldo).
+    """
+    try:
+        with _pedir(url) as r:
+            html = r.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"megaup bloqueó la página (HTTP {e.code})") from e
+    except Exception as e:
+        raise RuntimeError(f"no se pudo abrir la página megaup: {e}") from e
+
+    m = re.search(r"href='(https://download\.megaup\.net/\?url=[^']+)'", html)
+    if not m:
+        raise RuntimeError("no encontré el enlace de descarga en megaup "
+                           "(¿archivo borrado o requiere espera?)")
+    directa = m.group(1)
+    # nota: download.megaup.net exige pasar un reto de Cloudflare. Si la
+    # descarga falla con 403, la solución es abrir el enlace en Chrome una vez
+    # (resuelve el reto) y pulsar Reintentar en el panel.
+
+    tm = re.search(r"<title>([^<]+)</title>", html)
+    nombre = tm.group(1).strip() if tm else "descarga"
+    # quita el sufijo " - MegaUp" del título
+    nombre = re.sub(r"\s*-\s*MegaUp\s*$", "", nombre, flags=re.I)
+    tam = None
+    mm = re.search(r"([\d.]+)\s*(MB|GB|KB)", html)
+    if mm:
+        try:
+            n = float(mm.group(1))
+            u = mm.group(2).upper()
+            tam = int(n * (1024 ** {"KB": 1, "MB": 2, "GB": 3}[u]))
+        except Exception:
+            tam = None
+    return {"url": directa, "nombre": nombre, "tamano": tam, "pagina": url}
+
+
+def _extraer_mediafire(url):
+    """MediaFire: genera la URL directa del CDN.
+
+    MediaFire cambió su página (2026): ya no incrusta download<N>.mediafire.com
+    en el HTML. Ahora el botón de descarga lleva un JWT (data-security-token)
+    y, al pulsarlo, el navegador llama a POST /download_link.php, que devuelve
+    la URL firmada del CDN. Los archivos marcados como sospechosos exigen
+    además un POST con pass=<bdpass> (extraído del propio JWT); esos POST
+    soportan Range, así que el motor puede descargar en segmentos.
+    """
+    import http.cookiejar
+    import base64
+    cj = http.cookiejar.CookieJar()
+    op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+    op.addheaders = [("User-Agent", UA)]
+    try:
+        with op.open(url, timeout=TIMEOUT) as r:
+            html = r.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"mediafire bloqueó la página (HTTP {e.code})") from e
+    except Exception as e:
+        raise RuntimeError(f"no se pudo abrir la página mediafire: {e}") from e
+
+    # 1) enlace clásico: si todavía viene en el HTML, se usa directo
+    m = re.search(r"https://download[0-9]+\.mediafire\.com/[^\"'< ]+", html)
+    directa = None
+    post = None
+    if m:
+        directa = m.group(0)
+    else:
+        # 2) flujo nuevo: JWT del botón + POST /download_link.php
+        m = re.search(
+            r'<button[^>]*deferredDownloadButton[^>]*data-security-token="([^"]+)"',
+            html)
+        if not m:
+            raise RuntimeError("mediafire no mostró el botón de descarga "
+                               "(¿archivo borrado?)")
+        jwt = m.group(1)
+        bdpass = None
+        try:
+            payload = jwt.split(".")[1] + "==="
+            bdpass = (json.loads(base64.urlsafe_b64decode(payload))
+                      .get("bdpass") or None)
+        except Exception:
+            pass
+        resp = None
+        for _intento in range(3):   # el sitio responde "delay" a veces
+            try:
+                datos = urllib.parse.urlencode({"security_token": jwt}).encode()
+                req = urllib.request.Request(
+                    "https://www.mediafire.com/download_link.php",
+                    data=datos,
+                    headers={"X-Requested-With": "XMLHttpRequest",
+                             "Content-Type": "application/x-www-form-urlencoded",
+                             "Referer": url})
+                with op.open(req, timeout=TIMEOUT) as r:
+                    resp = json.loads(r.read().decode("utf-8", errors="replace"))
+            except urllib.error.HTTPError as e:
+                raise RuntimeError(
+                    f"mediafire rechazó el enlace (HTTP {e.code})") from e
+            except Exception as e:
+                raise RuntimeError(f"mediafire no generó el enlace: {e}") from e
+            if resp and resp.get("result") == "success" \
+                    and resp.get("status") == "success":
+                break
+            espera = 0
+            try:
+                espera = int(resp.get("retry_after") or 0)
+            except (TypeError, ValueError):
+                pass
+            if resp.get("status") == "delay" and _intento < 2:
+                time.sleep(min(espera or 3, 10))
+                continue
+            raise RuntimeError("mediafire: " + str(
+                resp.get("reason") or resp.get("error")
+                or "no pudo generar el enlace de descarga"))
+        directa = (resp or {}).get("download_url")
+        if not directa:
+            raise RuntimeError("mediafire no entregó la URL directa")
+        # los archivos marcados como sospechosos exigen POST con pass
+        if bdpass:
+            post = "pass=" + bdpass
+
+    # nombre: el elemento fileName de la página (el <title> ya es genérico)
+    nombre = None
+    tm = re.search(r"fileName[^>]*>\s*([^<]{2,120}?)\s*<", html)
+    if tm:
+        nombre = tm.group(1).strip()
+    seg = [s for s in urllib.parse.urlparse(url).path.split("/") if s]
+    base_url = seg[-2] if len(seg) >= 2 and seg[-1] == "file" else (seg[-1] if seg else "")
+    ext = os.path.splitext(urllib.parse.unquote(base_url))[1]
+    if nombre and ext and not nombre.lower().endswith(ext.lower()):
+        nombre += ext
+    if not nombre:
+        nombre = urllib.parse.unquote(base_url) or "descarga"
+    # tamaño: el botón trae "Download Anyway (8.7 MB)"
+    tam = None
+    mm = re.search(r"Download[^<(]*\(([\d.]+)\s*(MB|GB|KB)\)", html)
+    if mm:
+        try:
+            n = float(mm.group(1))
+            u = mm.group(2).upper()
+            tam = int(n * (1024 ** {"KB": 1, "MB": 2, "GB": 3}[u]))
+        except Exception:
+            tam = None
+    return {"url": directa, "nombre": nombre, "tamano": tam,
+            "pagina": url, "post": post}
+
+
+def _extraer_gofile(url):
+    """Gofile: la API necesita un token de cuenta (los invitados lo obtienen
+    al subir; el listado directo es Premium). Extraemos el guest token de la
+    página si está presente; si no, error claro.
+    """
+    m = re.search(r"/d/([A-Za-z0-9_-]+)", url)
+    cid = m.group(1) if m else None
+    if not cid:
+        raise RuntimeError("enlace gofile sin código de carpeta (/d/XXX)")
+
+    # la API pública exige token y el listado directo es Premium:
+    # pedimos el token de invitado generado por la propia web
+    token = None
+    try:
+        with _pedir(url) as r:
+            html = r.read().decode("utf-8", errors="replace")
+        tm = re.search(r'"guestToken"\s*:\s*"([^"]+)"', html)
+        if tm:
+            token = tm.group(1)
+    except Exception:
+        pass
+    if not token:
+        raise RuntimeError(
+            "gofile cambió su API: ahora exige cuenta (el listado directo es "
+            "Premium). Abre el enlace en tu navegador y copia el enlace "
+            "directo del archivo (botón 'Direct link')")
+
+    try:
+        with _pedir(
+            f"https://api.gofile.io/contents/{cid}?token={urllib.parse.quote(token)}",
+        ) as r:
+            datos = json.loads(r.read().decode("utf-8", errors="replace"))
+    except Exception as e:
+        raise RuntimeError(f"gofile rechazó la consulta: {e}") from e
+    if datos.get("status") != "ok":
+        raise RuntimeError("gofile: " + str(datos.get("status") or "error"))
+    d = datos.get("data") or {}
+    hijos = d.get("children") or {}
+    if not hijos:
+        raise RuntimeError("gofile: la carpeta está vacía o es Premium")
+    primero = next(iter(hijos.values()))
+    return {"url": primero.get("link"), "nombre": primero.get("name"),
+            "tamano": primero.get("size"), "pagina": url}
+
+
+def resolver(url):
+    """Intenta convertir un enlace de file hoster en su URL directa.
+
+    Devuelve dict {"url", "nombre", "tamano", "pagina"} o None si el
+    dominio no está soportado.
+    """
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    if host in ("rootz.so", "www.rootz.so"):
+        return _extraer_rootz(url)
+    if host in ("fireload.com", "www.fireload.com"):
+        return _extraer_fireload(url)
+    if host in ("megaup.net", "www.megaup.net"):
+        return _extraer_megaup(url)
+    if host in ("gofile.io", "www.gofile.io"):
+        return _extraer_gofile(url)
+    if host in ("mediafire.com", "www.mediafire.com"):
+        return _extraer_mediafire(url)
+    return None

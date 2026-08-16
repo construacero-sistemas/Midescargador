@@ -1,0 +1,44 @@
+{
+  "name": "midescargador",
+  "version": "2.0.0",
+  "description": "MiDescargador - gestor de descargas segmentado, videos y torrents",
+  "main": "main.js",
+  "author": "MiDescargador",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.midescargador.desktop",
+    "productName": "MiDescargador",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "../backend/servidor",
+        "to": "backend/servidor"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "portable": {
+      "artifactName": "MiDescargador-${version}-portable.exe"
+    }
+  }
+}
