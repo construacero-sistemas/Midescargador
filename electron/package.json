@@ -1,17 +1,21 @@
 {
   "name": "midescargador",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "MiDescargador - gestor de descargas segmentado, videos y torrents",
   "main": "main.js",
   "author": "MiDescargador",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win portable"
+    "dist": "electron-builder --win",
+    "dist:portable": "electron-builder --win portable"
   },
   "devDependencies": {
     "electron": "^31.7.7",
     "electron-builder": "^24.13.3"
+  },
+  "dependencies": {
+    "electron-updater": "^6.3.9"
   },
   "build": {
     "appId": "com.midescargador.desktop",
@@ -32,13 +36,31 @@
     "win": {
       "target": [
         {
+          "target": "nsis",
+          "arch": ["x64"]
+        },
+        {
           "target": "portable",
           "arch": ["x64"]
         }
       ]
     },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "MiDescargador-Setup-${version}.exe",
+      "deleteAppDataOnUninstall": false
+    },
     "portable": {
       "artifactName": "MiDescargador-${version}-portable.exe"
-    }
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "luiggiberaldi",
+        "repo": "Midescargador"
+      }
+    ]
   }
 }

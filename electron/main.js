@@ -1,8 +1,9 @@
 // MiDescargador - escritorio (Electron)
 // Lanza el backend (servidor.exe empaquetado), espera a que responda en el
 // puerto 17890 y abre el panel en su propia ventana. Al cerrar la app,
-// detiene el servidor.
-const { app, BrowserWindow, dialog, shell } = require("electron");
+// detiene el servidor. Incluye auto-actualización vía electron-updater
+// (solo en la versión instalada; el portable no puede auto-actualizarse).
+const { app, BrowserWindow, dialog, shell, Menu } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -28,6 +29,88 @@ if (!app.requestSingleInstanceLock()) {
       win.focus();
     }
   });
+}
+
+// ¿Es un portable (self-extracting)? electron-updater no puede actualizarlo.
+const esPortable = !!process.env.PORTABLE_EXECUTABLE_DIR;
+
+// ---- auto-actualización (solo versión instalada) ----
+let autoUpdater = null;
+if (app.isPackaged && !esPortable) {
+  const { autoUpdater: au } = require("electron-updater");
+  autoUpdater = au;
+  autoUpdater.autoDownload = false; // preguntamos antes de descargar
+  autoUpdater.autoInstallOnAppQuit = true;
+}
+
+let actualizando = false;
+
+function configurarAutoUpdate() {
+  if (!autoUpdater) return;
+
+  autoUpdater.on("checking-for-update", () => log("buscando actualizaciones..."));
+  autoUpdater.on("update-not-available", () => log("sin actualizaciones"));
+  autoUpdater.on("error", (err) => log("error de actualización: " + (err && err.message ? err.message : err)));
+
+  autoUpdater.on("update-available", (info) => {
+    log("actualización disponible: " + info.version);
+    const win = BrowserWindow.getAllWindows()[0];
+    dialog.showMessageBox(win, {
+      type: "info",
+      title: "Actualización disponible",
+      message: "Hay una versión nueva de MiDescargador (" + info.version + ").",
+      detail: "¿Descargarla e instalarla ahora? La descarga es en segundo plano y podrás seguir usando la app.",
+      buttons: ["Descargar", "Ahora no"],
+      defaultId: 0,
+      cancelId: 1,
+    }).then(({ response }) => {
+      if (response === 0) {
+        actualizando = true;
+        autoUpdater.downloadUpdate();
+      }
+    });
+  });
+
+  autoUpdater.on("download-progress", (p) => {
+    if (p && Math.floor(p.percent) % 10 === 0) {
+      log("descargando actualización: " + Math.floor(p.percent) + "%");
+    }
+  });
+
+  autoUpdater.on("update-downloaded", (info) => {
+    log("actualización descargada: " + info.version);
+    const win = BrowserWindow.getAllWindows()[0];
+    dialog.showMessageBox(win, {
+      type: "info",
+      title: "Actualización lista",
+      message: "La actualización " + info.version + " ya está descargada.",
+      detail: "Reinicia la aplicación para instalarla. Se cerrará y volverá a abrirse sola.",
+      buttons: ["Reiniciar e instalar", "Más tarde"],
+      defaultId: 0,
+      cancelId: 1,
+    }).then(({ response }) => {
+      if (response === 0) {
+        autoUpdater.quitAndInstall(false, true);
+      }
+    });
+  });
+
+  // comprobar al arrancar (tras unos segundos) y cada 4 horas
+  setTimeout(() => autoUpdater.checkForUpdates().catch(() => {}), 10000);
+  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 4 * 60 * 60 * 1000);
+
+  // menú para forzar la comprobación (Alt muestra la barra)
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    {
+      label: "MiDescargador",
+      submenu: [
+        { label: "Buscar actualizaciones…", click: () => autoUpdater.checkForUpdates().catch(() => {}) },
+        { type: "separator" },
+        { role: "quit", label: "Salir" },
+      ],
+    },
+    { role: "editMenu" },
+  ]));
 }
 
 function rutaBackend() {
@@ -129,6 +212,7 @@ function crearVentana() {
 app.whenReady().then(async () => {
   await asegurarServidor();
   crearVentana();
+  configurarAutoUpdate();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) crearVentana();
   });
