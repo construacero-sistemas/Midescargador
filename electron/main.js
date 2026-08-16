@@ -18,6 +18,29 @@ function log(msg) {
   } catch (e) { /* sin consola en empaquetado */ }
 }
 
+// Al relanzar tras una actualización, la app hereda el stdout del instalador;
+// cuando ese pipe se cierra, cualquier console.* lanza EPIPE y Electron muestra
+// el diálogo "A JavaScript error occurred in the main process". Lo evitamos:
+// (1) asignando un logger seguro al autoUpdater y (2) ignorando excepciones
+// de pipe roto en el proceso principal.
+const logSeguro = (msg) => log(msg);
+const loggerUpdater = {
+  info: logSeguro,
+  warn: logSeguro,
+  error: logSeguro,
+  debug: logSeguro,
+};
+
+process.on("uncaughtException", (err) => {
+  if (err && (err.code === "EPIPE" || err.code === "ECONNRESET")) {
+    // pipe de consola roto tras relanzar desde el instalador: irrelevante
+    return;
+  }
+  try {
+    console.error("[MiDescargador] excepción no capturada:", err);
+  } catch (e) { /* sin consola */ }
+});
+
 // ---- single instance: dos ventanas de la app usarían dos backends ----
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -41,6 +64,7 @@ if (app.isPackaged && !esPortable) {
   autoUpdater = au;
   autoUpdater.autoDownload = false; // preguntamos antes de descargar
   autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = loggerUpdater; // nunca escriba directo a console
 }
 
 let actualizando = false;
