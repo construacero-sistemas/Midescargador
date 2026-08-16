@@ -7,10 +7,23 @@ const { app, BrowserWindow, dialog, shell, Menu } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
+const os = require("os");
 const net = require("net");
 
 const PUERTO = 17890;
 const URL_PANEL = "http://127.0.0.1:" + PUERTO;
+
+// La versión real de la app vive en package.json (Electron), pero el backend
+// es un proceso aparte que no puede leer el app.asar. Al arrancar, Electron
+// escribe un version.json compartido que el backend consulta para el badge.
+function escribirVersionBackend() {
+  try {
+    const dir = path.join(process.env.LOCALAPPDATA || os.tmpdir(), "MiDescargador");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "version.json"),
+      JSON.stringify({ version: app.getVersion() }));
+  } catch (e) { /* no crítico */ }
+}
 
 function log(msg) {
   try {
@@ -234,6 +247,7 @@ function crearVentana() {
 }
 
 app.whenReady().then(async () => {
+  escribirVersionBackend();
   await asegurarServidor();
   crearVentana();
   configurarAutoUpdate();

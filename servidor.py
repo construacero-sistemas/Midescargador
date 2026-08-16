@@ -49,8 +49,31 @@ def _base_dir():
     return BASE_DIR
 
 
+def _version_app():
+    r"""Versión de la app. La escribe Electron al arrancar en
+    %LOCALAPPDATA%\MiDescargador\version.json (app.getVersion()); en dev
+    (sin Electron) cae a electron/package.json. Si no hay nada, fallback."""
+    import json as _json
+    candidatos = [
+        # version.json compartido, escrito por la app de escritorio
+        os.path.join(_dir_datos(), "version.json"),
+        # en dev: electron/package.json junto al proyecto
+        os.path.join(BASE_DIR, "electron", "package.json"),
+        os.path.join(BASE_DIR, "..", "electron", "package.json"),
+    ]
+    for c in candidatos:
+        try:
+            with open(c, encoding="utf-8") as f:
+                v = _json.load(f).get("version")
+            if v:
+                return v
+        except Exception:
+            continue
+    return "2.0"
+
+
 def _dir_datos():
-    """Carpeta de datos persistentes (logs): en el empaquetado el _MEIPASS es
+    r"""Carpeta de datos persistentes (logs): en el empaquetado el _MEIPASS es
     temporal, así que los logs van a %LOCALAPPDATA%\MiDescargador."""
     if getattr(sys, "_MEIPASS", None):
         d = os.path.join(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()),
@@ -1377,7 +1400,7 @@ class Manejador(BaseHTTPRequestHandler):
         elif ruta == "/api/estado":
             self._json(GESTOR.estado())
         elif ruta == "/api/version":
-            self._json({"nombre": "MiDescargador", "version": "1.0"})
+            self._json({"nombre": "MiDescargador", "version": _version_app()})
         elif ruta == "/api/log":
             self._json({"lineas": _leer_log(200), "ruta": LOG_RUTA})
         elif ruta == "/api/config":

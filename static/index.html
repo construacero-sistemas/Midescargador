@@ -1570,7 +1570,7 @@
       <div>
         <div class="brand-title">
           MiDescargador
-          <span class="brand-badge">2.0 Pro</span>
+          <span class="brand-badge" id="brand-badge">cargando…</span>
         </div>
         <div class="brand-subtitle">Motor segmentado paralelo · Sin límites</div>
       </div>
@@ -3032,6 +3032,19 @@
   setInterval(refrescar, 900);
   refrescar();
   cargarConfig();
+
+  // Versión real de la app (desde el backend: package.json de Electron)
+  (async () => {
+    try {
+      const r = await fetch("/api/version");
+      const d = await r.json();
+      const badge = $("#brand-badge");
+      if (badge && d.version) {
+        badge.textContent = "v" + d.version;
+        badge.title = "Versión " + d.version;
+      }
+    } catch (e) { /* sin servidor aún */ }
+  })();
 
   // Load Supported Hosters List
   async function cargarHosters() {
