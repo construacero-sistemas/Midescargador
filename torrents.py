@@ -58,6 +58,7 @@ on_completada = None
 on_error = None
 
 _ZETRENT = ("zetrrent.com", "www.zetrrent.com")
+_MADIASHARE = ("madiashare.com", "www.madiashare.com")
 
 
 def disponible():
@@ -66,14 +67,32 @@ def disponible():
 
 
 def es_torrent(url):
-    """Reconoce magnet:, URLs .torrent y enlaces de zetrrent.com."""
+    """Reconoce magnet:, URLs .torrent, zetrrent.com y madiashare.com.
+    madiashare es el hoster de .torrent que usan las páginas de pivigames:
+    la URL visible (downloads?d=<id>) es una página HTML que al pulsar su
+    botón navega a /Link/downloads/<id>, que sí entrega el .torrent."""
     u = (url or "").strip()
     if u.lower().startswith("magnet:"):
         return True
     if ".torrent" in u.lower():
         return True
     host = (urllib.parse.urlparse(u).hostname or "").lower()
-    return host in _ZETRENT
+    return host in _ZETRENT or host in _MADIASHARE
+
+
+def _url_torrent_directa(url):
+    """Convierte una URL de madiashare a la ruta que entrega el .torrent.
+    https://madiashare.com/downloads?d=<id> -> https://madiashare.com/Link/downloads/<id>
+    (si ya es /Link/... se deja igual)."""
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    if host not in _MADIASHARE:
+        return url
+    if "/Link/" in url:
+        return url
+    m = re.search(r"[?&]d=([A-Za-z0-9_-]+)", url)
+    if not m:
+        return url
+    return "https://madiashare.com/Link/downloads/" + m.group(1)
 
 
 def _pedir(op, url, metodo="GET", cabeceras=None, datos=None):
@@ -160,6 +179,9 @@ def resolver(url):
         if url.lower().startswith("magnet:"):
             nombre = "torrent"
         else:
+            # madiashare: la URL visible es una página; la directa entrega el .torrent
+            if host in _MADIASHARE:
+                url = _url_torrent_directa(url)
             nombre = (os.path.basename(urllib.parse.urlparse(url).path)
                       or "descarga.torrent")
         return {"torrent_url": url, "local": None, "nombre": nombre}

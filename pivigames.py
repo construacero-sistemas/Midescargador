@@ -25,6 +25,7 @@ import time
 import urllib.parse
 import urllib.request
 
+import torrents   # _url_torrent_directa (madiashare -> .torrent)
 import zonaleros  # CDP, _lanzar, _clasificar_enlaces, _leer_enlaces_paste...
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -234,6 +235,11 @@ def extraer(url):
                 if ph not in resueltos:
                     cola.append((ph, etiqueta))
             for e in enlaces:
+                # madiashare (torrent): la URL visible es una página HTML; la
+                # directa /Link/downloads/<id> es la que entrega el .torrent
+                u = e["url"]
+                if "madiashare.com" in (urllib.parse.urlparse(u).hostname or "").lower():
+                    e["url"] = torrents._url_torrent_directa(u)
                 hoster = _nombre_hoster(e["url"])
                 grupo = acumulado.setdefault(hoster, {"enlaces": [], "etiquetas": set()})
                 grupo["enlaces"].append(e)
