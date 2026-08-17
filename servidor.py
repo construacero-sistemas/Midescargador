@@ -32,6 +32,7 @@ import motor
 import hosters
 import mega
 import zonaleros
+import pivigames
 import cuenta
 import descomprimir
 import torrents
@@ -556,7 +557,7 @@ def _formatos(url):
     return lista
 
 
-# ------------------------------------------------------- enlaces (zona-leros)
+# ---------------------------------------------------- enlaces (zona-leros/pivigames)
 # URLs que claramente no son una página de juego (imágenes, comprimidos...):
 # extraer enlaces de ellas lanzaría Chrome para nada.
 _EXT_ARCHIVO = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg",
@@ -569,6 +570,15 @@ def _es_url_archivo(url):
     return p.endswith(_EXT_ARCHIVO)
 
 
+def _pagina_enlaces(url):
+    """Devuelve el módulo extractor adecuado para la URL, o None."""
+    if "zona-leros.com" in url:
+        return zonaleros
+    if pivigames._es_pivigames(url):
+        return pivigames
+    return None
+
+
 _HILO_SESION = None          # hilo del inicio de sesión de Google
 _ENLACES_CACHE = {}          # url -> (timestamp, resultado)
 _ENLACES_TTL = 12 * 3600     # 12 horas: los enlaces rara vez cambian
@@ -576,18 +586,20 @@ _ENLACES_LOCK = threading.Lock()
 _ENLACES_TAREAS = {}         # id -> {url, estado, resultado, ts} (en curso)
 
 
-def _enlaces_zonaleros(url):
-    """(síncrono) Lista los enlaces de descarga de una página de zona-leros.com.
-    Usa el Chrome real del usuario para pasar Cloudflare; el resultado se
-    guarda en caché 12 horas (la extracción tarda ~1-3 minutos)."""
-    if "zona-leros.com" not in url:
-        return {"error": "no parece un enlace de zona-leros.com"}
+def _enlaces_extraer(url):
+    """(síncrono) Lista los enlaces de descarga de una página de juego
+    (zona-leros.com o pivigames.blog). Usa el Chrome real del usuario para
+    pasar Cloudflare; el resultado se guarda en caché 12 horas (la
+    extracción tarda ~1-3 minutos)."""
+    modulo = _pagina_enlaces(url)
+    if modulo is None:
+        return {"error": "no parece un enlace de zona-leros.com ni de pivigames.blog"}
     with _ENLACES_LOCK:
         if url in _ENLACES_CACHE:
             ts, r = _ENLACES_CACHE[url]
             if time.time() - ts < _ENLACES_TTL:
                 return r
-        resultado = zonaleros.extraer(url)
+        resultado = modulo.extraer(url)
         # solo se cachea si salió al menos un enlace (una extracción vacía
         # no merece quedar guardada)
         if (not resultado.get("error") and any(
@@ -601,8 +613,8 @@ def _enlaces_lanzar(url):
     y devuelve un id de tarea para sondearla. Así el panel no mantiene una
     conexión HTTP de 1-3 minutos que se cae con 'Failed to fetch' cuando
     el servidor se reinicia o la red hace un corte transitorio."""
-    if "zona-leros.com" not in url:
-        return {"error": "no parece un enlace de zona-leros.com"}
+    if _pagina_enlaces(url) is None:
+        return {"error": "no parece un enlace de zona-leros.com ni de pivigames.blog"}
     if _es_url_archivo(url):
         return {"error": ("esa URL es un archivo o imagen, no una página de "
                           "juego. Pega la URL de la página "
@@ -622,7 +634,7 @@ def _enlaces_lanzar(url):
 
     def _trabajo():
         try:
-            _ENLACES_TAREAS[tid]["resultado"] = _enlaces_zonaleros(url)
+            _ENLACES_TAREAS[tid]["resultado"] = _enlaces_extraer(url)
         except Exception as e:
             _ENLACES_TAREAS[tid]["resultado"] = {
                 "error": "error extrayendo: %s" % e}
@@ -1047,6 +1059,17 @@ class Gestor:
     def agregar(self, url, segmentos=8, carpeta=None, formato=None,
                 iniciar_auto=True, origen=None):
         carpeta = carpeta or CARPETA_DEFECTO
+        # Anti-duplicados: si esta misma URL ya tiene un trabajo vivo
+        # (descargando, esperando, en cola o pausada), devolvemos ese id en
+        # lugar de crear otro. Evita que pulsar varias veces 'Descargar'
+        # (o doble clic) encuele la misma descarga repetida.
+        vivos = {"descargando", "esperando", "en cola", "uniendo", "pausada"}
+        with self._lock:
+            for t in self.trabajos.values():
+                if t.estado in vivos:
+                    t_url = getattr(t, "pagina", None) or getattr(t, "url", "")
+                    if t_url == url:
+                        return t.id
         # file hosters (rootz.so, etc.): resuelve primero a la URL directa
         # para que el motor segmentado baje con Range, pausa y reanudación
         resuelto = None
@@ -1091,7 +1114,7 @@ class Gestor:
         else:
             t = motor.Descarga(url, carpeta, segmentos=segmentos)
         t.id = uuid.uuid4().hex[:8]
-        t.origen = origen or ""   # "zonaleros": contraseña automática al descomprimir
+        t.origen = origen or ""   # "zonaleros"/"pivigames": contraseña automática
         with self._lock:
             self.trabajos[t.id] = t
         if iniciar_auto:
@@ -1286,9 +1309,11 @@ def _descomprimir_si_aplica(trabajo):
         return
     if descomprimir.es_parte_secundaria(nombre):
         return
-    # contraseña: los enlaces de zona-leros usan "zonaleros" automáticamente
+    # contraseña automática según el sitio de origen
     if getattr(trabajo, "origen", "") == "zonaleros":
         password = "zonaleros"
+    elif getattr(trabajo, "origen", "") == "pivigames":
+        password = "pivigames"
     else:
         password = PASSWORD_DESCOMPRESION
     if _faltan_partes(ruta):

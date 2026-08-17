@@ -39,13 +39,13 @@ _CTX = ssl.create_default_context()
 SOPORTADOS = ("rootz.so", "www.rootz.so", "fireload.com", "www.fireload.com",
               "megaup.net", "www.megaup.net", "gofile.io", "www.gofile.io",
               "mediafire.com", "www.mediafire.com", "fuckingfast.net",
-              "www.fuckingfast.net")
+              "www.fuckingfast.net", "1fichier.com", "www.1fichier.com")
 
 # etiquetas amigables por dominio (para la lista del panel)
 ETIQUETAS = {
     "rootz.so": "Rootz", "fireload.com": "Fireload", "megaup.net": "MegaUp",
     "gofile.io": "GoFile", "mediafire.com": "MediaFire",
-    "fuckingfast.net": "FuckingFast",
+    "fuckingfast.net": "FuckingFast", "1fichier.com": "1Fichier",
 }
 
 
@@ -275,41 +275,100 @@ def _extraer_fireload(url):
 
 
 def _extraer_megaup(url):
-    """Megaup: la URL de descarga viene en el HTML (countdown de 2 s).
-    download.megaup.net está detrás de un reto de Cloudflare: si falla aquí,
-    la descarga se intentará igualmente (con cookies de Chrome como respaldo).
+    """Megaup: la URL directa real está detrás de dos capas.
+
+    Flujo (descubierto experimentalmente):
+      1. La página del archivo trae un href a download.megaup.net/?url=<tok>,
+         que responde 403 a clientes HTTP normales (Cloudflare).
+      2. Abierta en Chrome (sesión real), download.megaup.net muestra un
+         countdown de ~6 s; al pulsar el botón, el JS genera la URL real:
+         megadl.boats/download/<nombre>?download_token=<token>.
+      3. Esa URL soporta Range y se descarga con el motor segmentado. El
+         token caduca rápido (rotación), así que se genera en el momento.
     """
+    import zonaleros  # local: evita dependencia circular
+
+    if zonaleros._chrome_corriendo():
+        raise RuntimeError(
+            "megaup exige el navegador real para resolver el enlace: "
+            "cierra Chrome del todo y reintenta.")
+    ws_url, err = zonaleros._lanzar(url)
+    if err:
+        raise RuntimeError(err)
+    cdp = None
     try:
-        with _pedir(url) as r:
-            html = r.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as e:
-        raise RuntimeError(f"megaup bloqueó la página (HTTP {e.code})") from e
-    except Exception as e:
-        raise RuntimeError(f"no se pudo abrir la página megaup: {e}") from e
-
-    m = re.search(r"href='(https://download\.megaup\.net/\?url=[^']+)'", html)
-    if not m:
-        raise RuntimeError("no encontré el enlace de descarga en megaup "
-                           "(¿archivo borrado o requiere espera?)")
-    directa = m.group(1)
-    # nota: download.megaup.net exige pasar un reto de Cloudflare. Si la
-    # descarga falla con 403, la solución es abrir el enlace en Chrome una vez
-    # (resuelve el reto) y pulsar Reintentar en el panel.
-
-    tm = re.search(r"<title>([^<]+)</title>", html)
-    nombre = tm.group(1).strip() if tm else "descarga"
-    # quita el sufijo " - MegaUp" del título
-    nombre = re.sub(r"\s*-\s*MegaUp\s*$", "", nombre, flags=re.I)
-    tam = None
-    mm = re.search(r"([\d.]+)\s*(MB|GB|KB)", html)
-    if mm:
-        try:
-            n = float(mm.group(1))
-            u = mm.group(2).upper()
-            tam = int(n * (1024 ** {"KB": 1, "MB": 2, "GB": 3}[u]))
-        except Exception:
-            tam = None
-    return {"url": directa, "nombre": nombre, "tamano": tam, "pagina": url}
+        cdp = zonaleros._Cdp(ws_url)
+        # 1) página del archivo: espera el href a download.megaup.net
+        fin = time.time() + 45
+        href = None
+        while time.time() < fin:
+            try:
+                html = cdp.eval("document.documentElement.outerHTML") or ""
+            except Exception:
+                html = ""
+            m = re.search(r"href='([^']*download\.megaup\.net[^']*)'", html)
+            if m:
+                href = m.group(1)
+                break
+            time.sleep(3)
+        if not href:
+            raise RuntimeError(
+                "megaup no expuso la página de descarga (¿archivo borrado?)")
+        # 2) navega a download.megaup.net (deja pasar Cloudflare) y espera
+        #    el countdown (~6 s) hasta que el botón esté habilitado
+        import json as _json
+        cdp._ws.send(_json.dumps({
+            "id": 9006, "method": "Page.navigate", "params": {"url": href}}))
+        fin = time.time() + 60
+        while time.time() < fin:
+            try:
+                listo = cdp.eval(
+                    "(() => { const b = document.getElementById('btndownload'); "
+                    "return b ? !b.disabled : false; })()")
+            except Exception:
+                listo = False
+            if listo:
+                break
+            time.sleep(2)
+        # 3) pulsa el botón y lee la URL real (megadl.boats) que se revela
+        cdp.eval("document.getElementById('btndownload').click()")
+        fin = time.time() + 30
+        directa = None
+        while time.time() < fin:
+            try:
+                directa = cdp.eval(
+                    "(() => { const a = document.querySelector("
+                    "'#afterdownload a[href]'); return a ? a.href : null; })()")
+            except Exception:
+                directa = None
+            if directa:
+                break
+            time.sleep(2)
+        if not directa:
+            raise RuntimeError(
+                "megaup no generó el enlace de descarga (¿cuenta o límite?)")
+        # nombre desde el <title> de la página del archivo
+        nombre = None
+        tm = re.search(r"<title>([^<]+)</title>", html or "", re.I)
+        if tm:
+            nombre = re.sub(r"\s*-\s*MegaUp\s*$", "", tm.group(1).strip(),
+                            flags=re.I)
+        tam = None
+        mm = re.search(r"\(([\d.]+)\s*(GB|MB|KB)\)", html or "", re.I)
+        if mm:
+            try:
+                n = float(mm.group(1))
+                u = mm.group(2).upper()
+                tam = int(n * (1024 ** {"KB": 1, "MB": 2, "GB": 3}[u]))
+            except Exception:
+                tam = None
+        return {"url": directa, "nombre": nombre, "tamano": tam, "pagina": url}
+    finally:
+        if cdp:
+            try:
+                cdp.cerrar()
+            except Exception:
+                pass
 
 
 def _extraer_mediafire(url):
@@ -538,6 +597,77 @@ def _extraer_fuckingfast(url):
                 pass
 
 
+def _extraer_1fichier(url):
+    """1fichier: página con countdown (60 s para invitados) y POST.
+
+    Flujo (descubierto experimentalmente):
+      1. GET la página -> guarda cookies y lee el countdown (var ct = N).
+      2. Esperar N segundos (el servidor valida el tiempo transcurrido).
+      3. POST a la misma URL con las mismas cookies (dl_no_ssl/dlinline).
+      4. La respuesta trae el enlace real: http(s)://a-<n>.1fichier.com/<id>
+         (botón 'Start your download'), que soporta Range.
+    """
+    import http.cookiejar
+    cj = http.cookiejar.CookieJar()
+    op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+    op.addheaders = [("User-Agent", UA), ("Accept-Language", "es-ES,es;q=0.9")]
+    try:
+        with op.open(url, timeout=TIMEOUT) as r:
+            html = r.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"1fichier bloqueó la página (HTTP {e.code})") from e
+    except Exception as e:
+        raise RuntimeError(f"no se pudo abrir la página 1fichier: {e}") from e
+
+    # countdown (60 s para invitados)
+    m = re.search(r"var ct\s*=\s*(\d+)", html)
+    espera = int(m.group(1)) if m else 60
+    # el servidor valida que pasó el tiempo; esperamos un margen extra
+    time.sleep(espera + 2)
+
+    data = urllib.parse.urlencode(
+        {"dl_no_ssl": "on", "dlinline": "on"}).encode("utf-8")
+    try:
+        with op.open(urllib.request.Request(url, data=data), timeout=TIMEOUT) as r:
+            body = r.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"1fichier rechazó la descarga (HTTP {e.code})") from e
+    except Exception as e:
+        raise RuntimeError(f"1fichier falló al pedir la descarga: {e}") from e
+
+    # enlace real: a-<n>.1fichier.com/<id>[?inline]
+    m = re.search(r"href=\"(https?://a-\d+\.1fichier\.com/[^\"'\s]+)\"",
+                  body, re.I)
+    if not m:
+        if "temporarily limited" in body.lower() or "high demand" in body.lower():
+            raise RuntimeError(
+                "1fichier limita las descargas gratuitas por alta demanda "
+                "en este momento; intenta en unos minutos.")
+        raise RuntimeError(
+            "1fichier no entregó el enlace de descarga "
+            "(¿archivo borrado o requiere cuenta?)")
+    directa = m.group(1)
+    if not directa.startswith("https"):
+        directa = "https:" + directa  # forzar TLS
+
+    # nombre y tamaño de la página inicial (los trae en el título)
+    nombre = None
+    tm = re.search(r"<span[^>]*>([^<]+\.(?:rar|zip|7z|001|r00|mp4))</span>",
+                   html, re.I)
+    if tm:
+        nombre = tm.group(1).strip()
+    tam = None
+    mm = re.search(r"([\d.]+)\s*(GB|MB|KB)", html)
+    if mm:
+        try:
+            n = float(mm.group(1))
+            u = mm.group(2).upper()
+            tam = int(n * (1024 ** {"KB": 1, "MB": 2, "GB": 3}[u]))
+        except Exception:
+            tam = None
+    return {"url": directa, "nombre": nombre, "tamano": tam, "pagina": url}
+
+
 def resolver(url):
     """Intenta convertir un enlace de file hoster en su URL directa.
 
@@ -557,4 +687,6 @@ def resolver(url):
         return _extraer_mediafire(url)
     if host in ("fuckingfast.net", "www.fuckingfast.net"):
         return _extraer_fuckingfast(url)
+    if host in ("1fichier.com", "www.1fichier.com"):
+        return _extraer_1fichier(url)
     return None
