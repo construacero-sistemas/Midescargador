@@ -927,12 +927,23 @@ class _TrabajoYtdlp:
             # prefiere el formato limpio (TikTok etiqueta el suyo como
             # 'watermarked') y cae al con marca solo si no hay otra opción
             cmd += ["-f", "bv*+ba[format_note!=watermarked]"
-                    "/b[format_note!=watermarked]/bv*+ba/b"]
+                    "/b[format_note!=watermarked]/bv*+ba/b",
+                    # mp4 en vez de webm: misma resolución y codec, pero el
+                    # contenedor que reproducen Windows, TV, editores y
+                    # WhatsApp sin problemas (webm/AV1 no lo reproducen todos)
+                    "-S", "res,ext:mp4:m4a"]
         else:
             cmd += ["-f", _formato_sin_marca(self.formato)]
+            # formatos concretos: también prefiere mp4 si el servidor lo da
+            cmd += ["-S", "res,ext:mp4:m4a"]
         ff = _ruta_ffmpeg()
         if ff:
             cmd += ["--ffmpeg-location", os.path.dirname(ff)]
+        # contenedor final mp4: cuando yt-dlp fusiona video+audio, que el
+        # resultado sea .mp4 (el -S de arriba prefiere fuentes mp4; esto
+        # asegura que la FUSIÓN también quede en mp4 y no vuelva a webm)
+        if self.formato != "audio":
+            cmd += ["--merge-output-format", "mp4"]
         cmd += extra + [
             "-o", os.path.join(self.carpeta, "%(title).120s.%(ext)s"),
             self.url,
