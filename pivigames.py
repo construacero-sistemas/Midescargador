@@ -6,12 +6,23 @@ usa zpaste.net): cada botón de la página del juego es una imagen que apunta
 a https://playpaste.net/pivi/?v=<codigo>, y cada paste está protegido con un
 reto de Turnstile de Cloudflare ("Comprueba que eres humano" -> Continuar).
 
+Dos particularidades de pivigames que este extractor maneja:
+
+1. PASTES ENCADENADOS. Un botón puede revelar enlaces a OTROS pastes de
+   playpaste (p. ej. el botón "Mega, Mediafire y Gofile" revela el enlace de
+   Gofile + dos pastes más, uno con el enlace de Mega y otro con el de
+   MediaFire). Se resuelven en cadena hasta agotarlos.
+
+2. UN SERVIDOR = UN HOSTER. Al final los enlaces se agrupan por el servidor
+   real (Mega, MediaFire, Gofile, Qiwi, PixelDrain, Torrent...), no por la
+   etiqueta del botón, para que cada servidor aparezca por separado.
+
 Se reutiliza la infraestructura de zonaleros (Chrome real vía CDP, clic en el
-widget de Turnstile y el clasificador de multipartes), cambiando solo la
-página de origen y el flujo del paste.
+widget de Turnstile y el clasificador de multipartes).
 """
 import re
 import time
+import urllib.parse
 import urllib.request
 
 import zonaleros  # CDP, _lanzar, _clasificar_enlaces, _leer_enlaces_paste...
@@ -19,14 +30,39 @@ import zonaleros  # CDP, _lanzar, _clasificar_enlaces, _leer_enlaces_paste...
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 
+# (fragmento de dominio, nombre de servidor) para agrupar por hoster real
+_HOSTERS = (
+    ("mega.nz", "Mega"), ("mega.co.nz", "Mega"),
+    ("mediafire.com", "MediaFire"),
+    ("gofile.io", "Gofile"),
+    ("qiwi.gg", "Qiwi"),
+    ("pixeldrain.com", "PixelDrain"),
+    ("madiashare.com", "Torrent"),
+    ("drive.google.com", "Google Drive"),
+    ("megaup.net", "MegaUp"),
+    ("1fichier.com", "1Fichier"),
+    ("fuckingfast.net", "FuckingFast"),
+    ("rootz.so", "Rootz"), ("www.rootz.so", "Rootz"),
+    ("fireload.com", "Fireload"),
+)
+
 
 def _es_pivigames(url):
     return "pivigames.blog" in (url or "").lower()
 
 
+def _nombre_hoster(url):
+    """Nombre de servidor del enlace según su dominio real."""
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    for frag, nombre in _HOSTERS:
+        if frag in host:
+            return nombre
+    return host.replace("www.", "") or "?"
+
+
 def _leer_enlaces_paste(cdp):
-    """Lee los enlaces de descarga visibles del paste (reutiliza el de
-    zonaleros, que ya filtra el acortador y normaliza)."""
+    """Lee los enlaces visibles del paste (reutiliza el de zonaleros, que ya
+    filtra el acortador y normaliza). Incluye los playpaste encadenados."""
     return zonaleros._leer_enlaces_paste(cdp)
 
 
@@ -55,12 +91,26 @@ def _pulsar_continuar(cdp):
     time.sleep(3)
 
 
+def _recargar_paste(cdp):
+    """Recarga el paste actual (nueva sesión de reto Turnstile). Devuelve
+    True si el paste volvió a cargar."""
+    paste_url = cdp.eval("location.href") or ""
+    if not paste_url or "playpaste.net" not in paste_url:
+        return False
+    return bool(cdp.navegar(paste_url,
+                            condicion="location.href.indexOf('playpaste.net') !== -1",
+                            tiempo_max=35))
+
+
 def _resolver_paste(cdp, fin_global):
     """Resuelve UN paste de playpaste: espera el token invisible de
     Turnstile, envía 'Continuar' y espera a que aparezcan los enlaces.
-    Reintenta una vez recargando el paste (como hace zonaleros con zpaste).
-    Devuelve la lista de enlaces (puede ser vacía)."""
+    Reintenta una vez recargando el paste. Devuelve (enlaces_finales,
+    pastes_hijos): enlaces_finales son los enlaces de descarga (sin
+    playpaste) y pastes_hijos los playpaste encadenados que hay que seguir.
+    """
     enlaces = []
+    pastes_hijos = []
     for intento in range(2):
         if time.time() >= fin_global:
             break
@@ -87,13 +137,15 @@ def _resolver_paste(cdp, fin_global):
         #    revela la página con los botones de descarga)
         fin_links = min(time.time() + 30, fin_global)
         while time.time() < fin_links:
-            enlaces = _leer_enlaces_paste(cdp)
-            # descarta enlaces a otros pastes de playpaste (los botones de
-            # la página del juego quedan visibles en el HTML revelado)
-            enlaces = [e for e in enlaces
-                       if "playpaste.net" not in e.get("url", "")]
+            crudo = _leer_enlaces_paste(cdp)
+            # separa los enlaces de descarga de los playpaste encadenados
+            enlaces = [e for e in crudo if "playpaste.net" not in e.get("url", "")]
+            for e in crudo:
+                u = e.get("url", "")
+                if "playpaste.net" in u and u not in pastes_hijos:
+                    pastes_hijos.append(u)
             if enlaces:
-                return enlaces
+                return enlaces, pastes_hijos
             # 'Captcha incorrecto' = el token no era válido: reintenta
             if (cdp.eval("(document.body.innerText || '').indexOf('Captcha incorrecto') !== -1") or False):
                 break
@@ -103,24 +155,13 @@ def _resolver_paste(cdp, fin_global):
         # reintenta: recarga el paste (nueva sesión de reto)
         if not _recargar_paste(cdp):
             break
-    return enlaces
-
-
-def _recargar_paste(cdp):
-    """Recarga el paste actual (nueva sesión de reto Turnstile). Devuelve
-    True si el paste volvió a cargar."""
-    paste_url = cdp.eval("location.href") or ""
-    if not paste_url or "playpaste.net" not in paste_url:
-        return False
-    return bool(cdp.navegar(paste_url,
-                            condicion="location.href.indexOf('playpaste.net') !== -1",
-                            tiempo_max=35))
+    return enlaces, pastes_hijos
 
 
 def extraer(url):
     """Flujo completo: abre la página del juego de pivigames, recoge los
-    botones (playpaste), resuelve el Turnstile de cada paste y lee los
-    enlaces finales de cada servidor. Devuelve {"servidores", "titulo"}."""
+    botones (playpaste), resuelve la cadena de pastes (Turnstile) y agrupa
+    los enlaces por servidor real. Devuelve {"servidores", "titulo"}."""
     # la página del juego responde sin navegador: la usamos para los botones
     try:
         req = urllib.request.Request(url, headers={"User-Agent": UA,
@@ -163,31 +204,59 @@ def extraer(url):
     titulo_juego = re.sub(r"^\s*[▷▶•]+\s*", "", titulo_juego)
     titulo_juego = re.sub(r"\s*\|\s*PiviGames\s*$", "", titulo_juego)
 
-    # ahora resuelve cada paste con Chrome (Turnstile)
+    # resuelve la cadena de pastes con Chrome (Turnstile). Cada botón puede
+    # revelar enlaces directos + otros pastes: se siguen en una cola.
     ws_url, err = zonaleros._lanzar("about:blank")
     if err:
         return {"error": err}
     cdp = None
-    fin_global = time.time() + 420   # tope total ~7 min (4 pastes x ~60 s)
-    servidores = []
+    fin_global = time.time() + 600   # tope total ~10 min (cadena de pastes)
     try:
         cdp = zonaleros._Cdp(ws_url)
-        for b in botones:
-            servidor = (b.get("t") or "?").strip()[:60] or "?"
-            if time.time() >= fin_global:
-                break
-            if not cdp.navegar(b["h"],
+        # cola: (url del paste, etiqueta del botón que lo originó)
+        cola = [(b["h"], b.get("t") or "") for b in botones]
+        resueltos = set()
+        # acumula por hoster: hoster -> {"enlaces": [...], "etiquetas": set()}
+        acumulado = {}
+        limite_pastes = 12   # cota de seguridad por si la cadena se dispara
+        while cola and time.time() < fin_global and len(resueltos) < limite_pastes:
+            href, etiqueta = cola.pop(0)
+            if href in resueltos:
+                continue
+            resueltos.add(href)
+            if not cdp.navegar(href,
                                condicion="location.href.indexOf('playpaste.net') !== -1",
                                tiempo_max=40):
-                servidores.append({"servidor": servidor, "enlaces": [],
-                                   "error": "no se pudo abrir el paste"})
                 continue
-            enlaces = _resolver_paste(cdp, fin_global)
+            enlaces, pastes_hijos = _resolver_paste(cdp, fin_global)
+            # los playpaste encadenados se siguen con la misma etiqueta
+            for ph in pastes_hijos:
+                if ph not in resueltos:
+                    cola.append((ph, etiqueta))
+            for e in enlaces:
+                hoster = _nombre_hoster(e["url"])
+                grupo = acumulado.setdefault(hoster, {"enlaces": [], "etiquetas": set()})
+                grupo["enlaces"].append(e)
+                if etiqueta:
+                    grupo["etiquetas"].add(etiqueta)
+
+        # construye los servidores agrupados por hoster real
+        servidores = []
+        for hoster, grupo in acumulado.items():
+            enlaces = grupo["enlaces"]
+            # nombre del servidor: el hoster; si la etiqueta del botón aporta
+            # contexto distinto (UPDATE, CRACK...), se añade entre paréntesis
+            nombre = hoster
+            extras = [t for t in grupo["etiquetas"]
+                      if t.lower() not in hoster.lower()
+                      and hoster.lower() not in t.lower()]
+            if extras:
+                nombre = "%s (%s)" % (hoster, extras[0])
             # clasifica multipartes del mismo archivo vs sueltos
             clasificado = zonaleros._clasificar_enlaces([
                 {"url": e["url"], "texto": e.get("texto") or "",
                  "nombre": zonaleros._nombre_de_url(e["url"])} for e in enlaces])
-            clasificado["servidor"] = servidor
+            clasificado["servidor"] = nombre
             servidores.append(clasificado)
         return {"servidores": servidores, "titulo": titulo_juego[:150]}
     except Exception as e:
