@@ -46,7 +46,7 @@ def _nombre_desde_url(url):
     return _sanitizar(nombre) or "descarga"
 
 
-def _pedir(url, rango=None, metodo="GET", datos=None):
+def _pedir(url, rango=None, metodo="GET", datos=None, cookies=None):
     h = {
         "User-Agent": UA,
         "Accept": "*/*",
@@ -59,6 +59,9 @@ def _pedir(url, rango=None, metodo="GET", datos=None):
         # Esos POST aceptan Range igual que un GET normal.
         metodo = "POST"
         h["Content-Type"] = "application/x-www-form-urlencoded"
+    if cookies:
+        # hosters que exigen la sesión del navegador (rapidshare.co, etc.)
+        h["Cookie"] = cookies
     req = urllib.request.Request(url, headers=h, method=metodo, data=datos)
     if rango:
         req.add_header("Range", rango)
@@ -189,7 +192,7 @@ class Descarga:
     """
 
     def __init__(self, url, carpeta, segmentos=8, nombre=None, total=None,
-                 post=None):
+                 post=None, cookies=None, unico=None):
         self.url = url
         self.carpeta = os.path.abspath(carpeta)
         self.segmentos_max = max(1, min(int(segmentos), 32))
@@ -198,6 +201,14 @@ class Descarga:
         # cuerpo form-urlencoded para descargas que exigen POST
         # (hosters como MediaFire con archivos marcados como sospechosos)
         self.post = post
+        # cookies de sesión (hosters como rapidshare.co: el enlace de
+        # descarga exige la cookie que se obtuvo al resolverlo)
+        self.cookies = cookies
+        # unico=True: forzado por el resolver (p. ej. rapidshare.co, cuyo
+        # enlace de descarga es de UN SOLO USO: el probe lo consumiría y
+        # la descarga fallaría con 401). Salta el probe y descarga en una
+        # sola conexión.
+        self._forzar_unico = bool(unico)
 
         self.total = total         # tamaño total en bytes (None = desconocido)
         self.descargado = 0
@@ -328,12 +339,17 @@ class Descarga:
 
     def _probar(self):
         """Descubre tamaño y si el servidor soporta rangos."""
+        if self._forzar_unico:
+            # enlace de un solo uso (rapidshare.co): cualquier petición
+            # previa lo consume y la descarga real fallaría con 401
+            self._unico = True
+            return
         datos = self.post.encode("utf-8") if self.post else None
         # 1) HEAD (se salta si ya conocemos el tamaño o si la descarga
         #    exige POST, que no admite HEAD)
         if self.total is None and datos is None:
             try:
-                with _pedir(self.url, metodo="HEAD") as r:
+                with _pedir(self.url, metodo="HEAD", cookies=self.cookies) as r:
                     cl = r.headers.get("Content-Length")
                     if cl and cl.isdigit():
                         self.total = int(cl)
@@ -343,7 +359,8 @@ class Descarga:
         # 2) confirmar rangos con una petición mínima (siempre: así también
         #    se descubre el tamaño en servidores que no responden HEAD)
         try:
-            with _pedir(self.url, rango="bytes=0-0", datos=datos) as r:
+            with _pedir(self.url, rango="bytes=0-0", datos=datos,
+                        cookies=self.cookies) as r:
                 if r.status == 206:
                     total = _leer_cr(r.headers.get("Content-Range"))
                     if total is not None:
@@ -417,11 +434,16 @@ class Descarga:
                 continue
             try:
                 rango = f"bytes={inicio}-" if inicio else None
-                with _pedir(self.url, rango=rango, datos=datos) as r:
+                with _pedir(self.url, rango=rango, datos=datos,
+                            cookies=self.cookies) as r:
                     if r.status == 206:
                         total = _leer_cr(r.headers.get("Content-Range"))
                         if total is not None:
                             self.total = total
+                    elif self.total is None:
+                        cl = r.headers.get("Content-Length")
+                        if cl and cl.isdigit():
+                            self.total = int(cl)
                     modo = "ab" if (inicio and r.status == 206) else "wb"
                     with open(destino, modo) as f:
                         while True:
@@ -504,7 +526,7 @@ class Descarga:
             try:
                 datos = self.post.encode("utf-8") if self.post else None
                 with _pedir(self.url, rango=f"bytes={inicio_actual}-{fin}",
-                            datos=datos) as r:
+                            datos=datos, cookies=self.cookies) as r:
                     if r.status == 206:
                         os.makedirs(os.path.dirname(part), exist_ok=True)
                         with open(part, "ab") as f:

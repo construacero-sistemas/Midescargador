@@ -1194,7 +1194,9 @@ class Gestor:
             t = motor.Descarga(resuelto["url"], carpeta, segmentos=segmentos,
                                nombre=resuelto.get("nombre"),
                                total=resuelto.get("tamano"),
-                               post=resuelto.get("post"))
+                               post=resuelto.get("post"),
+                               cookies=resuelto.get("cookies"),
+                               unico=resuelto.get("unico"))
             t.nombre = resuelto.get("nombre") or t.nombre
             t.pagina = resuelto.get("pagina") or url
         elif _es_mega(url):

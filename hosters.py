@@ -39,13 +39,19 @@ _CTX = ssl.create_default_context()
 SOPORTADOS = ("rootz.so", "www.rootz.so", "fireload.com", "www.fireload.com",
               "megaup.net", "www.megaup.net", "gofile.io", "www.gofile.io",
               "mediafire.com", "www.mediafire.com", "fuckingfast.net",
-              "www.fuckingfast.net", "1fichier.com", "www.1fichier.com")
+              "www.fuckingfast.net", "1fichier.com", "www.1fichier.com",
+              "lolaup.com", "www.lolaup.com", "rapidshare.co", "www.rapidshare.co",
+              "upto.cash", "www.upto.cash", "solred.app", "www.solred.app",
+              "drive.marketcat.io")
 
 # etiquetas amigables por dominio (para la lista del panel)
 ETIQUETAS = {
     "rootz.so": "Rootz", "fireload.com": "Fireload", "megaup.net": "MegaUp",
     "gofile.io": "GoFile", "mediafire.com": "MediaFire",
     "fuckingfast.net": "FuckingFast", "1fichier.com": "1Fichier",
+    "lolaup.com": "LolaUp", "rapidshare.co": "RapidShare",
+    "upto.cash": "UpToCash", "solred.app": "Solred",
+    "drive.marketcat.io": "MarketCat",
 }
 
 
@@ -480,6 +486,246 @@ def _extraer_mediafire(url):
             "pagina": url, "post": post}
 
 
+def _extraer_lolaup(url):
+    """LolaUp: la página trae un enlace directo al CDN firmado
+    (/en/download/<id>/<token>/<archivo>). Sin retos ni captcha: basta con
+    seguirlo (redirige a cache.lolaup.com con el archivo real)."""
+    import http.cookiejar
+    cj = http.cookiejar.CookieJar()
+    op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+    op.addheaders = [("User-Agent", UA)]
+    try:
+        with op.open(url, timeout=TIMEOUT) as r:
+            html = r.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"lolaup bloqueó la página (HTTP {e.code})") from e
+    except Exception as e:
+        raise RuntimeError(f"no se pudo abrir la página lolaup: {e}") from e
+
+    # el enlace directo /en/download/<id>/<token>/<nombre>
+    m = re.search(r'href="(https?://[^"]*/en/download/[^"]+)"', html)
+    if not m:
+        raise RuntimeError("lolaup no mostró el enlace de descarga "
+                           "(¿archivo borrado o caducado?)")
+    directa = m.group(1).replace("&amp;", "&")
+
+    # nombre y tamaño
+    nombre = None
+    tm = re.search(r"<title>([^<]*)</title>", html, re.I)
+    if tm:
+        t = tm.group(1).strip()
+        mm = re.search(r"—\s*Download\s*—\s*(.+)$", t)
+        if mm:
+            nombre = mm.group(1).strip()
+    if not nombre:
+        base = urllib.parse.unquote(
+            urllib.parse.urlparse(directa).path.rsplit("/", 1)[-1] or "")
+        nombre = base or "descarga"
+    tam = None
+    mm2 = re.search(r"([\d.]+)\s*(GB|MB|KB)", html)
+    if mm2:
+        try:
+            n = float(mm2.group(1))
+            u = mm2.group(2).upper()
+            tam = int(n * (1024 ** {"KB": 1, "MB": 2, "GB": 3}[u]))
+        except Exception:
+            tam = None
+    return {"url": directa, "nombre": nombre, "tamano": tam, "pagina": url}
+
+
+def _extraer_rapidshare(url):
+    """RapidShare.co: el botón de descarga hace POST a
+    /<lang>/d/<id>/single/request con el file id y el CSRF, y responde
+    JSON con el enlace directo (download_link). Sin captcha."""
+    import http.cookiejar
+    cj = http.cookiejar.CookieJar()
+    op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+    op.addheaders = [("User-Agent", UA)]
+    try:
+        with op.open(url, timeout=TIMEOUT) as r:
+            html = r.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"rapidshare bloqueó la página (HTTP {e.code})") from e
+    except Exception as e:
+        raise RuntimeError(f"no se pudo abrir la página rapidshare: {e}") from e
+
+    tok = re.search(r'name="_token" value="([^"]+)"', html)
+    ids = re.findall(r'class="download-btn"[^>]*data-id="([^"]+)"', html)
+    if not ids:
+        ids = re.findall(r'data-id="([^"]+)"[^>]*class="[^"]*download-btn', html)
+    if not tok or not ids:
+        raise RuntimeError("rapidshare no mostró el botón de descarga "
+                           "(¿archivo borrado o caducado?)")
+    # url base de la página (sin /d/<id>): POST a /<lang>/d/<id>/single/request
+    base = url.rstrip("/")
+    file_id = ids[0]
+    try:
+        datos = urllib.parse.urlencode({"_token": tok.group(1),
+                                        "id": file_id}).encode()
+        req = urllib.request.Request(
+            base + "/single/request", data=datos,
+            headers={"X-Requested-With": "XMLHttpRequest",
+                     "Content-Type": "application/x-www-form-urlencoded",
+                     "Referer": url, "Accept": "application/json"})
+        with op.open(req, timeout=TIMEOUT) as r:
+            resp = json.loads(r.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(
+            f"rapidshare rechazó la descarga (HTTP {e.code})") from e
+    except Exception as e:
+        raise RuntimeError(f"rapidshare no generó el enlace: {e}") from e
+    directa = (resp or {}).get("download_link")
+    if not directa:
+        raise RuntimeError("rapidshare: " + str(
+            resp.get("error") or "no entregó la URL directa"))
+    # el enlace de descarga exige la sesión (cookie) obtenida al resolverlo
+    cookies = "; ".join("%s=%s" % (c.name, c.value) for c in cj)
+
+    # nombre y tamaño: la página no expone el tamaño del archivo (el
+    # número grande que aparece es el límite de la cuenta, no el archivo),
+    # así que se deja None para que el motor lo detecte al empezar.
+    nombre = None
+    tm = re.search(r"<title>([^<]*)</title>", html, re.I)
+    if tm:
+        t = tm.group(1).strip()
+        mm = re.search(r"—\s*Download\s*—\s*(.+)$", t, re.I)
+        if mm:
+            nombre = mm.group(1).strip()
+    # OJO: el enlace de descarga de rapidshare es de UN SOLO USO (el probe
+    # del motor lo consumiría y la descarga fallaría con 401): forzamos
+    # descarga en una sola conexión, sin probe.
+    return {"url": directa, "nombre": nombre, "tamano": None,
+            "pagina": url, "cookies": cookies, "unico": True}
+
+
+def _extraer_solred(url):
+    """Solred.app: el botón de descarga se carga por AJAX y lleva la URL
+    directa del CDN en su onclick (window.location='<url>?download_token=...').
+
+      1. GET la página -> extrae showFile(<fileId>, 'true')
+      2. POST /account/ajax/file_details_2 con u=<fileId>
+         -> JSON {html} con el botón y su URL directa (descarga segmentada
+         con el token: el servidor redirige al CDN real).
+    """
+    import http.cookiejar
+    cj = http.cookiejar.CookieJar()
+    op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+    op.addheaders = [("User-Agent", UA), ("Accept-Language", "es-ES,es;q=0.9")]
+    try:
+        with op.open(url, timeout=TIMEOUT) as r:
+            html = r.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"solred bloqueó la página (HTTP {e.code})") from e
+    except Exception as e:
+        raise RuntimeError(f"no se pudo abrir la página solred: {e}") from e
+
+    # fileId real del archivo (showFile(<id>, 'true'))
+    m = re.search(r"showFile\s*\(\s*(\d+)\s*,", html)
+    if not m:
+        raise RuntimeError("solred no expuso el identificador del archivo "
+                           "(¿enlace borrado o caducado?)")
+    file_id = m.group(1)
+    # el botón con la URL directa se carga por AJAX
+    try:
+        datos = urllib.parse.urlencode({"u": file_id, "isfront": "true"}).encode()
+        req = urllib.request.Request(
+            "https://solred.app/account/ajax/file_details_2", data=datos,
+            headers={"Content-Type": "application/x-www-form-urlencoded",
+                     "X-Requested-With": "XMLHttpRequest", "Referer": url,
+                     "Accept": "application/json"})
+        with op.open(req, timeout=TIMEOUT) as r:
+            resp = json.loads(r.read().decode("utf-8", errors="replace"))
+        html_det = (resp or {}).get("html") or ""
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(
+            f"solred rechazó la consulta del archivo (HTTP {e.code})") from e
+    except Exception as e:
+        raise RuntimeError(f"solred no cargó los detalles: {e}") from e
+    m2 = re.search(r"window\.location='(https?://[^']+)'", html_det)
+    if not m2:
+        m2 = re.search(r'href="(https?://[^"]*download_token=[^"]+)"', html_det)
+    if not m2:
+        raise RuntimeError("solred no mostró el enlace de descarga "
+                           "(¿archivo borrado o caducado?)")
+    directa = m2.group(1).replace("&amp;", "&")
+
+    nombre = None
+    tm = re.search(r"<title>([^<]*)</title>", html, re.I)
+    if tm:
+        nombre = tm.group(1).strip()
+    tam = None
+    mm = re.search(r"Download\s*\(([\d.]+)\s*(GB|MB|KB)\)", html_det
+                   + " " + html, re.I)
+    if mm:
+        try:
+            n = float(mm.group(1))
+            u = mm.group(2).upper()
+            tam = int(n * (1024 ** {"KB": 1, "MB": 2, "GB": 3}[u]))
+        except Exception:
+            tam = None
+    cookies = "; ".join("%s=%s" % (c.name, c.value) for c in cj)
+    return {"url": directa, "nombre": nombre, "tamano": tam,
+            "pagina": url, "cookies": cookies}
+
+
+def _extraer_marketcat(url):
+    """drive.marketcat.io (MarketCat Drive, también usado por solred.app):
+    el enlace compartido /drive/s/<hash> expone una API REST pública:
+
+      1. GET /api/v1/shareable-links/<hash>?loader=shareableLink
+         -> JSON con link.id y link.entry_id
+      2. token = base64("<entry_id>|padd")
+      3. GET /api/v1/file-entries/download/<token>?shareable_link=<link.id>
+         -> redirige a la URL firmada del CDN (access.marketcat.io)
+    """
+    import base64
+    import http.cookiejar
+    m = re.search(r"/drive/s/([A-Za-z0-9_-]+)", url)
+    hash_id = m.group(1) if m else None
+    cj = http.cookiejar.CookieJar()
+    op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cj))
+    op.addheaders = [("User-Agent", UA)]
+    if not hash_id:
+        raise RuntimeError("marketcat: enlace compartido no reconocido")
+    try:
+        req = urllib.request.Request(
+            f"https://drive.marketcat.io/api/v1/shareable-links/"
+            f"{urllib.parse.quote(hash_id)}?loader=shareableLink",
+            headers={"Accept": "application/json",
+                     "X-Requested-With": "XMLHttpRequest",
+                     "Referer": url})
+        with op.open(req, timeout=TIMEOUT) as r:
+            datos = json.loads(r.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(
+            f"marketcat no encontró el enlace (HTTP {e.code}); "
+            f"¿enlace caducado o borrado?") from e
+    except Exception as e:
+        raise RuntimeError(f"marketcat rechazó la consulta: {e}") from e
+    link = (datos or {}).get("link") or {}
+    entry = link.get("entry") or {}
+    entry_id = link.get("entry_id")
+    link_id = link.get("id")
+    if not entry_id or not link_id:
+        raise RuntimeError("marketcat: el enlace no tiene archivo descargable")
+    if not link.get("allow_download"):
+        raise RuntimeError("marketcat: la descarga no está permitida para "
+                           "este enlace")
+    tok = base64.b64encode(f"{entry_id}|padd".encode()).decode().rstrip("=")
+    directa = (f"https://drive.marketcat.io/api/v1/file-entries/download/"
+               f"{urllib.parse.quote(tok)}?shareable_link={link_id}")
+    nombre = entry.get("name") or None
+    tam = entry.get("size")
+    try:
+        tam = int(tam) if tam else None
+    except (TypeError, ValueError):
+        tam = None
+    # el enlace de descarga exige la sesión (cookie) obtenida al resolverlo
+    cookies = "; ".join("%s=%s" % (c.name, c.value) for c in cj)
+    return {"url": directa, "nombre": nombre, "tamano": tam,
+            "pagina": url, "cookies": cookies}
+
+
 def _extraer_gofile(url):
     """Gofile: la API necesita un token de cuenta (los invitados lo obtienen
     al subir; el listado directo es Premium). Extraemos el guest token de la
@@ -689,4 +935,16 @@ def resolver(url):
         return _extraer_fuckingfast(url)
     if host in ("1fichier.com", "www.1fichier.com"):
         return _extraer_1fichier(url)
+    if host in ("lolaup.com", "www.lolaup.com"):
+        return _extraer_lolaup(url)
+    if host in ("rapidshare.co", "www.rapidshare.co"):
+        return _extraer_rapidshare(url)
+    if host in ("solred.app", "www.solred.app"):
+        return _extraer_solred(url)
+    if host in ("drive.marketcat.io",):
+        return _extraer_marketcat(url)
+    if host in ("upto.cash", "www.upto.cash"):
+        raise RuntimeError(
+            "upto.cash exige resolver un captcha en el navegador. "
+            "Abre el enlace manualmente y descarga el archivo.")
     return None
