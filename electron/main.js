@@ -121,24 +121,6 @@ function configurarAutoUpdate() {
       version: info.version,
       releaseNotes: info.releaseNotes || null
     });
-
-    const win = BrowserWindow.getAllWindows()[0];
-    // Fallback nativo elegante con botones estándar (noLink: true) si el usuario no interactúa en la app
-    dialog.showMessageBox(win, {
-      type: "info",
-      title: "Actualización disponible · MiDescargador",
-      message: "Nueva versión disponible: MiDescargador " + info.version,
-      detail: "Se han incorporado mejoras de rendimiento y estabilidad en las descargas.\n¿Deseas descargar la actualización ahora en segundo plano?",
-      buttons: ["Descargar e instalar", "Más tarde"],
-      defaultId: 0,
-      cancelId: 1,
-      noLink: true,
-    }).then(({ response }) => {
-      if (response === 0) {
-        actualizando = true;
-        autoUpdater.downloadUpdate();
-      }
-    });
   });
 
   autoUpdater.on("download-progress", (p) => {
@@ -160,23 +142,6 @@ function configurarAutoUpdate() {
     enviarEstadoActualizacion({
       estado: "lista",
       version: info.version
-    });
-
-    const win = BrowserWindow.getAllWindows()[0];
-    // Diálogo nativo profesional (noLink: true para evitar los enlaces azules con flecha)
-    dialog.showMessageBox(win, {
-      type: "info",
-      title: "Actualización lista · MiDescargador",
-      message: "MiDescargador " + info.version + " está listo para instalarse",
-      detail: "La actualización se descargó con éxito.\nReinicia la aplicación para aplicar todos los cambios de inmediato (se reiniciará automáticamente).",
-      buttons: ["Reiniciar e instalar ahora", "Instalar al cerrar"],
-      defaultId: 0,
-      cancelId: 1,
-      noLink: true,
-    }).then(({ response }) => {
-      if (response === 0) {
-        autoUpdater.quitAndInstall(false, true);
-      }
     });
   });
 
