@@ -94,6 +94,27 @@
   .btn-open:hover {
     filter: brightness(1.08);
   }
+  .btn-reload {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    padding: 9px 14px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 10px;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .btn-reload:hover {
+    color: var(--text-primary);
+    border-color: rgba(59, 130, 246, 0.4);
+  }
 </style>
 </head>
 <body>
@@ -121,11 +142,11 @@
       </svg>
     </div>
     <div>
-      <h1>MiDescargador <span class="badge">2.0</span></h1>
+      <h1>MiDescargador <span class="badge">2.1.5</span></h1>
     </div>
   </div>
 
-  <p>Al reproducir videos en la web verás el botón flotante <b>“Descargar”</b> sobre cada reproductor para transferirlo al gestor.</p>
+  <p>Al pasar el ratón sobre un video verás la pestaña <b>“Descargar”</b> (como IDM). Al pulsarla podrás elegir la resolución deseada y se envía al gestor.</p>
 
   <div class="status-box">
     <span class="dot"></span>
@@ -133,12 +154,28 @@
   </div>
 
   <a class="btn-open" href="http://127.0.0.1:17890" target="_blank">
-    <span>Abrir Panel 2.0</span>
+    <span>Abrir Panel 2.1.5</span>
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
       <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
       <polyline points="15 3 21 3 21 9"></polyline>
       <line x1="10" y1="14" x2="21" y2="3"></line>
     </svg>
   </a>
+
+  <button class="btn-reload" id="btn-recargar">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M23 4v6h-6"></path>
+      <path d="M1 20v-6h6"></path>
+      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"></path>
+      <path d="M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+    </svg>
+    <span>Recargar extensión</span>
+  </button>
+
+  <script>
+    document.getElementById("btn-recargar").addEventListener("click", () => {
+      chrome.runtime.reload();
+    });
+  </script>
 </body>
 </html>

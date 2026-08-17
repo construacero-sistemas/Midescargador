@@ -16,14 +16,18 @@ La primera vez, `Iniciar.bat` ya prepara todo lo necesario (Python, yt-dlp,
 ffmpeg) automáticamente. No se instala nada en el sistema: todo vive en esta
 carpeta.
 
-## La extensión de Chrome (botón en los videos)
+## La extensión de Chrome (descarga estilo IDM en los videos)
 
 1. Abre `chrome://extensions` en Chrome.
 2. Activa **Modo de desarrollador** (interruptor arriba a la derecha).
 3. Clic en **Cargar descomprimida** → elige la carpeta `extension` de este
    proyecto.
-4. Listo. En cualquier página con video verás el botón **⬇ MiDescargador**
-   flotando sobre cada video. Al pulsarlo se envía al servidor local.
+4. Listo. Al **pasar el ratón sobre un video** aparece una pequeña pestaña
+   **⬇ Descargar** (como IDM). Al pulsarla se consultan al servidor local las
+   **resoluciones disponibles** (240p, 360p, 720p, 1080p… y solo audio) y
+   puedes elegir la que quieras. En YouTube, TikTok, Instagram, Twitch… se
+   usa la URL de la página, que es la que yt-dlp sabe resolver con todas las
+   calidades.
 
 > El servidor debe estar encendido (Iniciar.bat) para que el botón use las
 > descargas segmentadas. Si está apagado, la extensión intenta descargar con

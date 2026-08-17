@@ -1,150 +1,388 @@
-// MiDescargador 2.0 - Content Script
-// Detecta elementos <video> en la página e inyecta un botón flotante con estilo Glassmorphism 2.0.
+// MiDescargador 3.0 - Content Script
+// Overlay estilo IDM: al pasar el ratón sobre un <video> aparece una pequeña
+// pestaña con "Descargar"; al pulsarla consulta al servidor local las
+// resoluciones disponibles (yt-dlp) y muestra un menú para elegir calidad.
+//
+// Detección por POSICIÓN del ratón (no por mouseenter del <video>): muchos
+// sitios (Instagram Reels, TikTok...) cubren el video con overlays de clics
+// o le ponen pointer-events:none, con lo que el video nunca recibe el
+// evento. Comprobamos si el cursor cae dentro del rectángulo del video.
 
 (() => {
   if (window.__midescargador) return;
   window.__midescargador = true;
 
   const SERVIDOR = "http://127.0.0.1:17890";
-  const ESTILO_BOTON = `
-    position: fixed;
-    z-index: 2147483647;
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    background: rgba(15, 21, 35, 0.88);
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    color: #f8fafc;
-    border: 1px solid rgba(59, 130, 246, 0.4);
-    border-radius: 9999px;
-    padding: 8px 14px;
-    font: 600 12.5px "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif;
-    cursor: pointer;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45), 0 0 16px rgba(59, 130, 246, 0.25);
-    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    user-select: none;
-  `;
+  // sitios cuyo <video> no sirve la URL real (YouTube, TikTok...): para esos
+  // se usa la URL de la PÁGINA, que es la que yt-dlp sabe resolver con
+  // todas las calidades.
+  const SITIOS_PAGINA = /youtube\.com|youtu\.be|tiktok\.com|instagram\.com|instagr\.am|facebook\.com|fb\.watch|twitter\.com|x\.com|reddit\.com|pinterest\.com|threads\.net|vk\.com|rumble\.com|kick\.com|twitch\.tv|vimeo\.com|dailymotion\.com|soundcloud\.com|bilibili\.com|t\.co/i;
 
-  const SVG_ICON = `
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;">
+  const ovs = new Map(); // video -> overlay
+  let avisoActual = null;
+  let videoActivo = null; // video cuya pestaña está visible ahora
+
+  const CSS = `
+    .mdm-ov {
+      position: fixed;
+      z-index: 2147483647;
+      display: none;
+      flex-direction: column;
+      min-width: 198px;
+      font: 500 13px "Segoe UI", system-ui, sans-serif;
+      user-select: none;
+      pointer-events: auto;
+    }
+    .mdm-ov.dentro { display: flex; }
+    .mdm-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(16, 22, 38, 0.92);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      color: #f2f5fa;
+      border: 1px solid rgba(77, 141, 255, 0.55);
+      border-radius: 9px;
+      padding: 8px 16px;
+      font: 600 13px "Segoe UI", system-ui, sans-serif;
+      cursor: pointer;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+      transition: background 0.15s, transform 0.15s;
+      white-space: nowrap;
+    }
+    .mdm-btn:hover { background: rgba(26, 36, 62, 0.95); transform: translateY(-1px); }
+    .mdm-btn:disabled { opacity: 0.6; cursor: wait; }
+    .mdm-menu {
+      margin-top: 5px;
+      background: rgba(16, 22, 38, 0.97);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(77, 141, 255, 0.4);
+      border-radius: 10px;
+      box-shadow: 0 12px 32px rgba(0,0,0,0.55);
+      overflow: hidden;
+      max-height: 320px;
+      overflow-y: auto;
+    }
+    .mdm-opc {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 14px;
+      color: #e8edf6;
+      cursor: pointer;
+      white-space: nowrap;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+    }
+    .mdm-opc:last-child { border-bottom: none; }
+    .mdm-opc:hover { background: rgba(77, 141, 255, 0.18); }
+    .mdm-opc .mdm-tam { margin-left: auto; color: #8fa3c8; font-size: 12px; }
+    .mdm-cab {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 14px;
+      color: #93a8cc;
+      font-size: 12px;
+      background: rgba(255,255,255,0.04);
+    }
+    .mdm-err {
+      padding: 10px 12px;
+      color: #ff8f8f;
+      font-size: 11.5px;
+      line-height: 1.4;
+      max-width: 240px;
+    }
+    .mdm-svg { flex-shrink: 0; display: inline-flex; }
+  `;
+  const estilo = document.createElement("style");
+  estilo.textContent = CSS;
+  (document.head || document.documentElement).appendChild(estilo);
+
+  const SVG = (color) => `
+    <svg class="mdm-svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
       <polyline points="7 10 12 15 17 10"></polyline>
       <line x1="12" y1="15" x2="12" y2="3"></line>
-    </svg>
-  `;
-
-  const videos = new Set();
-  let avisoActual = null;
+    </svg>`;
 
   function avisar(texto, ok) {
     if (avisoActual) avisoActual.remove();
     avisoActual = document.createElement("div");
     avisoActual.innerHTML = `
-      <div style="display:flex; align-items:center; gap:8px;">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="${ok ? '#10b981' : '#ef4444'}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          ${ok ? '<polyline points="20 6 9 17 4 12"></polyline>' : '<circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line>'}
-        </svg>
+      <div style="display:flex; align-items:center; gap:8px; color:#f8fafc;">
+        <span style="color:${ok ? '#10b981' : '#ef4444'}; font-weight:800;">${ok ? '✓' : '✕'}</span>
         <span>${texto}</span>
-      </div>
-    `;
+      </div>`;
     Object.assign(avisoActual.style, {
-      position: "fixed",
-      top: "18px",
-      right: "18px",
-      zIndex: "2147483647",
-      background: "rgba(15, 21, 35, 0.94)",
-      backdropFilter: "blur(12px)",
-      color: "#f8fafc",
-      border: ok ? "1px solid rgba(16, 185, 129, 0.35)" : "1px solid rgba(239, 68, 68, 0.35)",
-      borderRadius: "12px",
-      padding: "12px 18px",
-      font: "600 13px 'Plus Jakarta Sans', 'Segoe UI', sans-serif",
-      boxShadow: "0 12px 32px rgba(0, 0, 0, 0.5)",
-      maxWidth: "360px",
-      animation: "fadeIn 0.2s ease-out"
+      position: "fixed", top: "18px", right: "18px", zIndex: "2147483647",
+      background: "rgba(15, 21, 35, 0.95)", backdropFilter: "blur(12px)",
+      border: ok ? "1px solid rgba(16,185,129,0.35)" : "1px solid rgba(239,68,68,0.35)",
+      borderRadius: "10px", padding: "11px 16px",
+      font: "600 13px 'Segoe UI', sans-serif",
+      boxShadow: "0 12px 32px rgba(0,0,0,0.5)", maxWidth: "380px",
     });
     document.documentElement.appendChild(avisoActual);
     setTimeout(() => avisoActual && avisoActual.remove(), 4000);
   }
 
-  function urlReal(video) {
-    return video.currentSrc || video.src || "";
+  // URL a enviar: la de la página si el sitio la necesita (YouTube...),
+  // si no la fuente real del <video>.
+  function urlParaEnviar(video) {
+    const src = video.currentSrc || video.src || "";
+    if (src && !/^blob:/.test(src)) return src;
+    if (SITIOS_PAGINA.test(location.href)) return location.href;
+    return src;
   }
 
-  function posicionar(boton, video) {
+  function fmtTam(n) {
+    if (!n || n <= 0) return "";
+    if (n >= 1073741824) return " · " + (n / 1073741824).toFixed(1) + " GB";
+    if (n >= 1048576) return " · " + (n / 1048576).toFixed(0) + " MB";
+    return "";
+  }
+
+  // --- detección por posición ---------------------------------------------
+
+  function esVisible(v) {
+    if (!v.isConnected) return false;
+    const r = v.getBoundingClientRect();
+    if (!r.width || !r.height) return false;
+    const cs = getComputedStyle(v);
+    return cs.display !== "none" && cs.visibility !== "hidden" &&
+           cs.opacity !== "0" && parseFloat(cs.opacity || "1") > 0.05;
+  }
+
+  // Devuelve el video bajo el punto (x, y), o null.
+  function videoEnPunto(x, y) {
+    let el = null;
+    try { el = document.elementFromPoint(x, y); } catch (e) { el = null; }
+
+    // si hay un diálogo/menú de la página abierto encima del video, no molestar
+    if (el) {
+      const dlg = el.closest("[role='dialog'], [role='menu'], [data-testid='dialog']");
+      if (dlg && !dlg.querySelector("video")) return null;
+    }
+
+    // 1) el elemento real bajo el cursor es el video o un hijo suyo
+    let n = el;
+    while (n && n !== document.documentElement) {
+      if (n.tagName === "VIDEO" && ovs.has(n)) return n;
+      n = n.parentElement;
+    }
+
+    // 2) fallback por rectángulo: el cursor está dentro de un video visible
+    //    aunque un overlay (click-catcher, pointer-events:none) lo cubra.
+    let mejor = null, mejorArea = Infinity;
+    for (const v of ovs.keys()) {
+      if (!esVisible(v)) continue;
+      const r = v.getBoundingClientRect();
+      if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+        const a = r.width * r.height;
+        if (a < mejorArea) { mejorArea = a; mejor = v; }
+      }
+    }
+    return mejor;
+  }
+
+  function posicionar(ov, video) {
     const r = video.getBoundingClientRect();
-    if (!r.width && !r.height) { boton.style.display = "none"; return; }
-    boton.style.display = "inline-flex";
-    boton.style.left = Math.max(12, r.left + r.width - 165) + "px";
-    boton.style.top = Math.max(12, r.top + 14) + "px";
+    if (!r.width && !r.height) return;
+    ov.style.left = Math.max(8, r.left + r.width - 215) + "px";
+    ov.style.top = Math.max(8, r.top + 8) + "px";
   }
 
-  function botonPara(video) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.innerHTML = `${SVG_ICON} <span>Descargar</span>`;
-    b.setAttribute("style", ESTILO_BOTON);
+  function mostrar(v) {
+    const ov = ovs.get(v);
+    if (!ov || !esVisible(v)) return;
+    ov.style.display = "";
+    posicionar(ov, v);
+    ov.classList.add("dentro");
+  }
 
-    b.onmouseenter = () => {
-      b.style.transform = "translateY(-2px)";
-      b.style.borderColor = "#3b82f6";
-      b.style.boxShadow = "0 12px 28px rgba(0, 0, 0, 0.5), 0 0 20px rgba(59, 130, 246, 0.4)";
-    };
-    b.onmouseleave = () => {
-      b.style.transform = "none";
-      b.style.borderColor = "rgba(59, 130, 246, 0.4)";
-      b.style.boxShadow = "0 8px 24px rgba(0, 0, 0, 0.45), 0 0 16px rgba(59, 130, 246, 0.25)";
-    };
+  function ocultar(v) {
+    const ov = ovs.get(v);
+    if (!ov) return;
+    ov.classList.remove("dentro");
+    const m = ov.querySelector(".mdm-menu");
+    if (m) m.remove();
+  }
 
-    b.onclick = async (e) => {
+  function ocultarTodos() {
+    for (const v of ovs.keys()) ocultar(v);
+    videoActivo = null;
+  }
+
+  let raf = null;
+  function alMover(x, y) {
+    if (raf) return;
+    raf = requestAnimationFrame(() => {
+      raf = null;
+
+      // ¿el cursor está sobre nuestra propia pestaña/menú? → mantener visible
+      let sobreOverlay = null;
+      for (const [v, ov] of ovs) {
+        const r = ov.getBoundingClientRect();
+        if (r.width && r.height &&
+            x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) {
+          sobreOverlay = v;
+          break;
+        }
+      }
+
+      const destino = sobreOverlay || videoEnPunto(x, y);
+      if (destino !== videoActivo) {
+        if (videoActivo) ocultar(videoActivo);
+        videoActivo = destino;
+      }
+      if (destino) mostrar(destino);
+    });
+  }
+
+  document.addEventListener("mousemove", (e) => {
+    alMover(e.clientX, e.clientY);
+  }, { passive: true });
+  document.addEventListener("mouseleave", ocultarTodos);
+
+  // --- menú y descarga ----------------------------------------------------
+
+  async function consultarFormatos(url) {
+    const r = await fetch(SERVIDOR + "/api/formatos", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    const d = await r.json();
+    if (d.error) throw new Error(d.error);
+    return d.formatos || [];
+  }
+
+  function construirMenu(ov, video, url) {
+    const menu = document.createElement("div");
+    menu.className = "mdm-menu";
+    const cab = document.createElement("div");
+    cab.className = "mdm-cab";
+    cab.innerHTML = `${SVG("#5b8cff")} <span>Calidad de descarga</span>`;
+    menu.appendChild(cab);
+    const spinner = document.createElement("div");
+    spinner.className = "mdm-opc";
+    spinner.textContent = "Consultando calidades…";
+    menu.appendChild(spinner);
+    ov.appendChild(menu);
+
+    consultarFormatos(url).then(lista => {
+      menu.innerHTML = "";
+      menu.appendChild(cab);
+      const opciones = [
+        { formato: null, etiqueta: "Mejor calidad (recomendada)" },
+        ...lista.map(f => ({
+          formato: f.formato, etiqueta: f.etiqueta, tamano: f.tamano,
+        })),
+      ];
+      if (!lista.length) {
+        const opc = document.createElement("div");
+        opc.className = "mdm-opc";
+        opc.innerHTML = `${SVG("#7dd3fc")} <span>Descargar video</span>`;
+        opc.onclick = () => enviarDescarga(url, null, ov);
+        menu.appendChild(opc);
+        return;
+      }
+      opciones.forEach(o => {
+        const opc = document.createElement("div");
+        opc.className = "mdm-opc";
+        opc.innerHTML = `${SVG("#7dd3fc")} <span>${o.etiqueta}</span>` +
+          (o.tamano ? `<span class="mdm-tam">${fmtTam(o.tamano)}</span>` : "");
+        opc.onclick = () => enviarDescarga(url, o.formato, ov);
+        menu.appendChild(opc);
+      });
+    }).catch(err => {
+      menu.innerHTML = "";
+      const e = document.createElement("div");
+      e.className = "mdm-err";
+      e.textContent = "No se pudieron listar calidades: " + err.message +
+        (SITIOS_PAGINA.test(location.href) ? "" : " Se descargará el video directo.");
+      menu.appendChild(e);
+      // descarga directa como respaldo (el servidor decide con yt-dlp)
+      const opc = document.createElement("div");
+      opc.className = "mdm-opc";
+      opc.innerHTML = `${SVG("#7dd3fc")} <span>Descargar de todos modos</span>`;
+      opc.onclick = () => enviarDescarga(url, null, ov);
+      menu.appendChild(opc);
+    });
+  }
+
+  async function enviarDescarga(url, formato, ov) {
+    ov.style.display = "none";
+    try {
+      const r = await fetch(SERVIDOR + "/api/descargar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url, segmentos: 8, carpeta: null, formato }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || "El servidor rechazó la descarga");
+      avisar("Enviado a MiDescargador (" + (d.id || "") + ")", true);
+    } catch (err) {
+      try {
+        const ok = await chrome.runtime.sendMessage({ tipo: "descargar", url });
+        if (ok && ok.ok) avisar("Descargado con respaldo del navegador", true);
+        else throw new Error("El servidor local no responde");
+      } catch (e2) {
+        avisar("No se pudo iniciar la descarga: " + err.message, false);
+      }
+    }
+  }
+
+  function overlayPara(video) {
+    const ov = document.createElement("div");
+    ov.className = "mdm-ov";
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "mdm-btn";
+    btn.innerHTML = `${SVG("#5b8cff")} <span>Descargar</span>`;
+
+    btn.onclick = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const src = urlReal(video);
-      b.disabled = true;
-      try {
-        if (!src) throw new Error("El video no tiene fuente directa accesible");
-        const r = await fetch(SERVIDOR + "/api/descargar", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            url: src,
-            segmentos: 8,
-            carpeta: null,
-          }),
-        });
-        const d = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(d.error || "El servidor rechazó la descarga");
-        avisar("Enviado a MiDescargador: " + (d.id || ""), true);
-      } catch (err) {
-        try {
-          const ok = await chrome.runtime.sendMessage({ tipo: "descargar", url: src });
-          if (ok && ok.ok) avisar("Descargado con respaldo del navegador", true);
-          else throw new Error("Servidor apagado y navegador no pudo");
-        } catch (e2) {
-          avisar("No se pudo iniciar la descarga. ¿Servidor encendido? " + err.message, false);
-        }
-      } finally {
-        b.disabled = false;
-      }
+      const url = urlParaEnviar(video);
+      if (!url) { avisar("El video no tiene fuente accesible", false); return; }
+      if (ov.querySelector(".mdm-menu")) { ov.querySelector(".mdm-menu").remove(); return; }
+      construirMenu(ov, video, url);
     };
 
-    document.addEventListener("scroll", () => posicionar(b, video), { passive: true });
-    window.addEventListener("resize", () => posicionar(b, video));
-    document.documentElement.appendChild(b);
-    posicionar(b, video);
-    return b;
+    ov.appendChild(btn);
+
+    // reposicionar al hacer scroll/redimensionar mientras esté visible
+    document.addEventListener("scroll", () => {
+      if (ov.classList.contains("dentro")) posicionar(ov, video);
+    }, { passive: true });
+    window.addEventListener("resize", () => {
+      if (ov.classList.contains("dentro")) posicionar(ov, video);
+    });
+    document.documentElement.appendChild(ov);
+    return ov;
   }
 
   function procesar() {
     document.querySelectorAll("video").forEach(v => {
-      if (videos.has(v)) return;
-      videos.add(v);
-      const b = botonPara(v);
-      const obs = new ResizeObserver(() => posicionar(b, v));
+      if (ovs.has(v)) return;
+      const ov = overlayPara(v);
+      ovs.set(v, ov);
+      const obs = new ResizeObserver(() => {
+        if (ov.classList.contains("dentro")) posicionar(ov, v);
+      });
       obs.observe(v);
-      v.addEventListener("loadedmetadata", () => posicionar(b, v), { once: true });
+      v.addEventListener("loadedmetadata", () => {
+        if (ov.classList.contains("dentro")) posicionar(ov, v);
+      }, { once: true });
     });
+
+    // limpiar videos que la página eliminó (SPA: YouTube, Instagram...)
+    for (const [v, ov] of ovs) {
+      if (!v.isConnected) { ov.remove(); ovs.delete(v); }
+    }
   }
 
   procesar();

@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "MiDescargador",
-  "version": "1.0",
-  "description": "Añade un botón de descarga sobre cada video de la página y lo envía a MiDescargador local.",
+  "version": "1.1",
+  "description": "Pestaña de descarga estilo IDM sobre cada video, con elección de resolución, que envía a MiDescargador local.",
   "permissions": ["downloads", "storage"],
   "host_permissions": ["http://127.0.0.1:17890/*"],
   "background": {
