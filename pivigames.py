@@ -20,6 +20,7 @@ Dos particularidades de pivigames que este extractor maneja:
 Se reutiliza la infraestructura de zonaleros (Chrome real vía CDP, clic en el
 widget de Turnstile y el clasificador de multipartes).
 """
+import json
 import re
 import time
 import urllib.parse
@@ -119,6 +120,41 @@ def _recargar_paste(cdp):
     return bool(cdp.navegar(paste_url,
                             condicion="location.href.indexOf('playpaste.net') !== -1",
                             tiempo_max=35))
+
+
+def _revelar_pestanas(cdp):
+    """Algunos pastes de playpaste muestran PESTAÑAS (p. ej. MEGA /
+    MEDIAFIRE / ROOTZ): solo la activa está visible y el resto se carga
+    al pulsarlas. Pulsa cada pestaña y devuelve los enlaces de todas
+    (sin duplicados). Devuelve [] si el paste no tiene pestañas."""
+    expr_tabs = r'''(() => [...document.querySelectorAll('a,button,div,li,span')].filter(x => {
+        const cls = ((x.className||'').toString() + ' ' + ((x.parentElement&&x.parentElement.className)||'').toString()).toLowerCase();
+        if (cls.indexOf('tab') === -1) return false;
+        const t = (x.innerText || x.title || '').trim();
+        return t && t.length < 40 && !/^https?:/i.test(t);
+    }).map(x => (x.innerText || x.title || '').trim()))()'''
+    nombres = cdp.eval(expr_tabs) or []
+    extra = []
+    vistos = set()
+    for nombre in dict.fromkeys(nombres):
+        ok = cdp.eval('''(() => {
+            for (const x of document.querySelectorAll('a,button,div,li,span')) {
+                const cls = ((x.className||'').toString() + ' ' + ((x.parentElement&&x.parentElement.className)||'').toString()).toLowerCase();
+                if (cls.indexOf('tab') === -1) continue;
+                const t = (x.innerText || x.title || '').trim();
+                if (t === %s) { x.click(); return true; }
+            }
+            return false;
+        })()''' % json.dumps(nombre))
+        if not ok:
+            continue
+        time.sleep(1.2)
+        for e in _leer_enlaces_paste(cdp):
+            u = e.get("url") or ""
+            if u and u not in vistos:
+                vistos.add(u)
+                extra.append(e)
+    return extra
 
 
 def _resolver_paste(cdp, fin_global):
@@ -251,6 +287,15 @@ def extraer(url):
                                tiempo_max=40):
                 continue
             enlaces, pastes_hijos = _resolver_paste(cdp, fin_global)
+            # pastes con pestañas (MEGA/MEDIAFIRE/ROOTZ...): las pestañas
+            # inactivas están ocultas hasta pulsarlas; recoge sus enlaces
+            revelados, pastes_hijos = _separar_enlaces(
+                _revelar_pestanas(cdp), pastes_hijos)
+            conocidos = {e["url"] for e in enlaces}
+            for e in revelados:
+                if e["url"] not in conocidos:
+                    conocidos.add(e["url"])
+                    enlaces.append(e)
             # los playpaste encadenados se siguen con la misma etiqueta
             for ph in pastes_hijos:
                 if ph not in resueltos:
