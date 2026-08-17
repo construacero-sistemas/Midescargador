@@ -660,6 +660,96 @@ def _estado_enlaces_tarea(tid):
     return {"estado": "listo", "resultado": t["resultado"]}, 200
 
 
+_UA_VERIF = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+             "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+
+
+def _verificar_un_enlace(url):
+    """Clasifica un enlace de descarga: 'activo', 'caido', 'navegador'
+    (responde pero exige navegador real: no se puede confirmar sin Chrome)
+    o 'error'. Sin abrir Chrome: peticiones ligeras con timeout corto."""
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    try:
+        # Mega: la página responde 200 siempre (SPA); se comprueba la API
+        if "mega.nz" in host or "mega.co.nz" in host:
+            m = re.search(r"/file/([A-Za-z0-9_-]{8})", url)
+            if m:
+                try:
+                    r = mega._api([{"a": "g", "g": 1, "p": m.group(1)}])
+                    if isinstance(r, list) and r and isinstance(r[0], dict):
+                        return "activo"
+                except Exception:
+                    pass
+            return "caido"
+        # Gofile: API pública
+        if "gofile.io" in host:
+            m = re.search(r"gofile\.io/d/([A-Za-z0-9]+)", url)
+            if m:
+                try:
+                    req = urllib.request.Request(
+                        "https://api.gofile.io/getContent?contentId=" + m.group(1),
+                        headers={"User-Agent": _UA_VERIF})
+                    with urllib.request.urlopen(req, timeout=10) as r:
+                        d = json.loads(r.read().decode("utf-8", "replace"))
+                    ok = (d.get("status") == "ok"
+                          and bool(d.get("data", {}).get("contents")))
+                    return "activo" if ok else "caido"
+                except Exception:
+                    return "caido"
+        # MediaFire y 1fichier: responden 200 aunque el archivo no exista;
+        # se busca en el HTML la señal de archivo borrado/eliminado
+        if "mediafire.com" in host or "1fichier.com" in host:
+            try:
+                req = urllib.request.Request(url,
+                                             headers={"User-Agent": _UA_VERIF})
+                with urllib.request.urlopen(req, timeout=12) as r:
+                    body = r.read(60000).decode("utf-8", "replace").lower()
+                senales = ("not found", "no longer available", "deleted",
+                           "removed", "suppressed", "no se ha encontrado",
+                           "archivo no disponible", "file has been")
+                for s in senales:
+                    if s in body:
+                        return "caido"
+                return "activo"
+            except urllib.error.HTTPError as e:
+                return ("caido" if e.code in (404, 410, 451)
+                        else "navegador" if e.code == 403 else "caido")
+            except Exception:
+                return "caido"
+        # resto: HEAD con timeout (los servidores que exigen navegador
+        # devuelven 403 a un cliente normal: no es que esté caído)
+        req = urllib.request.Request(url, method="HEAD",
+                                     headers={"User-Agent": _UA_VERIF})
+        try:
+            with urllib.request.urlopen(req, timeout=12) as r:
+                cod = r.getcode()
+                return ("activo" if cod < 400
+                        else "navegador" if cod == 403 else "caido")
+        except urllib.error.HTTPError as e:
+            return ("navegador" if e.code == 403
+                    else "caido" if e.code in (404, 410, 451) else "caido")
+        except Exception:
+            # sin soporte HEAD: probar GET de un rango de 1 byte
+            req2 = urllib.request.Request(
+                url, headers={"User-Agent": _UA_VERIF, "Range": "bytes=0-0"})
+            try:
+                with urllib.request.urlopen(req2, timeout=12) as r:
+                    return "activo" if r.getcode() < 400 else "caido"
+            except urllib.error.HTTPError as e:
+                return "navegador" if e.code == 403 else "caido"
+            except Exception:
+                return "caido"
+    except Exception:
+        return "error"
+
+
+def _verificar_enlaces(urls):
+    """Verifica varias URLs en paralelo. Devuelve {url: estado}."""
+    with _futuros.ThreadPoolExecutor(max_workers=8) as ex:
+        estados = list(ex.map(_verificar_un_enlace, urls))
+    return dict(zip(urls, estados))
+
+
 class _TrabajoYtdlp:
     """Descarga vía yt-dlp (videos, MediaFire, etc.) con progreso por líneas."""
 
@@ -1482,6 +1572,16 @@ class Manejador(BaseHTTPRequestHandler):
                 self._json({"error": "falta url"}, 400)
                 return
             self._json(_enlaces_lanzar(url))
+        elif ruta == "/api/verificar-enlaces":
+            urls = datos.get("urls") or []
+            if isinstance(urls, str):
+                urls = [u.strip() for u in urls.splitlines() if u.strip()]
+            urls = [u for u in urls
+                    if isinstance(u, str) and u.startswith(("http://", "https://"))]
+            if not urls:
+                self._json({"error": "no hay enlaces para verificar"}, 400)
+                return
+            self._json({"resultados": _verificar_enlaces(urls)})
         elif ruta == "/api/lote":
             urls = datos.get("urls") or []
             if isinstance(urls, str):

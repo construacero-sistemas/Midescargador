@@ -3,7 +3,7 @@
 // puerto 17890 y abre el panel en su propia ventana. Al cerrar la app,
 // detiene el servidor. Incluye auto-actualización vía electron-updater
 // (solo en la versión instalada; el portable no puede auto-actualizarse).
-const { app, BrowserWindow, dialog, shell, Menu } = require("electron");
+const { app, BrowserWindow, dialog, shell, Menu, ipcMain } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -82,24 +82,57 @@ if (app.isPackaged && !esPortable) {
 
 let actualizando = false;
 
+function enviarEstadoActualizacion(datos) {
+  try {
+    const win = BrowserWindow.getAllWindows()[0];
+    if (win && !win.isDestroyed() && win.webContents) {
+      win.webContents.send("updater:status", datos);
+      win.webContents.executeJavaScript(`
+        if (typeof window.__onUpdateStatus === 'function') {
+          window.__onUpdateStatus(${JSON.stringify(datos)});
+        }
+      `).catch(() => {});
+    }
+  } catch (e) { /* ventana cerrándose */ }
+}
+
 function configurarAutoUpdate() {
   if (!autoUpdater) return;
 
-  autoUpdater.on("checking-for-update", () => log("buscando actualizaciones..."));
-  autoUpdater.on("update-not-available", () => log("sin actualizaciones"));
-  autoUpdater.on("error", (err) => log("error de actualización: " + (err && err.message ? err.message : err)));
+  autoUpdater.on("checking-for-update", () => {
+    log("buscando actualizaciones...");
+    enviarEstadoActualizacion({ estado: "comprobando" });
+  });
+
+  autoUpdater.on("update-not-available", (info) => {
+    log("sin actualizaciones");
+    enviarEstadoActualizacion({ estado: "al-dia", version: info && info.version ? info.version : app.getVersion() });
+  });
+
+  autoUpdater.on("error", (err) => {
+    log("error de actualización: " + (err && err.message ? err.message : err));
+    enviarEstadoActualizacion({ estado: "error", error: err && err.message ? err.message : String(err) });
+  });
 
   autoUpdater.on("update-available", (info) => {
     log("actualización disponible: " + info.version);
+    enviarEstadoActualizacion({
+      estado: "disponible",
+      version: info.version,
+      releaseNotes: info.releaseNotes || null
+    });
+
     const win = BrowserWindow.getAllWindows()[0];
+    // Fallback nativo elegante con botones estándar (noLink: true) si el usuario no interactúa en la app
     dialog.showMessageBox(win, {
       type: "info",
-      title: "Actualización disponible",
-      message: "Hay una versión nueva de MiDescargador (" + info.version + ").",
-      detail: "¿Descargarla e instalarla ahora? La descarga es en segundo plano y podrás seguir usando la app.",
-      buttons: ["Descargar", "Ahora no"],
+      title: "Actualización disponible · MiDescargador",
+      message: "Nueva versión disponible: MiDescargador " + info.version,
+      detail: "Se han incorporado mejoras de rendimiento y estabilidad en las descargas.\n¿Deseas descargar la actualización ahora en segundo plano?",
+      buttons: ["Descargar e instalar", "Más tarde"],
       defaultId: 0,
       cancelId: 1,
+      noLink: true,
     }).then(({ response }) => {
       if (response === 0) {
         actualizando = true;
@@ -109,27 +142,62 @@ function configurarAutoUpdate() {
   });
 
   autoUpdater.on("download-progress", (p) => {
-    if (p && Math.floor(p.percent) % 10 === 0) {
-      log("descargando actualización: " + Math.floor(p.percent) + "%");
+    const progreso = Math.floor(p && p.percent ? p.percent : 0);
+    if (progreso % 5 === 0) {
+      log("descargando actualización: " + progreso + "%");
     }
+    enviarEstadoActualizacion({
+      estado: "descargando",
+      progreso: progreso,
+      velocidad: p ? p.bytesPerSecond : 0,
+      transferido: p ? p.transferred : 0,
+      total: p ? p.total : 0
+    });
   });
 
   autoUpdater.on("update-downloaded", (info) => {
     log("actualización descargada: " + info.version);
+    enviarEstadoActualizacion({
+      estado: "lista",
+      version: info.version
+    });
+
     const win = BrowserWindow.getAllWindows()[0];
+    // Diálogo nativo profesional (noLink: true para evitar los enlaces azules con flecha)
     dialog.showMessageBox(win, {
       type: "info",
-      title: "Actualización lista",
-      message: "La actualización " + info.version + " ya está descargada.",
-      detail: "Reinicia la aplicación para instalarla. Se cerrará y volverá a abrirse sola.",
-      buttons: ["Reiniciar e instalar", "Más tarde"],
+      title: "Actualización lista · MiDescargador",
+      message: "MiDescargador " + info.version + " está listo para instalarse",
+      detail: "La actualización se descargó con éxito.\nReinicia la aplicación para aplicar todos los cambios de inmediato (se reiniciará automáticamente).",
+      buttons: ["Reiniciar e instalar ahora", "Instalar al cerrar"],
       defaultId: 0,
       cancelId: 1,
+      noLink: true,
     }).then(({ response }) => {
       if (response === 0) {
         autoUpdater.quitAndInstall(false, true);
       }
     });
+  });
+
+  // Controladores IPC para responder a acciones desde la UI web
+  ipcMain.on("updater:descargar", () => {
+    if (autoUpdater) {
+      actualizando = true;
+      autoUpdater.downloadUpdate();
+    }
+  });
+
+  ipcMain.on("updater:instalar", () => {
+    if (autoUpdater) {
+      autoUpdater.quitAndInstall(false, true);
+    }
+  });
+
+  ipcMain.on("updater:comprobar", () => {
+    if (autoUpdater) {
+      autoUpdater.checkForUpdates().catch(() => {});
+    }
   });
 
   // comprobar al arrancar (tras unos segundos) y cada 4 horas
@@ -231,7 +299,8 @@ function crearVentana() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: true,
+      preload: path.join(__dirname, "preload.js"),
+      sandbox: false,
     },
   });
   win.loadURL(URL_PANEL);

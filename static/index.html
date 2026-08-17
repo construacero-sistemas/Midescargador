@@ -937,6 +937,19 @@
       max-width: 140px;
     }
 
+    .link-verif {
+      font-size: 9.5px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      padding: 2px 6px;
+      border-radius: 999px;
+      white-space: nowrap;
+      cursor: default;
+    }
+    .link-verif.link-ok { background: rgba(16, 185, 129, 0.14); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
+    .link-verif.link-bad { background: rgba(239, 68, 68, 0.14); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.35); }
+    .link-verif.link-warn { background: rgba(245, 158, 11, 0.14); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.35); }
+
     .part-chip-actions {
       display: flex;
       align-items: center;
@@ -1462,6 +1475,18 @@
       line-height: 1.55;
     }
 
+    .config-nota a.info-link {
+      color: #60a5fa;
+      text-decoration: none;
+      border-bottom: 1px dashed rgba(96, 165, 250, 0.45);
+      transition: color 0.15s, border-color 0.15s;
+    }
+
+    .config-nota a.info-link:hover {
+      color: #93c5fd;
+      border-bottom-style: solid;
+    }
+
     .session-card {
       display: flex;
       align-items: center;
@@ -1531,6 +1556,26 @@
       to { opacity: 1; transform: scale(1); }
     }
 
+    /* Update Modal Styles */
+    .update-icon-glow {
+      width: 64px;
+      height: 64px;
+      border-radius: 20px;
+      background: rgba(59, 130, 246, 0.14);
+      border: 1px solid rgba(59, 130, 246, 0.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 16px;
+      box-shadow: 0 0 28px rgba(59, 130, 246, 0.28);
+      animation: pulseGlow 2.5s infinite ease-in-out;
+    }
+
+    @keyframes pulseGlow {
+      0%, 100% { transform: scale(1); box-shadow: 0 0 20px rgba(59, 130, 246, 0.25); }
+      50% { transform: scale(1.05); box-shadow: 0 0 32px rgba(59, 130, 246, 0.45); }
+    }
+
     /* Responsive Breakpoints */
     @media (max-width: 640px) {
       .app-container { padding: 16px 12px 60px; }
@@ -1595,6 +1640,12 @@
         <span class="pulse-dot"></span>
         <span id="txt-server">Online</span>
       </div>
+
+      <!-- Update Pill (Visible when update is ready or downloading) -->
+      <button class="nav-pill active-state" id="pill-actualizacion" style="display:none; border-color:rgba(59,130,246,0.5); background:rgba(59,130,246,0.15); color:#93c5fd;" title="Actualización de MiDescargador disponible">
+        <span class="pulse-dot" style="background:var(--primary); box-shadow: 0 0 8px var(--primary);"></span>
+        <span id="txt-actualizacion">Actualización lista</span>
+      </button>
 
       <!-- Sessions (YouTube / TikTok) -->
       <button class="nav-pill" id="btn-sesion" title="Sesiones de YouTube y TikTok para descargas desbloqueadas">
@@ -2069,9 +2120,9 @@
 
       <div class="config-section-title">Juegos y películas de ZonaLeros</div>
       <div class="config-nota">
-        <strong>zona-leros.com</strong> es un sitio de juegos y películas. En vez de estar copiando
+        <strong><a href="https://zona-leros.com" target="_blank" class="info-link">zona-leros.com</a></strong> es un sitio de juegos y películas. En vez de estar copiando
         enlace por enlace, haz esto:<br>
-        1. Entra a <strong>zona-leros.com</strong> y abre la página del juego o película que quieras.<br>
+        1. Entra a <strong><a href="https://zona-leros.com" target="_blank" class="info-link">zona-leros.com</a></strong> y abre la página del juego o película que quieras.<br>
         2. Copia la dirección (la que empieza con <code>https://www.zona-leros.com/…</code>).<br>
         3. Pégala aquí y pulsa <strong>Extraer enlaces de descarga</strong>.<br>
         La app saca <strong>todos los enlaces de todos los servidores</strong> (Rootz, Mega, MediaFire,
@@ -2085,9 +2136,9 @@
 
       <div class="config-section-title">Juegos de PiviGames</div>
       <div class="config-nota">
-        <strong>pivigames.blog</strong> es un sitio de juegos de PC. Funciona igual que
+        <strong><a href="https://pivigames.blog" target="_blank" class="info-link">pivigames.blog</a></strong> es un sitio de juegos de PC. Funciona igual que
         ZonaLeros:<br>
-        1. Entra a <strong>pivigames.blog</strong> y abre la página del juego que quieras.<br>
+        1. Entra a <strong><a href="https://pivigames.blog" target="_blank" class="info-link">pivigames.blog</a></strong> y abre la página del juego que quieras.<br>
         2. Copia la dirección (la que empieza con <code>https://pivigames.blog/…</code>).<br>
         3. Pégala aquí y pulsa <strong>Extraer enlaces de descarga</strong>.<br>
         La app resuelve los enlaces (Mega, MediaFire, Gofile, Drive, torrent y otros) y te
@@ -2123,6 +2174,73 @@
         Configuración.<br>
         • Si algo se ve lento, revisa que el archivo no esté en pausa y que la carpeta de
         destino tenga espacio.
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ==========================================================================
+     UPDATE MODAL (UI/UX 2.0)
+     ========================================================================== -->
+<div id="update-panel" class="modal-overlay" style="display:none;">
+  <div class="modal-card" style="max-width:520px;">
+    <div class="modal-header">
+      <div class="modal-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+          <polyline points="7 10 12 15 17 10"></polyline>
+          <line x1="12" y1="15" x2="12" y2="3"></line>
+        </svg>
+        Actualización de MiDescargador
+      </div>
+      <button class="btn btn-ghost btn-sm" id="update-cerrar">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
+    </div>
+    <div class="modal-body" style="padding: 24px 22px;">
+      <div style="text-align:center; margin-bottom: 18px;">
+        <div class="update-icon-glow">
+          <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+          </svg>
+        </div>
+        <div class="brand-badge" id="update-version-badge" style="display:inline-block; margin-bottom: 8px; font-size: 11px;">
+          Versión 2.0.7
+        </div>
+        <h3 id="update-title" style="font-size: 17px; font-weight: 800; color: var(--text-primary); margin-bottom: 6px;">
+          Actualización lista para instalar
+        </h3>
+        <p id="update-desc" style="font-size: 13px; color: var(--text-secondary); max-width: 420px; margin: 0 auto; line-height: 1.5;">
+          La nueva versión se descargó y verificó con éxito. Reinicia la aplicación para aplicar las mejoras de velocidad y estabilidad.
+        </p>
+      </div>
+
+      <!-- Progress Section (when downloading) -->
+      <div id="update-progress-section" style="display:none; margin: 16px 0;">
+        <div class="progress-container" style="height: 8px;">
+          <div class="progress-bar active" id="update-progress-bar" style="width: 0%;"></div>
+        </div>
+        <div style="display:flex; justify-content:space-between; font-size:12px; color:var(--text-secondary); margin-top:6px;">
+          <span id="update-progress-text">Descargando actualización...</span>
+          <strong id="update-progress-pct" style="color:var(--text-primary);">0%</strong>
+        </div>
+      </div>
+
+      <!-- Modal Actions -->
+      <div style="display:flex; flex-direction:column; gap:10px; margin-top: 22px;">
+        <button class="btn btn-primary" id="btn-update-action" style="width:100%; padding:12px; font-size:13.5px; font-weight:700;">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+          </svg>
+          <span id="txt-update-action">Reiniciar e instalar ahora</span>
+        </button>
+        <button class="btn btn-secondary" id="btn-update-later" style="width:100%; padding:10px; font-size:13px;">
+          Más tarde
+        </button>
       </div>
     </div>
   </div>
@@ -2589,6 +2707,53 @@
     return n.includes("mediafire") || n.includes("rootz");
   }
 
+  // estados de verificación de enlaces: url -> 'activo' | 'caido' | 'navegador' | 'error'
+  let estadosEnlaces = {};
+
+  function badgeEstado(url) {
+    const e = estadosEnlaces[url];
+    if (!e) return "";
+    if (e === "activo") return `<span class="link-verif link-ok" title="Enlace activo">✓ activo</span>`;
+    if (e === "caido") return `<span class="link-verif link-bad" title="Enlace caído">✗ caído</span>`;
+    if (e === "navegador") return `<span class="link-verif link-warn" title="Exige navegador: no se puede confirmar sin abrir Chrome">⛔ requiere navegador</span>`;
+    return `<span class="link-verif link-warn" title="No se pudo verificar">? no verificable</span>`;
+  }
+
+  async function verificarEnlaces() {
+    if (!datosEnlacesActuales) return;
+    const urls = [];
+    const vistos = new Set();
+    (datosEnlacesActuales.servidores || []).forEach(s => {
+      (s.enlaces || []).forEach(e => {
+        const u = (typeof e === "string") ? e : e.url;
+        if (u && !vistos.has(u)) { vistos.add(u); urls.push(u); }
+      });
+    });
+    if (!urls.length) return;
+
+    const btn = $("#btn-verificar-enlaces");
+    const txt = $("#txt-verificar-enlaces");
+    if (btn) btn.disabled = true;
+    if (txt) txt.textContent = "Verificando…";
+    try {
+      const r = await fetch("/api/verificar-enlaces", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urls })
+      });
+      const d = await r.json();
+      if (d.resultados) {
+        estadosEnlaces = d.resultados;
+        renderizarPanelEnlaces();
+      }
+    } catch (e) {
+      alert("No se pudo verificar los enlaces: revisa que el servidor esté activo.");
+    } finally {
+      if (btn) btn.disabled = false;
+      if (txt) txt.textContent = "Verificar enlaces";
+    }
+  }
+
   function mostrarEnlaces(d) {
     if (d && Array.isArray(d.servidores)) {
       d.servidores = ordenarServidores(d.servidores);
@@ -2655,6 +2820,13 @@
               <rect x="3" y="14" width="7" height="7"></rect>
             </svg>
             <span>${vistaModoCompacto ? "Cuadrícula" : "Lista"}</span>
+          </button>
+          <button class="btn btn-ghost btn-sm" id="btn-verificar-enlaces" onclick="verificarEnlaces()" title="Comprueba si cada enlace sigue activo o cayó" style="font-size:11.5px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+              <polyline points="22 4 12 14.01 9 11.01"></polyline>
+            </svg>
+            <span id="txt-verificar-enlaces">Verificar enlaces</span>
           </button>
         </div>
       </div>
@@ -2749,6 +2921,7 @@
                     <polyline points="21 8 21 21 3 21 3 8"></polyline><rect x="1" y="3" width="22" height="5"></rect>
                   </svg>
                   <span>${escapeHtml(etiqueta)}</span>
+                  ${badgeEstado(url)}
                 </div>
                 <span class="part-chip-sub" title="${escapeHtml(url)}">${escapeHtml(shortUrl)}</span>
               </div>
@@ -2785,6 +2958,7 @@
             <div class="part-row-detail">
               <span style="font-weight:700; font-size:12px; color:var(--text-secondary); width:110px;">${escapeHtml(etiqueta)}:</span>
               <span class="part-row-url">${escapeHtml(url)}</span>
+              ${badgeEstado(url)}
               <div style="display:flex; gap:6px; flex-shrink:0;">
                 <button class="btn btn-ghost btn-sm" onclick="copiarAlPortapapeles('${encodeURIComponent(url)}', this)">
                   Copiar
@@ -3302,6 +3476,137 @@
     } catch (e) {}
   }
   cargarHosters();
+
+  // ==========================================================================
+  // IN-APP AUTO-UPDATER CONTROLLER (UI/UX 2.0)
+  // ==========================================================================
+  let estadoActualizacionActual = null;
+
+  function actualizarUIActualizacion(data) {
+    if (!data || !data.estado) return;
+    estadoActualizacionActual = data;
+
+    const pill = $("#pill-actualizacion");
+    const txtPill = $("#txt-actualizacion");
+    const panel = $("#update-panel");
+    const title = $("#update-title");
+    const desc = $("#update-desc");
+    const badge = $("#update-version-badge");
+    const btnAction = $("#btn-update-action");
+    const txtAction = $("#txt-update-action");
+    const progSection = $("#update-progress-section");
+    const progBar = $("#update-progress-bar");
+    const progPct = $("#update-progress-pct");
+
+    if (data.estado === "disponible") {
+      if (pill) {
+        pill.style.display = "inline-flex";
+        if (txtPill) txtPill.textContent = "Nueva v" + (data.version || "");
+      }
+      if (badge) badge.textContent = "Versión " + (data.version || "Nueva");
+      if (title) title.textContent = "Actualización disponible";
+      if (desc) desc.textContent = "Hay una nueva versión de MiDescargador (" + (data.version || "") + "). Se descargará en segundo plano sin interrumpir tus tareas.";
+      if (btnAction) {
+        btnAction.disabled = false;
+        if (txtAction) txtAction.textContent = "Descargar actualización";
+      }
+      if (progSection) progSection.style.display = "none";
+      if (panel) panel.style.display = "flex";
+    } else if (data.estado === "descargando") {
+      const p = data.progreso || 0;
+      if (pill) {
+        pill.style.display = "inline-flex";
+        if (txtPill) txtPill.textContent = "Descargando " + p + "%";
+      }
+      if (progSection) progSection.style.display = "block";
+      if (progBar) progBar.style.width = p + "%";
+      if (progPct) progPct.textContent = p + "%";
+      if (title) title.textContent = "Descargando actualización...";
+      if (desc) desc.textContent = "Descargando el paquete en segundo plano. Puedes continuar usando la aplicación normalmente.";
+      if (btnAction) {
+        btnAction.disabled = true;
+        if (txtAction) txtAction.textContent = "Descargando (" + p + "%)...";
+      }
+    } else if (data.estado === "lista") {
+      if (pill) {
+        pill.style.display = "inline-flex";
+        if (txtPill) txtPill.textContent = "Actualización lista";
+      }
+      if (badge) badge.textContent = "Versión " + (data.version || "Lista");
+      if (title) title.textContent = "Actualización lista para instalar";
+      if (desc) desc.textContent = "La versión " + (data.version || "") + " ya está descargada y verificada. Reinicia la aplicación para aplicar todos los cambios de inmediato.";
+      if (progSection) progSection.style.display = "none";
+      if (btnAction) {
+        btnAction.disabled = false;
+        if (txtAction) txtAction.textContent = "Reiniciar e instalar ahora";
+      }
+      if (panel) panel.style.display = "flex";
+    } else if (data.estado === "al-dia") {
+      if (pill) pill.style.display = "none";
+    }
+  }
+
+  // Escuchar eventos desde Electron (Preload o executeJavaScript)
+  window.__onUpdateStatus = function(data) {
+    actualizarUIActualizacion(data);
+  };
+
+  if (window.electronAPI && typeof window.electronAPI.onUpdaterStatus === "function") {
+    window.electronAPI.onUpdaterStatus((data) => {
+      actualizarUIActualizacion(data);
+    });
+  }
+
+  const pillAct = $("#pill-actualizacion");
+  if (pillAct) {
+    pillAct.onclick = () => {
+      if (estadoActualizacionActual) {
+        actualizarUIActualizacion(estadoActualizacionActual);
+        const panel = $("#update-panel");
+        if (panel) panel.style.display = "flex";
+      }
+    };
+  }
+
+  const updateCerrar = $("#update-cerrar");
+  if (updateCerrar) {
+    updateCerrar.onclick = () => {
+      const panel = $("#update-panel");
+      if (panel) panel.style.display = "none";
+    };
+  }
+
+  const btnUpdateLater = $("#btn-update-later");
+  if (btnUpdateLater) {
+    btnUpdateLater.onclick = () => {
+      const panel = $("#update-panel");
+      if (panel) panel.style.display = "none";
+    };
+  }
+
+  const updatePanel = $("#update-panel");
+  if (updatePanel) {
+    updatePanel.onclick = (e) => {
+      if (e.target === updatePanel) updatePanel.style.display = "none";
+    };
+  }
+
+  const btnUpdateAction = $("#btn-update-action");
+  if (btnUpdateAction) {
+    btnUpdateAction.onclick = () => {
+      if (!estadoActualizacionActual) return;
+      if (estadoActualizacionActual.estado === "disponible") {
+        if (window.electronAPI && typeof window.electronAPI.descargarActualizacion === "function") {
+          window.electronAPI.descargarActualizacion();
+        }
+        actualizarUIActualizacion({ estado: "descargando", progreso: 0 });
+      } else if (estadoActualizacionActual.estado === "lista") {
+        if (window.electronAPI && typeof window.electronAPI.instalarActualizacion === "function") {
+          window.electronAPI.instalarActualizacion();
+        }
+      }
+    };
+  }
 </script>
 
 </body>
