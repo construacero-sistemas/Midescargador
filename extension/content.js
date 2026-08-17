@@ -247,15 +247,50 @@
 
   // --- menú y descarga ----------------------------------------------------
 
+  // Consultar formatos: primero vía background service worker (evita Chrome PNA),
+  // luego fallback directo al servidor.
   async function consultarFormatos(url) {
-    const r = await fetch(SERVIDOR + "/api/formatos", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url }),
-    });
-    const d = await r.json();
-    if (d.error) throw new Error(d.error);
-    return d.formatos || [];
+    // 1) Intentar a través del service worker (bypass de Private Network Access)
+    try {
+      const resp = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("timeout")), 38000);
+        chrome.runtime.sendMessage({ tipo: "formatos", url }, (r) => {
+          clearTimeout(timeout);
+          if (chrome.runtime.lastError) {
+            reject(new Error(chrome.runtime.lastError.message));
+          } else {
+            resolve(r);
+          }
+        });
+      });
+      if (resp && resp.error) throw new Error(resp.error);
+      return (resp && resp.formatos) || [];
+    } catch (e) {
+      // 2) Fallback: fetch directo al servidor
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 30000);
+        const r = await fetch(SERVIDOR + "/api/formatos", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+          signal: ctrl.signal,
+        });
+        clearTimeout(timer);
+        const d = await r.json();
+        if (d.error) throw new Error(d.error);
+        return d.formatos || [];
+      } catch (err2) {
+        // Si ambos fallan, dar el error más informativo
+        if (err2.name === "AbortError") {
+          throw new Error("El servidor tardó demasiado en responder.");
+        }
+        if (err2.message === "Failed to fetch" || err2.message.includes("NetworkError")) {
+          throw new Error("No se pudo conectar al servidor. Asegúrate de que MiDescargador esté abierto.");
+        }
+        throw err2;
+      }
+    }
   }
 
   function construirMenu(ov, video, url) {
@@ -314,22 +349,44 @@
 
   async function enviarDescarga(url, formato, ov) {
     ov.style.display = "none";
+    // 1) Intentar a través del service worker (evita Chrome PNA)
     try {
-      const r = await fetch(SERVIDOR + "/api/descargar", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, segmentos: 8, carpeta: null, formato }),
+      const resp = await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("timeout")), 15000);
+        chrome.runtime.sendMessage(
+          { tipo: "descargar-formato", url, formato, segmentos: 8, carpeta: null },
+          (r) => {
+            clearTimeout(timeout);
+            if (chrome.runtime.lastError) reject(new Error(chrome.runtime.lastError.message));
+            else resolve(r);
+          });
       });
-      const d = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(d.error || "El servidor rechazó la descarga");
-      avisar("Enviado a MiDescargador (" + (d.id || "") + ")", true);
-    } catch (err) {
+      if (resp && resp.ok) {
+        avisar("Enviado a MiDescargador (" + (resp.id || "") + ")", true);
+        return;
+      }
+      if (resp && resp.error) throw new Error(resp.error);
+    } catch (e1) {
+      // 2) Fallback: fetch directo
       try {
-        const ok = await chrome.runtime.sendMessage({ tipo: "descargar", url });
-        if (ok && ok.ok) avisar("Descargado con respaldo del navegador", true);
-        else throw new Error("El servidor local no responde");
-      } catch (e2) {
-        avisar("No se pudo iniciar la descarga: " + err.message, false);
+        const r = await fetch(SERVIDOR + "/api/descargar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url, segmentos: 8, carpeta: null, formato }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error || "El servidor rechazó la descarga");
+        avisar("Enviado a MiDescargador (" + (d.id || "") + ")", true);
+        return;
+      } catch (err) {
+        // 3) Último recurso: descarga directa del navegador
+        try {
+          const ok = await chrome.runtime.sendMessage({ tipo: "descargar", url });
+          if (ok && ok.ok) avisar("Descargado con respaldo del navegador", true);
+          else throw new Error("El servidor local no responde");
+        } catch (e2) {
+          avisar("No se pudo iniciar la descarga: " + err.message, false);
+        }
       }
     }
   }

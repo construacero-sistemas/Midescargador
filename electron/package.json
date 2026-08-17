@@ -1,14 +1,15 @@
 {
   "name": "midescargador",
-  "version": "2.1.6",
+  "version": "2.2.0",
   "description": "MiDescargador - gestor de descargas segmentado, videos y torrents",
   "main": "main.js",
   "author": "MiDescargador",
   "license": "MIT",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win",
-    "dist:portable": "electron-builder --win portable"
+    "dist": "node ../build_mei/sync-version.js && electron-builder --win",
+    "dist:portable": "node ../build_mei/sync-version.js && electron-builder --win portable",
+    "postinstall": "node ../build_mei/sync-version.js"
   },
   "devDependencies": {
     "electron": "^31.7.7",

@@ -142,7 +142,7 @@
       </svg>
     </div>
     <div>
-      <h1>MiDescargador <span class="badge">2.1.5</span></h1>
+      <h1>MiDescargador <span class="badge" id="version-badge"></span></h1>
     </div>
   </div>
 
@@ -154,7 +154,7 @@
   </div>
 
   <a class="btn-open" href="http://127.0.0.1:17890" target="_blank">
-    <span>Abrir Panel 2.1.5</span>
+    <span id="btn-panel-text">Abrir Panel</span>
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
       <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
       <polyline points="15 3 21 3 21 9"></polyline>
@@ -169,12 +169,46 @@
       <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"></path>
       <path d="M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
     </svg>
-    <span>Recargar extensión</span>
+    <span id="btn-reload-text">Recargar extensión</span>
   </button>
 
   <script>
+    // Leer versión del manifest para mantenerla siempre sincronizada
+    const manifest = chrome.runtime.getManifest();
+    const ver = manifest.version;
+    document.getElementById("version-badge").textContent = ver;
+    document.getElementById("btn-panel-text").textContent = "Abrir Panel " + ver;
+
+    // Comprobar si el servidor realmente está disponible
+    fetch("http://127.0.0.1:17890/api/version", { method: "GET" })
+      .then(r => r.ok ? r.json() : Promise.reject())
+      .then(d => {
+        const dot = document.querySelector(".dot");
+        const txt = document.querySelector(".status-box span:last-child");
+        dot.style.background = "var(--success)";
+        txt.textContent = "Servidor listo · v" + (d.version || "?");
+      })
+      .catch(() => {
+        const dot = document.querySelector(".dot");
+        const txt = document.querySelector(".status-box span:last-child");
+        dot.style.background = "#ef4444";
+        txt.textContent = "Servidor apagado";
+      });
+
     document.getElementById("btn-recargar").addEventListener("click", () => {
-      chrome.runtime.reload();
+      const t = document.getElementById("btn-reload-text");
+      try {
+        chrome.runtime.reload();
+        t.textContent = "✓ Extensión recargada";
+      } catch (_) {
+        // no-op: reload() no lanza error en MV3 cuando falla
+      }
+      // Siempre abrir chrome://extensions como respaldo,
+      // porque reload() puede fallar silenciosamente
+      setTimeout(() => {
+        chrome.tabs.create({ url: "chrome://extensions" });
+      }, 200);
+      t.textContent = "Abriendo chrome://extensions…";
     });
   </script>
 </body>

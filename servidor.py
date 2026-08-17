@@ -12,6 +12,8 @@ API:
   POST /api/cancelar    {"id"}
   POST /api/borrar      {"id"}        (quita de la lista)
   POST /api/abrir       {"id"}        (abre la carpeta en el explorador)
+  GET  /api/media/<id>               (sirve el archivo con soporte de Range,
+                                      para el reproductor integrado del panel)
 """
 
 import json
@@ -203,29 +205,37 @@ def _nombre_servidor(url):
     return host
 
 
-def _ytdlp_disponible():
-    import shutil
-    if shutil.which("yt-dlp") or shutil.which("ytdlp"):
-        return True
+def _candidatos_ytdlp():
+    """Rutas candidatas a yt-dlp, en orden de prioridad. Devuelve SOLO
+    archivos reales: al empaquetar con PyInstaller a veces el yt-dlp.exe
+    queda como directorio anidado (venv/Scripts/yt-dlp.exe/yt-dlp.exe);
+    os.path.exists() ve el directorio y lo devolvería como comando,
+    rompiendo todas las consultas de calidades en silencio."""
     base = _base_dir()
-    for p in (os.path.join(base, "venv", "Scripts", "yt-dlp.exe"),
-              os.path.join(base, "venv", "bin", "yt-dlp")):
-        if os.path.exists(p):
-            return True
-    return False
-
-
-def _cmd_ytdlp():
-    """Devuelve cómo invocar yt-dlp (prioriza el venv del proyecto)."""
-    base = _base_dir()
-    for p in (os.path.join(base, "venv", "Scripts", "yt-dlp.exe"),
-              os.path.join(base, "venv", "bin", "yt-dlp")):
-        if os.path.exists(p):
-            return [p]
+    candidatos = [
+        os.path.join(base, "venv", "Scripts", "yt-dlp.exe"),
+        os.path.join(base, "venv", "bin", "yt-dlp"),
+    ]
+    # directorio anidado que PyInstaller a veces crea
+    for c in list(candidatos):
+        candidatos.append(os.path.join(c, "yt-dlp.exe"))
+        candidatos.append(os.path.join(c, "yt-dlp"))
     import shutil
     for nombre in ("yt-dlp", "ytdlp"):
         p = shutil.which(nombre)
         if p:
+            candidatos.append(p)
+    return candidatos
+
+
+def _ytdlp_disponible():
+    return any(os.path.isfile(p) for p in _candidatos_ytdlp())
+
+
+def _cmd_ytdlp():
+    """Devuelve cómo invocar yt-dlp (prioriza el venv del proyecto)."""
+    for p in _candidatos_ytdlp():
+        if os.path.isfile(p):
             return [p]
     return ["yt-dlp"]
 
@@ -1152,6 +1162,69 @@ class _TrabajoYtdlp:
         }
 
 
+def _archivo_real(trabajo):
+    """Devuelve la ruta del archivo final de una descarga (donde quedó en
+    disco tras organizar), o None si no se puede determinar."""
+    ruta = getattr(trabajo, "_archivo_final", None)
+    if ruta and os.path.isfile(ruta):
+        return ruta
+    carpeta = getattr(trabajo, "carpeta", None)
+    nombre = getattr(trabajo, "nombre", None) or getattr(trabajo, "_nombre", None)
+    if carpeta and nombre and os.path.isdir(carpeta):
+        ruta = os.path.join(carpeta, nombre)
+        if os.path.isfile(ruta):
+            return ruta
+        # yt-dlp pudo nombrar el archivo distinto: buscar por TÍTULO
+        try:
+            nombre_base = (nombre or "").strip()[:120]
+            candidatos = [os.path.join(carpeta, f) for f in os.listdir(carpeta)
+                          if os.path.isfile(os.path.join(carpeta, f))
+                          and not f.endswith(".part")
+                          and nombre_base
+                          and f.startswith(nombre_base)]
+            if candidatos:
+                return max(candidatos, key=os.path.getmtime)
+        except Exception:
+            pass
+    return None
+
+
+_TIPOS_MEDIA = {
+    ".mp4": "video/mp4", ".m4v": "video/mp4", ".mov": "video/quicktime",
+    ".mkv": "video/x-matroska", ".webm": "video/webm",
+    ".avi": "video/x-msvideo", ".wmv": "video/x-ms-wmv",
+    ".ts": "video/mp2t", ".mpg": "video/mpeg", ".mpeg": "video/mpeg",
+    ".mp3": "audio/mpeg", ".m4a": "audio/mp4", ".aac": "audio/aac",
+    ".wav": "audio/wav", ".ogg": "audio/ogg", ".oga": "audio/ogg",
+    ".opus": "audio/ogg", ".flac": "audio/flac", ".wma": "audio/x-ms-wma",
+}
+
+
+def _tipo_media(ruta):
+    """Content-Type para el reproductor según la extensión del archivo."""
+    ext = os.path.splitext(ruta)[1].lower()
+    return _TIPOS_MEDIA.get(ext, "application/octet-stream")
+
+
+def _ruta_vlc():
+    """Localiza vlc.exe en las rutas de instalación habituales de Windows.
+    Devuelve None si VLC no está instalado."""
+    candidatos = [
+        os.path.join(os.environ.get("ProgramFiles", "C:\\Program Files"),
+                     "VideoLAN", "VLC", "vlc.exe"),
+        os.path.join(os.environ.get("ProgramFiles(x86)",
+                                    "C:\\Program Files (x86)"),
+                     "VideoLAN", "VLC", "vlc.exe"),
+        os.path.join(os.environ.get("LOCALAPPDATA", ""),
+                     "Programs", "VideoLAN", "VLC", "vlc.exe"),
+    ]
+    for p in candidatos:
+        if os.path.isfile(p):
+            return p
+    import shutil
+    return shutil.which("vlc")
+
+
 class Gestor:
     def __init__(self):
         self.trabajos = {}
@@ -1287,6 +1360,41 @@ class Gestor:
         if carpeta and os.path.isdir(carpeta):
             os.startfile(carpeta)  # Windows
         return True
+
+    def reproducir(self, tid):
+        """Abre el archivo descargado en VLC si está instalado, o en el
+        reproductor por defecto de Windows si no. Devuelve (ok, error)."""
+        with self._lock:
+            t = self.trabajos.get(tid)
+        if not t:
+            return False, "descarga no encontrada"
+        ruta = _archivo_real(t)
+        if not ruta or not os.path.isfile(ruta):
+            return False, "el archivo no existe en disco"
+        vlc = _ruta_vlc()
+        if vlc:
+            # lanzar VLC sin bloquear el servidor ni abrir ventana de consola
+            try:
+                subprocess.Popen([vlc, ruta],
+                                 creationflags=getattr(subprocess,
+                                                      "CREATE_NO_WINDOW", 0))
+                return True, None
+            except Exception as e:
+                return False, "no se pudo lanzar VLC: %s" % e
+        try:
+            os.startfile(ruta)  # reproductor por defecto de Windows
+            return True, None
+        except Exception as e:
+            return False, "no se pudo abrir el archivo: %s" % e
+
+    def ruta_archivo(self, tid):
+        """Ruta del archivo final de una descarga, o None si no existe.
+        (La usa el endpoint /api/media/<id> del reproductor integrado.)"""
+        with self._lock:
+            t = self.trabajos.get(tid)
+        if not t:
+            return None
+        return _archivo_real(t)
 
 
 GESTOR = Gestor()
@@ -1558,11 +1666,34 @@ class Manejador(BaseHTTPRequestHandler):
             tid = (qs.get("tarea") or [""])[0]
             datos, codigo = _estado_enlaces_tarea(tid)
             self._json(datos, codigo)
+        elif ruta.startswith("/api/media/"):
+            tid = urllib.parse.unquote(ruta[len("/api/media/"):])
+            self._servir_media(tid)
         else:
             self._json({"error": "no encontrado"}, 404)
 
+    def do_HEAD(self):
+        """El reproductor del navegador puede pedir cabeceras con HEAD antes
+        de reproducir; respondemos igual que GET pero sin cuerpo."""
+        ruta = urllib.parse.urlparse(self.path).path
+        if ruta.startswith("/api/media/"):
+            tid = urllib.parse.unquote(ruta[len("/api/media/"):])
+            self._servir_media(tid)
+        else:
+            self.send_response(404)
+            self.end_headers()
+
     def do_POST(self):
         ruta = urllib.parse.urlparse(self.path).path
+        try:
+            self._do_post_inner(ruta)
+        except Exception as e:
+            try:
+                self._json({"error": str(e)[:200]}, 500)
+            except Exception:
+                pass
+
+    def _do_post_inner(self, ruta):
         datos = self._leer_cuerpo()
         if ruta == "/api/descargar":
             url = (datos.get("url") or "").strip()
@@ -1582,7 +1713,15 @@ class Manejador(BaseHTTPRequestHandler):
             if not url:
                 self._json({"error": "falta url"}, 400)
                 return
+            try:
+                _log_servidor("/api/formatos url=%s" % url[:200])
+            except Exception:
+                pass
             res = _formatos(url)
+            try:
+                _log_servidor("/api/formatos res=%d formatos" % (len(res) if isinstance(res, list) else 0))
+            except Exception:
+                pass
             if isinstance(res, dict) and res.get("error"):
                 self._json(res, 422)
             else:
@@ -1631,6 +1770,12 @@ class Manejador(BaseHTTPRequestHandler):
             self._json({"ok": GESTOR.borrar(datos.get("id"))})
         elif ruta == "/api/abrir":
             self._json({"ok": GESTOR.abrir(datos.get("id"))})
+        elif ruta == "/api/reproducir":
+            ok, err = GESTOR.reproducir(datos.get("id"))
+            if ok:
+                self._json({"ok": True})
+            else:
+                self._json({"ok": False, "error": err}, 404)
         elif ruta == "/api/sesion/iniciar":
             # corre en segundo plano: la ventana de Chrome queda esperando
             # a que el usuario inicie sesión; el panel consulta /api/sesion
@@ -1701,6 +1846,76 @@ class Manejador(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(cuerpo)))
         self.end_headers()
         self.wfile.write(cuerpo)
+
+    def _servir_media(self, tid):
+        """Sirve el archivo de una descarga terminada con soporte de Range,
+        para que el <video> del panel pueda reproducir y hacer seek."""
+        ruta = GESTOR.ruta_archivo(tid)
+        if not ruta:
+            self._json({"error": "archivo no encontrado"}, 404)
+            return
+        try:
+            tam = os.path.getsize(ruta)
+        except OSError:
+            self._json({"error": "archivo no accesible"}, 404)
+            return
+        if tam <= 0:
+            self._json({"error": "archivo vacío"}, 404)
+            return
+
+        inicio, fin, es_parcial = 0, tam - 1, False
+        rango = self.headers.get("Range")
+        if rango:
+            m = re.match(r"bytes=(\d*)-(\d*)$", rango.strip())
+            if not m or not (m.group(1) or m.group(2)):
+                # rango malformado o no soportado: 416 con el tamaño total
+                self.send_response(416)
+                self.send_header("Content-Range", "bytes */%d" % tam)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            a, b = m.group(1), m.group(2)
+            if a:
+                inicio = int(a)
+                fin = int(b) if b else tam - 1
+            else:
+                # rango de sufijo (bytes=-N): últimos N bytes
+                n = int(b)
+                inicio = max(tam - n, 0)
+                fin = tam - 1
+            if inicio < 0 or inicio > fin or inicio >= tam:
+                self.send_response(416)
+                self.send_header("Content-Range", "bytes */%d" % tam)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            fin = min(fin, tam - 1)
+            es_parcial = True
+
+        longitud = fin - inicio + 1
+        self.send_response(206 if es_parcial else 200)
+        self.send_header("Content-Type", _tipo_media(ruta))
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Length", str(longitud))
+        if es_parcial:
+            self.send_header("Content-Range",
+                             "bytes %d-%d/%d" % (inicio, fin, tam))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        if self.command == "HEAD":
+            return
+        try:
+            with open(ruta, "rb") as f:
+                f.seek(inicio)
+                resto = longitud
+                while resto > 0:
+                    bloque = f.read(min(262144, resto))
+                    if not bloque:
+                        break
+                    self.wfile.write(bloque)
+                    resto -= len(bloque)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass   # el cliente cerró la conexión (seek, cerrar modal…)
 
     def log_message(self, fmt, *args):
         pass
