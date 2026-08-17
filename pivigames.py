@@ -67,6 +67,24 @@ def _leer_enlaces_paste(cdp):
     return zonaleros._leer_enlaces_paste(cdp)
 
 
+def _separar_enlaces(crudo, pastes_hijos=None):
+    """Separa los enlaces de descarga de los que hay que ignorar:
+    playpaste encadenados (se siguen), pivigames.blog (el footer del paste)
+    y el acortador. Devuelve (enlaces_finales, pastes_hijos_actualizados)."""
+    pastes_hijos = pastes_hijos if pastes_hijos is not None else []
+    enlaces = []
+    for e in crudo:
+        u = e.get("url", "")
+        if "playpaste.net" in u:
+            if u not in pastes_hijos:
+                pastes_hijos.append(u)
+            continue
+        if "pivigames.blog" in u or "zshorte" in u or "anomizador" in u:
+            continue
+        enlaces.append(e)
+    return enlaces, pastes_hijos
+
+
 def _token_turnstile(cdp):
     """Devuelve el token de Turnstile del input oculto (o '' si aún no
     está). El Turnstile de playpaste es INVISIBLE: el token se rellena solo
@@ -115,6 +133,12 @@ def _resolver_paste(cdp, fin_global):
     for intento in range(2):
         if time.time() >= fin_global:
             break
+        # 0) hay pastes SIN protección (el contenido ya está visible, sin
+        #    formulario ni reto): devolver lo que haya sin esperar nada
+        crudo = _leer_enlaces_paste(cdp)
+        enlaces, pastes_hijos = _separar_enlaces(crudo, pastes_hijos)
+        if enlaces:
+            return enlaces, pastes_hijos
         # 1) espera el token de Turnstile (invisible, a veces tarda 25-60 s).
         #    NUNCA pulsar 'Continuar' antes: el submit con token vacío mata
         #    el reto y devuelve 'Captcha incorrecto'.
@@ -139,12 +163,7 @@ def _resolver_paste(cdp, fin_global):
         fin_links = min(time.time() + 30, fin_global)
         while time.time() < fin_links:
             crudo = _leer_enlaces_paste(cdp)
-            # separa los enlaces de descarga de los playpaste encadenados
-            enlaces = [e for e in crudo if "playpaste.net" not in e.get("url", "")]
-            for e in crudo:
-                u = e.get("url", "")
-                if "playpaste.net" in u and u not in pastes_hijos:
-                    pastes_hijos.append(u)
+            enlaces, pastes_hijos = _separar_enlaces(crudo, pastes_hijos)
             if enlaces:
                 return enlaces, pastes_hijos
             # 'Captcha incorrecto' = el token no era válido: reintenta
@@ -173,11 +192,13 @@ def extraer(url):
         return {"error": "no se pudo abrir la página de pivigames: %s" % e}
 
     # botones: cada <a href> a playpaste con la etiqueta del strong/h4 más
-    # cercano hacia atrás (la estructura del post es: etiqueta -> imagen)
+    # cercano hacia atrás (la estructura del post es: etiqueta -> imagen).
+    # OJO: los enlaces de playpaste aparecen en 3 formas distintas:
+    #   playpaste.net/pivi/?v=X   playpaste.net/pivi?v=X   playpaste.net/?v=X
     botones = []
     vistos = set()
     enlaces = [(m.start(), m.group(1)) for m in
-               re.finditer(r'<a href="(https://playpaste\.net/pivi/\?v=[^"]+)"',
+               re.finditer(r'<a href="(https://playpaste\.net/(?:pivi/?)?\?v=[A-Za-z0-9_-]+)"',
                            html, re.I)]
     etiquetas = list(re.finditer(
         r'<(?:strong|h4)[^>]*>(.*?)</(?:strong|h4)>', html, re.S | re.I))
