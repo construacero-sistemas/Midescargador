@@ -1154,11 +1154,17 @@ class Gestor:
         # lugar de crear otro. Evita que pulsar varias veces 'Descargar'
         # (o doble clic) encuele la misma descarga repetida.
         vivos = {"descargando", "esperando", "en cola", "uniendo", "pausada"}
+        # Normaliza madiashare (downloads?d=<id> y /Link/downloads/<id> son
+        # la misma descarga) para que el anti-duplicado los vea iguales y no
+        # se lancen dos aria2c del mismo torrent.
+        def _norm(u):
+            return torrents._url_torrent_directa(u) if torrents.es_torrent(u) else u
+        url_norm = _norm(url)
         with self._lock:
             for t in self.trabajos.values():
                 if t.estado in vivos:
                     t_url = getattr(t, "pagina", None) or getattr(t, "url", "")
-                    if t_url == url:
+                    if _norm(t_url) == url_norm:
                         return t.id
         # file hosters (rootz.so, etc.): resuelve primero a la URL directa
         # para que el motor segmentado baje con Range, pausa y reanudación
@@ -1683,6 +1689,21 @@ class Manejador(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         pass
+
+
+def _detener_trabajos_al_salir():
+    """Al salir el backend (cierre o crash), cancela todos los trabajos
+    activos para que sus subprocesos (aria2c, yt-dlp) no queden huérfanos
+    descargando en segundo plano."""
+    for t in list(GESTOR.trabajos.values()):
+        try:
+            t.cancelar()
+        except Exception:
+            pass
+
+
+import atexit
+atexit.register(_detener_trabajos_al_salir)
 
 
 def main():

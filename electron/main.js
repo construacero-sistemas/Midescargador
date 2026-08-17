@@ -191,6 +191,7 @@ function rutaBackend() {
 }
 
 let servidorProc = null;
+let relanzandoBackend = false;
 
 function puertoAbierto() {
   return new Promise((resolve) => {
@@ -217,23 +218,39 @@ async function asegurarServidor() {
     return false;
   }
   log("lanzando backend: " + exe);
+  // El stderr del backend (tracebacks de Python) se guarda en un log para
+  // diagnosticar crashes: con stdio:"ignore" un fallo del servidor quedaba
+  // sin rastro y el panel simplemente dejaba de responder.
+  const stderrLog = path.join(
+    process.env.LOCALAPPDATA || app.getPath("appData"),
+    "MiDescargador", "backend-stderr.log");
   servidorProc = spawn(exe, [], {
     cwd: path.dirname(exe),
     windowsHide: true,
-    stdio: "ignore",
+    stdio: ["ignore", "ignore", "pipe"],
+  });
+  servidorProc.stderr.on("data", (d) => {
+    try {
+      fs.appendFileSync(stderrLog, "[" + new Date().toLocaleString() + "] " + d);
+    } catch (e) {}
   });
   servidorProc.on("exit", (codigo) => {
     log("backend terminó (código " + codigo + ")");
+    if (relanzandoBackend) return;
     if (codigo !== null && codigo !== 0) {
-      // arrancó y murió: avisamos en la ventana si existe
+      // El backend murió con la app abierta: lo relanzamos solo (el panel
+      // muestra "servidor no responde" mientras tanto y se recupera solo).
+      // Antes esto dejaba el panel congelado hasta reiniciar la app.
+      relanzandoBackend = true;
       const win = BrowserWindow.getAllWindows()[0];
-      if (win) {
-        win.loadURL("data:text/html;charset=utf-8," +
-          encodeURIComponent(
-            "<body style='background:#0b0f19;color:#e2e8f0;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh'>" +
-            "<div style='text-align:center'><h2>El servidor local falló al arrancar (código " + codigo + ")</h2>" +
-            "<p>Revisa el log en %LOCALAPPDATA%\\MiDescargador\\servidor.log</p></div></body>"));
-      }
+      setTimeout(async () => {
+        const ok = await asegurarServidor();
+        relanzandoBackend = false;
+        log("backend relanzado: " + ok);
+        if (ok && win && !win.isDestroyed()) {
+          try { win.reload(); } catch (e) {}
+        }
+      }, 1500);
     }
   });
   // espera hasta ~30 s a que responda
@@ -296,7 +313,14 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   if (servidorProc && servidorProc.exitCode === null) {
+    // Mata el backend y su árbol de hijos (aria2c, yt-dlp): si solo se
+    // mataba el backend, sus descargas seguían corriendo huérfanas.
     try { servidorProc.kill(); } catch (e) {}
-    log("backend detenido");
+    try {
+      require("child_process").execFileSync(
+        "taskkill", ["/PID", String(servidorProc.pid), "/T", "/F"],
+        { stdio: "ignore" });
+    } catch (e) {}
+    log("backend detenido (árbol completo)");
   }
 });

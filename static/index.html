@@ -669,6 +669,12 @@
       color: #6ee7b7;
     }
 
+    .smart-notice.error {
+      background: var(--danger-bg);
+      border: 1px solid var(--danger-border);
+      color: #fda4af;
+    }
+
     .quality-selector-bar {
       display: flex;
       align-items: center;
@@ -1777,6 +1783,17 @@
       <span>Varios enlaces detectados: se descargarán en lote simultáneo según el límite configurado.</span>
     </div>
 
+    <!-- Servidor caído: el panel no se congela en silencio -->
+    <div class="smart-notice error" id="aviso-servidor" style="display:none;">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="2" y="2" width="20" height="8" rx="2" ry="2"></rect>
+        <rect x="2" y="14" width="20" height="8" rx="2" ry="2"></rect>
+        <line x1="6" y1="6" x2="6.01" y2="6"></line>
+        <line x1="6" y1="18" x2="6.01" y2="18"></line>
+      </svg>
+      <span id="aviso-servidor-texto">El servidor local no responde. Reintentando en segundo plano…</span>
+    </div>
+
     <!-- ZonaLeros Extractor Trigger -->
     <div class="quality-selector-bar" id="fila-enlaces" style="display:none;">
       <button class="btn btn-secondary btn-sm" id="btn-enlaces">
@@ -2345,15 +2362,18 @@
           <div class="file-details">
             <div class="file-name" title="${escapeHtml(t.nombre || t.url)}">${escapeHtml(t.nombre || t.url)}</div>
             <div class="file-badges">
-              <span class="badge">${t.tipo === "yt-dlp" ? "Video Stream" : t.tipo === "torrent" ? "Torrent P2P" : "Archivo HTTP"}</span>
-              ${t.categoria ? `<span class="badge">${escapeHtml(t.categoria)}</span>` : ""}
+              <span class="badge">${t.tipo === "yt-dlp" ? "Video" : t.tipo === "torrent" ? "Torrent P2P" : "Archivo HTTP"}</span>
+              ${t.categoria && !(t.tipo === "yt-dlp" && t.categoria === "Videos") ? `<span class="badge">${escapeHtml(t.categoria)}</span>` : ""}
               ${t.servidor ? `<span class="badge" style="color:#60a5fa;">${escapeHtml(t.servidor)}</span>` : ""}
-              ${t.calidad ? `<span class="badge" style="color:#c4b5fd;">${escapeHtml(t.calidad)}</span>` : ""}
-              ${t.calidad_real && t.calidad_real !== t.calidad
-                ? `<span class="badge" style="color:#fcd34d;">Real: ${escapeHtml(t.calidad_real)}</span>`
-                : t.calidad_real
-                  ? `<span class="badge" style="color:#6ee7b7;">${escapeHtml(t.calidad_real)}</span>`
-                  : ""}
+              ${t.calidad_real && t.calidad_real === t.calidad
+                ? `<span class="badge" style="color:#6ee7b7;">✓ ${escapeHtml(t.calidad_real)}</span>`
+                : t.calidad_real && t.calidad
+                  ? `<span class="badge" style="color:#c4b5fd;">${escapeHtml(t.calidad)}</span><span class="badge" style="color:#fcd34d;">Real: ${escapeHtml(t.calidad_real)}</span>`
+                  : t.calidad
+                    ? `<span class="badge" style="color:#c4b5fd;">${escapeHtml(t.calidad)}</span>`
+                    : t.calidad_real
+                      ? `<span class="badge" style="color:#6ee7b7;">${escapeHtml(t.calidad_real)}</span>`
+                      : ""}
             </div>
           </div>
         </div>
@@ -2370,7 +2390,7 @@
         </div>
         <div class="meta-speed-eta">
           <span class="speed-chip">${fmtVel(t.velocidad)}</span>
-          <span>${fmtEta(t.eta)}</span>
+          <span>${t.tipo === "torrent" && t.estado === "descargando" && !t.velocidad ? "Buscando peers…" : fmtEta(t.eta)}</span>
         </div>
       </div>
 
@@ -2426,10 +2446,13 @@
 
     div.querySelectorAll("button[data-acc]").forEach(b => {
       b.onclick = () => {
-        fetch("/api/" + b.dataset.acc, {
+        fetchConTimeout("/api/" + b.dataset.acc, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: t.id })
+        }).catch(() => {
+          fallosServidor++;
+          mostrarServidorCaido("El servidor local no responde. Reintentando en segundo plano…");
         });
       };
     });
@@ -2444,10 +2467,34 @@
     }[c]));
   }
 
+  let fallosServidor = 0;
+
+  function mostrarServidorCaido(msg) {
+    const el = $("#aviso-servidor");
+    if (el) {
+      $("#aviso-servidor-texto").textContent = msg;
+      el.style.display = "flex";
+    }
+  }
+
+  function ocultarServidorCaido() {
+    const el = $("#aviso-servidor");
+    if (el) el.style.display = "none";
+  }
+
+  function fetchConTimeout(url, opts, ms) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), ms || 8000);
+    return fetch(url, Object.assign({}, opts, { signal: ctrl.signal }))
+      .finally(() => clearTimeout(t));
+  }
+
   async function refrescar() {
     try {
-      const r = await fetch("/api/estado");
+      const r = await fetchConTimeout("/api/estado");
       const lista = await r.json();
+      fallosServidor = 0;
+      ocultarServidorCaido();
       $("#count-descargas").textContent = lista.length;
 
       if (!lista.length) {
@@ -2480,7 +2527,12 @@
         if (!actuales.has(t.id)) LISTA.appendChild(tarjeta(t));
       });
     } catch (e) {
-      /* servidor reiniciando o reconectando */
+      // servidor caído: avisarlo (antes se congelaba en silencio y parecía
+      // que la app "se bugeaba": pausar/eliminar/descargar no hacían nada)
+      fallosServidor++;
+      if (fallosServidor >= 2) {
+        mostrarServidorCaido("El servidor local no responde. Reintentando en segundo plano…");
+      }
     }
   }
 

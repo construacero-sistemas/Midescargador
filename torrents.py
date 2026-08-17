@@ -57,6 +57,37 @@ _CTX = ssl.create_default_context()
 on_completada = None
 on_error = None
 
+# Registro de procesos aria2c vivos: al salir el backend se matan, para que
+# no queden huérfanos (antes, si el servidor moría, aria2c seguía corriendo
+# y el panel se veía "congelado" con la descarga colgada).
+_PROCS_ACTIVOS = set()
+_PROCS_LOCK = threading.Lock()
+
+
+def _registrar_proc(p):
+    with _PROCS_LOCK:
+        _PROCS_ACTIVOS.add(p)
+
+
+def _olvidar_proc(p):
+    with _PROCS_LOCK:
+        _PROCS_ACTIVOS.discard(p)
+
+
+def _matar_procs():
+    with _PROCS_LOCK:
+        procs = list(_PROCS_ACTIVOS)
+    for p in procs:
+        try:
+            if p.poll() is None:
+                p.terminate()
+        except Exception:
+            pass
+
+
+import atexit
+atexit.register(_matar_procs)
+
 _ZETRENT = ("zetrrent.com", "www.zetrrent.com")
 _MADIASHARE = ("madiashare.com", "www.madiashare.com")
 
@@ -287,6 +318,7 @@ class TrabajoTorrent:
                 cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding="utf-8", errors="replace",
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            _registrar_proc(self._proc)
         except Exception as e:
             self.estado = "error"
             self.error = "no se pudo lanzar aria2c: %s" % e
@@ -309,6 +341,7 @@ class TrabajoTorrent:
             elif _RE_COMPLETA.search(linea):
                 pass  # el resumen ya dejó total = descargado
         codigo = self._proc.wait()
+        _olvidar_proc(self._proc)
         if self._cancelar.is_set():
             self.estado = "cancelada"
             return
