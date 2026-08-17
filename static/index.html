@@ -150,6 +150,19 @@
       gap: 8px;
     }
 
+    .recomendado-badge {
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      color: #fbbf24;
+      background: rgba(251, 191, 36, 0.12);
+      border: 1px solid rgba(251, 191, 36, 0.4);
+      border-radius: 999px;
+      padding: 2px 8px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
     .brand-badge {
       font-size: 10px;
       font-weight: 700;
@@ -2410,7 +2423,35 @@
     return { color: "#6366f1", bg: "rgba(99, 102, 241, 0.14)", border: "rgba(99, 102, 241, 0.35)", label: nombreServidor || "Servidor" };
   }
 
+  function ordenarServidores(servidores) {
+    // MEDIAFIRE y ROOTZ siempre primero, como recomendados; el resto
+    // conserva el orden en que los dio el extractor.
+    const esRec = (s) => {
+      const n = (s.servidor || "").toLowerCase();
+      return n.includes("mediafire") || n.includes("rootz");
+    };
+    const rec = servidores.filter(esRec);
+    const resto = servidores.filter(s => !esRec(s));
+    // dentro de los recomendados: mediafire antes que rootz
+    rec.sort((a, b) => {
+      const na = (a.servidor || "").toLowerCase();
+      const nb = (b.servidor || "").toLowerCase();
+      if (na.includes("mediafire") && nb.includes("rootz")) return -1;
+      if (na.includes("rootz") && nb.includes("mediafire")) return 1;
+      return 0;
+    });
+    return rec.concat(resto);
+  }
+
+  function esRecomendado(servidor) {
+    const n = (servidor || "").toLowerCase();
+    return n.includes("mediafire") || n.includes("rootz");
+  }
+
   function mostrarEnlaces(d) {
+    if (d && Array.isArray(d.servidores)) {
+      d.servidores = ordenarServidores(d.servidores);
+    }
     datosEnlacesActuales = d;
     renderizarPanelEnlaces();
   }
@@ -2514,6 +2555,7 @@
               </span>
               <div class="server-name-title">
                 <span style="color:${meta.color}; font-size:14px; font-weight:800;">${escapeHtml(s.servidor)}</span>
+                ${esRecomendado(s.servidor) ? '<span class="recomendado-badge" title="Servidor recomendado">★ Recomendado</span>' : ''}
                 <span class="server-parts-count">${textoConteo}</span>
                 ${esMulti && s.nombre_base ? `<span class="server-parts-count" style="opacity:.75;">· ${escapeHtml(s.nombre_base)}</span>` : ''}
               </div>

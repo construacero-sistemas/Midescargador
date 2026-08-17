@@ -38,12 +38,14 @@ _CTX = ssl.create_default_context()
 # dominios que este módulo sabe resolver (extensible)
 SOPORTADOS = ("rootz.so", "www.rootz.so", "fireload.com", "www.fireload.com",
               "megaup.net", "www.megaup.net", "gofile.io", "www.gofile.io",
-              "mediafire.com", "www.mediafire.com")
+              "mediafire.com", "www.mediafire.com", "fuckingfast.net",
+              "www.fuckingfast.net")
 
 # etiquetas amigables por dominio (para la lista del panel)
 ETIQUETAS = {
     "rootz.so": "Rootz", "fireload.com": "Fireload", "megaup.net": "MegaUp",
     "gofile.io": "GoFile", "mediafire.com": "MediaFire",
+    "fuckingfast.net": "FuckingFast",
 }
 
 
@@ -464,6 +466,78 @@ def _extraer_gofile(url):
             "tamano": primero.get("size"), "pagina": url}
 
 
+def _extraer_fuckingfast(url):
+    """Resuelve un enlace fuckingfast.net a su URL directa firmada.
+
+    La página responde 403 a cualquier cliente HTTP normal (exige navegador
+    real con cookies de sesión). Se abre con Chrome vía CDP (el mismo perfil
+    que usa el extractor de ZonaLeros), se lee el token firmado del botón
+    'Copy download link' (/<id>/download?t=<token>) y se hace fetch de esa
+    URL con la sesión del navegador: el servidor redirige a la URL real
+    (ts.fuckingfast.net/d/<id>?v=<firma>) con nombre y tamaño del archivo.
+    """
+    import zonaleros  # local: evita dependencia circular con servidor.py
+
+    if zonaleros._chrome_corriendo():
+        raise RuntimeError(
+            "fuckingfast exige el navegador real para resolver el enlace: "
+            "cierra Chrome del todo y reintenta.")
+    ws_url, err = zonaleros._lanzar(url)
+    if err:
+        raise RuntimeError(err)
+    cdp = None
+    try:
+        cdp = zonaleros._Cdp(ws_url)
+        # espera a que cargue y aparezca el botón con el token
+        fin = time.time() + 45
+        path = None
+        while time.time() < fin:
+            try:
+                html = cdp.eval("document.documentElement.outerHTML") or ""
+            except Exception:
+                html = ""
+            m = re.search(r"copyDownloadLink\('\\/([^']+)'\)", html)
+            if m:
+                path = m.group(1).replace("\\/", "/")
+                break
+            time.sleep(3)
+        if not path:
+            raise RuntimeError(
+                "fuckingfast no expuso el botón de descarga (¿reto de "
+                "Cloudflare no resuelto?)")
+        # fetch de /download?t=<token> dentro del contexto del navegador:
+        # la respuesta redirige a la URL firmada real del archivo
+        expr = (
+            "fetch('/" + path + "', {method:'GET', credentials:'include', "
+            "redirect:'follow'})"
+            ".then(r => ({status: r.status, url: r.url, "
+            "ctype: r.headers.get('content-type'), "
+            "clen: r.headers.get('content-length'), "
+            "disp: r.headers.get('content-disposition')}))"
+        )
+        r = cdp._cmd("Runtime.evaluate", {
+            "expression": expr, "awaitPromise": True, "returnByValue": True})
+        info = (r.get("result") or {}).get("result", {}).get("value")
+        if not info or not info.get("url") or info.get("status") != 200:
+            raise RuntimeError(
+                "fuckingfast no entregó la URL directa (status " +
+                str((info or {}).get("status")) + ")")
+        # nombre real desde Content-Disposition (si viene)
+        nombre = None
+        disp = info.get("disp") or ""
+        m2 = re.search(r"filename\*?=(?:UTF-8''|\"?)([^\";]+)", disp)
+        if m2:
+            nombre = urllib.parse.unquote(m2.group(1).strip('"'))
+        return {"url": info["url"], "nombre": nombre,
+                "tamano": info.get("clen"), "pagina": url}
+    finally:
+        if cdp:
+            try:
+                cdp.cerrar()
+            except Exception:
+                pass
+
+
 def resolver(url):
     """Intenta convertir un enlace de file hoster en su URL directa.
 
@@ -481,4 +555,6 @@ def resolver(url):
         return _extraer_gofile(url)
     if host in ("mediafire.com", "www.mediafire.com"):
         return _extraer_mediafire(url)
+    if host in ("fuckingfast.net", "www.fuckingfast.net"):
+        return _extraer_fuckingfast(url)
     return None
