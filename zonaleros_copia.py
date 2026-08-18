@@ -1,12 +1,20 @@
 # -*- coding: utf-8 -*-
-"""Extractor de enlaces de descarga de zona-leros.com - VARIANTE "COPIA DE PERFIL".
+"""Extractor de enlaces de descarga de zona-leros.com - MODO HÍBRIDO.
 
-La página, el acortador (anomizador.zona-leros.com) y el paste final
-(zpaste.net) están detrás del reto de Cloudflare. La vía limpia es usar el
-propio Chrome del usuario: se lanza una instancia con SU perfil real (vía un
-junction temporal, porque Chrome 136+ exige un user-data-dir distinto para
-habilitar la depuración remota) y el protocolo CDP navega, resuelve el reto
-y la verificación humana, y lee los enlaces finales de descarga.
+Mismo flujo CDP + Turnstile que zonaleros.py, pero elige automáticamente el
+mecanismo de perfil según el estado de Chrome en el momento de lanzar:
+
+  - Chrome CERRADO  -> junction al perfil REAL: cookies del usuario => máxima
+    confianza ante Cloudflare (la vía clásica de zonaleros.py).
+  - Chrome ABIERTO  -> COPIA temporal del perfil: no molesta al usuario ni
+    toca el perfil real; el reto se resuelve desde cero en la copia.
+
+En ambos modos al terminar solo se mata la instancia lanzada (por PID y por
+su user-data-dir) y el Chrome del usuario queda intacto. El perfil real solo
+se toca en modo junction, con respaldo/restauración de cookies por si un
+cierre forzado lo daña.
+
+Para probar:  python zonaleros_copia.py [url]
 """
 import os
 import re
@@ -25,11 +33,20 @@ except ImportError:
 _PUERTO_CDP = 9223
 _RUTA_CHROME = None
 
-_COPIA_ACTIVA = None    # user-data-dir de la copia temporal del perfil
+_PERFIL_ACTIVO = None   # user-data-dir en uso (junction real o copia temporal)
 _PID_ACTIVO = None      # PID del Chrome que lanzamos (solo ese se mata)
+_MODO_ACTIVO = None     # "junction" (Chrome cerrado) o "copia" (Chrome abierto)
+_LOG = None             # hook opcional: servidor.py lo conecta a errores.log
 
-_COPIA_ACTIVA = None    # user-data-dir de la copia temporal del perfil
-_PID_ACTIVO = None      # PID del Chrome que lanzamos (solo ese se mata)
+
+def _log(msg):
+    """Registra un evento del modo híbrido (qué rama se usó y por qué) si el
+    hook está conectado. Sin hook no hace nada (p. ej. en el CLI de prueba)."""
+    if _LOG is not None:
+        try:
+            _LOG(msg)
+        except Exception:
+            pass
 
 
 def _ruta_chrome():
@@ -60,6 +77,24 @@ def _chrome_corriendo():
         return False
 
 
+def _crear_junction():
+    """Crea (si falta) un junction temporal al perfil real de Chrome.
+    Devuelve la ruta o None si no se pudo."""
+    try:
+        import _winapi
+        origen = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
+        dst = os.path.join(tempfile.gettempdir(), "midesc-chrome-perfil")
+        if not os.path.exists(origen):
+            return None
+        if not os.path.lexists(dst):
+            _winapi.CreateJunction(origen, dst)
+        if os.path.exists(os.path.join(dst, "Local State")):
+            return dst
+    except Exception:
+        pass
+    return None
+
+
 def _copiar_archivo_tolerante(origen, destino, reintentos=3):
     """Copia un archivo tolerando bloqueos temporales (Chrome abierto puede
     tener el archivo en uso). Devuelve True si se copió, False si no."""
@@ -71,8 +106,8 @@ def _copiar_archivo_tolerante(origen, destino, reintentos=3):
             if i < reintentos:
                 time.sleep(1)
             else:
-                print("[copia] aviso: %s está bloqueado, se omite" %
-                      os.path.basename(origen))
+                _log("[copia] aviso: %s está bloqueado, se omite" %
+                     os.path.basename(origen))
         except OSError:
             return False
     return False
@@ -113,8 +148,8 @@ def _crear_copia():
                 if os.path.exists(o):
                     _copiar_archivo_tolerante(o, d)
         else:
-            print("[copia] sin cookies del usuario (Chrome abierto): "
-                  "el reto se resolverá desde cero en la copia")
+            _log("[copia] sin cookies del usuario (Chrome abierto): "
+                 "el reto se resolverá desde cero en la copia")
         # marca de primer arranque para que Chrome no abra el asistente
         open(os.path.join(dst, "First Run"), "w").close()
         if os.path.exists(os.path.join(dst, "Local State")):
@@ -128,22 +163,42 @@ def _crear_copia():
     return None
 
 
+def _modo():
+    """Modo de lanzamiento según el estado de Chrome:
+    - 'junction' si Chrome está cerrado (perfil real, cookies => confianza),
+    - 'copia' si Chrome está abierto (perfil copiado, no molesta al usuario)."""
+    return "junction" if not _chrome_corriendo() else "copia"
+
+
 def _lanzar(url, tiempo_max=50):
-    """Lanza Chrome con la COPIA del perfil y devuelve (ws_url_cdp, error).
-    NO exige Chrome cerrado: la copia es un user-data-dir distinto, así que
-    el Chrome del usuario puede seguir abierto durante la extracción."""
-    global _COPIA_ACTIVA, _PID_ACTIVO
+    """Lanza Chrome con el mecanismo que corresponda (híbrido) y devuelve
+    (ws_url_cdp, error). NO exige Chrome cerrado: si está abierto usa una
+    copia temporal del perfil; si está cerrado, el perfil real vía junction."""
+    global _PERFIL_ACTIVO, _PID_ACTIVO, _MODO_ACTIVO
     if _ws is None:
         return None, "falta la librería websocket-client en el venv"
     ruta = _ruta_chrome()
     if not ruta:
         return None, "no se encontró Chrome instalado"
-    copia = _crear_copia()
-    if not copia:
-        return None, "no se pudo preparar la copia del perfil de Chrome"
+    modo = _modo()
+    abierto = _chrome_corriendo()
+    _log("extracción de enlaces: modo=%s (Chrome %s), url=%s" % (
+        modo, "abierto" if abierto else "cerrado", url))
+    if modo == "junction":
+        # Chrome cerrado: junction al perfil REAL (cookies del usuario).
+        # El perfil se puede tocar con un cierre forzado: respaldo previo.
+        perfil = _crear_junction()
+        if not perfil:
+            return None, "no se pudo preparar el perfil temporal de Chrome"
+        _respaldar_cookies()
+    else:
+        # Chrome abierto: copia mínima del perfil (el real no se toca).
+        perfil = _crear_copia()
+        if not perfil:
+            return None, "no se pudo preparar la copia del perfil de Chrome"
     cmd = [
         ruta,
-        "--user-data-dir=" + copia,
+        "--user-data-dir=" + perfil,
         "--profile-directory=Default",
         "--remote-debugging-port=%d" % _PUERTO_CDP,
         "--remote-allow-origins=*",
@@ -154,11 +209,13 @@ def _lanzar(url, tiempo_max=50):
         url,
     ]
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    _COPIA_ACTIVA = copia
+    _PERFIL_ACTIVO = perfil
+    _MODO_ACTIVO = modo
     try:
         proc = subprocess.Popen(cmd, creationflags=flags)
     except Exception:
-        _COPIA_ACTIVA = None
+        _PERFIL_ACTIVO = None
+        _MODO_ACTIVO = None
         return None, "no se pudo lanzar Chrome"
     _PID_ACTIVO = proc.pid
     fin = time.time() + tiempo_max
@@ -192,11 +249,17 @@ def _nuestro_chrome_vivo():
         return False
 
 
-def _matar_copia():
-    """Mata SOLO la instancia de Chrome que lanzamos (por PID y, de respaldo,
-    por su user-data-dir único en la línea de comandos). NUNCA toca el Chrome
-    del usuario. Después borra la copia temporal del perfil."""
-    global _COPIA_ACTIVA, _PID_ACTIVO
+def _finalizar():
+    """Cierra SOLO la instancia de Chrome que lanzamos (por PID y, de
+    respaldo, por su user-data-dir en la línea de comandos) y deja el
+    entorno limpio según el modo usado:
+
+    - 'copia': borra la copia temporal del perfil (el real nunca se tocó).
+    - 'junction': restaura el respaldo de cookies si el perfil real quedó
+      dañado por el cierre forzado.
+
+    NUNCA toca el Chrome del usuario."""
+    global _PERFIL_ACTIVO, _PID_ACTIVO, _MODO_ACTIVO
     pid = _PID_ACTIVO
     if pid:
         try:
@@ -206,25 +269,29 @@ def _matar_copia():
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except Exception:
             pass
-    dst = _COPIA_ACTIVA
-    if dst:
+    perfil = _PERFIL_ACTIVO
+    if perfil:
         try:
             ps = ("Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
                   "Where-Object { $_.CommandLine -like '*%s*' } | "
                   "ForEach-Object { Stop-Process -Id $_.ProcessId -Force "
-                  "-ErrorAction SilentlyContinue }" % dst)
+                  "-ErrorAction SilentlyContinue }" % perfil)
             subprocess.run(
                 ["powershell", "-NoProfile", "-Command", ps],
                 capture_output=True,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except Exception:
             pass
-        try:
-            shutil.rmtree(dst, ignore_errors=True)
-        except Exception:
-            pass
+        if _MODO_ACTIVO == "copia":
+            try:
+                shutil.rmtree(perfil, ignore_errors=True)
+            except Exception:
+                pass
+        elif _MODO_ACTIVO == "junction":
+            _restaurar_cookies_si_danadas()
     _PID_ACTIVO = None
-    _COPIA_ACTIVA = None
+    _PERFIL_ACTIVO = None
+    _MODO_ACTIVO = None
 
 
 # ---------------- red de seguridad del perfil ----------------
@@ -724,7 +791,7 @@ def extraer(url):
     finally:
         if cdp:
             cdp.cerrar()
-        _matar_copia()   # solo nuestra instancia; el Chrome del usuario intacto
+        _finalizar()   # solo nuestra instancia; el Chrome del usuario intacto
 
 
 # ---------------------------------------------------------------- CLI de prueba

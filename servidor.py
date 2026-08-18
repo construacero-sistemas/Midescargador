@@ -141,6 +141,19 @@ def _leer_log(n=200):
     except OSError:
         return []
 
+
+def _log_hibrido(msg):
+    """Anota en errores.log qué rama del híbrido (junction/copia) usó cada
+    extracción y por qué, para dejar rastro cuando algo falle."""
+    try:
+        with open(LOG_RUTA, "a", encoding="utf-8") as f:
+            f.write("[%s] %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg))
+    except Exception:
+        pass
+
+
+zonaleros._LOG = _log_hibrido   # el extractor híbrido avisa aquí qué rama usó
+
 # Dominios de páginas que casi siempre necesitan yt-dlp (videos, mediafire...)
 DOMINIOS_YTDLP = (
     "youtube.com", "youtu.be", "tiktok.com", "instagram.com", "instagr.am",

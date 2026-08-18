@@ -343,4 +343,4 @@ def extraer(url):
                 cdp.cerrar()
             except Exception:
                 pass
-        zonaleros._matar_copia()   # solo nuestra instancia; el Chrome del usuario intacto
+        zonaleros._finalizar()   # solo nuestra instancia; el Chrome del usuario intacto
