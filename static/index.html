@@ -2834,23 +2834,23 @@
     return { cls: "generic", svg: ICONS.generic };
   }
 
-  function descompEtiqueta(t) {
-    if (t.descompresion === "extrayendo") return t("descomp.estado.extrayendo");
-    if (t.descompresion === "ok") return t("descomp.estado.ok");
-    if (t.descompresion === "esperando")
-      return t.descompresion_msg || t("descomp.estado.esperando");
-    return t.descompresion_msg || t("descomp.estado.error");
+  function descompEtiqueta(dato) {
+    if (dato.descompresion === "extrayendo") return t("descomp.estado.extrayendo");
+    if (dato.descompresion === "ok") return t("descomp.estado.ok");
+    if (dato.descompresion === "esperando")
+      return dato.descompresion_msg || t("descomp.estado.esperando");
+    return dato.descompresion_msg || t("descomp.estado.error");
   }
 
-  function tarjeta(t) {
-    const pct = t.total ? Math.min(100, t.descargado / t.total * 100) : 0;
+  function tarjeta(dato) {
+    const pct = dato.total ? Math.min(100, dato.descargado / dato.total * 100) : 0;
     const div = document.createElement("div");
     div.className = "download-card";
-    div.dataset.id = t.id;
+    div.dataset.id = dato.id;
 
-    const av = getAvatarClass(t.categoria, t.tipo);
-    const estadoClass = t.estado.replace(/\s+/g, '-');
-    const isActive = t.estado === "descargando" || t.estado === "uniendo";
+    const av = getAvatarClass(dato.categoria, dato.tipo);
+    const estadoClass = dato.estado.replace(/\s+/g, '-');
+    const isActive = dato.estado === "descargando" || dato.estado === "uniendo";
 
     div.innerHTML = `
       <div class="download-top">
@@ -2859,24 +2859,24 @@
             ${av.svg}
           </div>
           <div class="file-details">
-            <div class="file-name" title="${escapeHtml(t.nombre || t.url)}">${escapeHtml(t.nombre || t.url)}</div>
+            <div class="file-name" title="${escapeHtml(dato.nombre || dato.url)}">${escapeHtml(dato.nombre || dato.url)}</div>
             <div class="file-badges">
-              <span class="badge">${t.tipo === "yt-dlp" ? t("badge.video") : t.tipo === "torrent" ? t("badge.torrent") : t("badge.http")}</span>
-              ${t.categoria && !(t.tipo === "yt-dlp" && t.categoria === "Videos") ? `<span class="badge">${escapeHtml(t.categoria)}</span>` : ""}
-              ${t.servidor ? `<span class="badge" style="color:#60a5fa;">${escapeHtml(t.servidor)}</span>` : ""}
-              ${t.calidad_real && t.calidad_real === t.calidad
-                ? `<span class="badge" style="color:#6ee7b7;">✓ ${escapeHtml(t.calidad_real)}</span>`
-                : t.calidad_real && t.calidad
-                  ? `<span class="badge" style="color:#c4b5fd;">${escapeHtml(t.calidad)}</span><span class="badge" style="color:#fcd34d;">${t("badge.real", { q: escapeHtml(t.calidad_real) })}</span>`
-                  : t.calidad
-                    ? `<span class="badge" style="color:#c4b5fd;">${escapeHtml(t.calidad)}</span>`
-                    : t.calidad_real
-                      ? `<span class="badge" style="color:#6ee7b7;">${escapeHtml(t.calidad_real)}</span>`
+              <span class="badge">${dato.tipo === "yt-dlp" ? t("badge.video") : dato.tipo === "torrent" ? t("badge.torrent") : t("badge.http")}</span>
+              ${dato.categoria && !(dato.tipo === "yt-dlp" && dato.categoria === "Videos") ? `<span class="badge">${escapeHtml(dato.categoria)}</span>` : ""}
+              ${dato.servidor ? `<span class="badge" style="color:#60a5fa;">${escapeHtml(dato.servidor)}</span>` : ""}
+              ${dato.calidad_real && dato.calidad_real === dato.calidad
+                ? `<span class="badge" style="color:#6ee7b7;">✓ ${escapeHtml(dato.calidad_real)}</span>`
+                : dato.calidad_real && dato.calidad
+                  ? `<span class="badge" style="color:#c4b5fd;">${escapeHtml(dato.calidad)}</span><span class="badge" style="color:#fcd34d;">${t("badge.real", { q: escapeHtml(dato.calidad_real) })}</span>`
+                  : dato.calidad
+                    ? `<span class="badge" style="color:#c4b5fd;">${escapeHtml(dato.calidad)}</span>`
+                    : dato.calidad_real
+                      ? `<span class="badge" style="color:#6ee7b7;">${escapeHtml(dato.calidad_real)}</span>`
                       : ""}
             </div>
           </div>
         </div>
-        <span class="status-badge ${estadoClass}">${(ETIQUETAS[t.estado] || (() => t.estado))()}</span>
+        <span class="status-badge ${estadoClass}">${(ETIQUETAS[dato.estado] || (() => dato.estado))()}</span>
       </div>
 
       <div class="progress-container">
@@ -2885,59 +2885,59 @@
 
       <div class="download-meta">
         <div class="meta-metrics">
-          <span>${fmtBytes(t.descargado)} / ${fmtBytes(t.total)} <strong>(${pct.toFixed(1)}%)</strong></span>
+          <span>${fmtBytes(dato.descargado)} / ${fmtBytes(dato.total)} <strong>(${pct.toFixed(1)}%)</strong></span>
         </div>
         <div class="meta-speed-eta">
-          <span class="speed-chip">${fmtVel(t.velocidad)}</span>
-          <span>${t.tipo === "torrent" && t.estado === "descargando" && !t.velocidad ? t("tarjeta.peers") : fmtEta(t.eta)}</span>
+          <span class="speed-chip">${fmtVel(dato.velocidad)}</span>
+          <span>${dato.tipo === "torrent" && dato.estado === "descargando" && !dato.velocidad ? t("tarjeta.peers") : fmtEta(dato.eta)}</span>
         </div>
       </div>
 
-      ${t.descompresion ? `
-        <div class="decompression-badge ${t.descompresion}">
+      ${dato.descompresion ? `
+        <div class="decompression-badge ${dato.descompresion}">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="21 8 21 21 3 21 3 8"></polyline><rect x="1" y="3" width="22" height="5"></rect><line x1="10" y1="12" x2="14" y2="12"></line>
           </svg>
-          <span>${escapeHtml(descompEtiqueta(t))}</span>
+          <span>${escapeHtml(descompEtiqueta(dato))}</span>
         </div>
       ` : ""}
 
-      ${t.error ? `
+      ${dato.error ? `
         <div class="error-banner">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line>
           </svg>
-          <span>${escapeHtml(t.error)}</span>
+          <span>${escapeHtml(dato.error)}</span>
         </div>
       ` : ""}
 
       <div class="download-actions">
-        ${t.estado === "descargando" || t.estado === "esperando" ? `
+        ${dato.estado === "descargando" || dato.estado === "esperando" ? `
           <button class="btn btn-secondary btn-sm" data-acc="pausar">
             ${ICONS.pause} <span>${t("tarjeta.pausar")}</span>
           </button>
         ` : ""}
-        ${t.estado === "pausada" ? `
+        ${dato.estado === "pausada" ? `
           <button class="btn btn-primary btn-sm" data-acc="reanudar">
             ${ICONS.play} <span>${t("tarjeta.reanudar")}</span>
           </button>
         ` : ""}
-        ${["descargando", "esperando", "pausada", "uniendo"].includes(t.estado) ? `
+        ${["descargando", "esperando", "pausada", "uniendo"].includes(dato.estado) ? `
           <button class="btn btn-danger btn-sm" data-acc="cancelar">
             ${ICONS.cancel} <span>${t("tarjeta.cancelar")}</span>
           </button>
         ` : ""}
-        ${["cancelada", "error"].includes(t.estado) ? `
+        ${["cancelada", "error"].includes(dato.estado) ? `
           <button class="btn btn-secondary btn-sm" data-acc="reintentar">
             ${ICONS.retry} <span>${t("tarjeta.reintentar")}</span>
           </button>
         ` : ""}
-        ${t.estado === "completa" && (t.tipo === "yt-dlp" || t.categoria === "Videos" || t.categoria === "Musica") ? `
+        ${dato.estado === "completa" && (dato.tipo === "yt-dlp" || dato.categoria === "Videos" || dato.categoria === "Musica") ? `
           <button class="btn btn-primary btn-sm" data-acc="reproducir" title="${t("tarjeta.reproducir.title")}">
             ${ICONS.play} <span>${t("tarjeta.reproducir")}</span>
           </button>
         ` : ""}
-        ${["completa", "error", "cancelada", "pausada"].includes(t.estado) ? `
+        ${["completa", "error", "cancelada", "pausada"].includes(dato.estado) ? `
           <button class="btn btn-secondary btn-sm" data-acc="abrir">
             ${ICONS.folder} <span>${t("tarjeta.abrir")}</span>
           </button>
@@ -2952,13 +2952,13 @@
       b.onclick = () => {
         const acc = b.dataset.acc;
         if (acc === "reproducir") {
-          abrirReproductor(t);
+          abrirReproductor(dato);
           return;
         }
         fetchConTimeout("/api/" + acc, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: t.id })
+          body: JSON.stringify({ id: dato.id })
         }).then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => {
           if (!ok) {
             mostrarAvisoCalidad(d.error || t("accion.error"), true);
@@ -3005,13 +3005,13 @@
   // -------------------------------------------------- reproductor integrado
   let reproductorId = null;
 
-  function abrirReproductor(t) {
-    reproductorId = t.id;
-    $("#player-titulo").textContent = t.nombre || t("player.titulo");
+  function abrirReproductor(dato) {
+    reproductorId = dato.id;
+    $("#player-titulo").textContent = dato.nombre || t("player.titulo");
     const aviso = $("#player-aviso");
     aviso.style.display = "none";
     const video = $("#player-video");
-    video.src = "/api/media/" + encodeURIComponent(t.id);
+    video.src = "/api/media/" + encodeURIComponent(dato.id);
     $("#player-panel").style.display = "flex";
     video.play().catch(() => {});
   }
