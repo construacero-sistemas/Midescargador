@@ -2,7 +2,9 @@ name: check-versiones
 
 # Verifica que las versiones estén sincronizadas antes de cada release:
 #   - electron/package.json  (fuente de verdad)
-#   - extension/manifest.json (lo propaga build_mei/sync-version.js)
+#   - extension/manifest.json (lo propaga build_mei/sync-version.js, que vive
+#     solo en local porque build_mei/ está en .gitignore; la comprobación aquí
+#     compara las versiones directamente con node)
 #   - electron/dist/latest.yml (lo genera electron-builder en el build)
 #   - el tag vX.Y.Z (cuando se empuja, que es como se dispara cada release)
 #
@@ -28,10 +30,11 @@ jobs:
 
       - name: package.json ↔ extension/manifest.json
         run: |
-          node build_mei/sync-version.js
-          if ! git diff --quiet -- extension/manifest.json; then
-            echo "::error::extension/manifest.json no está sincronizado con electron/package.json. Corré: node build_mei/sync-version.js"
-            git diff -- extension/manifest.json
+          PKG_VERSION=$(node -p "require('./electron/package.json').version")
+          MANIFEST_VERSION=$(node -p "require('./extension/manifest.json').version")
+          echo "package.json=$PKG_VERSION manifest.json=$MANIFEST_VERSION"
+          if [ "$PKG_VERSION" != "$MANIFEST_VERSION" ]; then
+            echo "::error::extension/manifest.json ($MANIFEST_VERSION) no coincide con electron/package.json ($PKG_VERSION). Corré localmente: node build_mei/sync-version.js (build_mei/ está en .gitignore)"
             exit 1
           fi
           echo "✓ manifest.json sincronizado con package.json"
