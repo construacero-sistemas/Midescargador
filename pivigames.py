@@ -27,7 +27,7 @@ import urllib.parse
 import urllib.request
 
 import torrents   # _url_torrent_directa (madiashare -> .torrent)
-import zonaleros  # CDP, _lanzar, _clasificar_enlaces, _leer_enlaces_paste...
+import zonaleros_copia as zonaleros  # CDP, _lanzar, _clasificar_enlaces, _leer_enlaces_paste...
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
@@ -332,10 +332,10 @@ def extraer(url):
             servidores.append(clasificado)
         return {"servidores": servidores, "titulo": titulo_juego[:150]}
     except Exception as e:
-        if not zonaleros._chrome_corriendo():
-            return {"error": ("Chrome se cerró a mitad de la extracción "
-                              "(quizá lo abriste o se actualizó). Ciérralo "
-                              "del todo y vuelve a intentar.")}
+        if not zonaleros._nuestro_chrome_vivo():
+            return {"error": ("La instancia de Chrome de la extracción se "
+                              "cerró a mitad (quizá se actualizó o el "
+                              "sistema la cerró). Vuelve a intentar.")}
         return {"error": "error extrayendo: %s" % e}
     finally:
         if cdp:
@@ -343,5 +343,4 @@ def extraer(url):
                 cdp.cerrar()
             except Exception:
                 pass
-        zonaleros._matar_chrome()
-        zonaleros._restaurar_cookies_si_danadas()
+        zonaleros._matar_copia()   # solo nuestra instancia; el Chrome del usuario intacto

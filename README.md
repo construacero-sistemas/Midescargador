@@ -88,6 +88,30 @@ gh release create vX.Y.Z \
   --repo luiggiberaldi/Midescargador --title "MiDescargador X.Y.Z"
 ```
 
+### Verificación automática de versiones (workflow de GitHub Actions)
+
+El repositorio tiene un workflow (`.github/workflows/check-versiones.yml`) que
+**verifica que las versiones estén sincronizadas antes de cada release**. Se
+ejecuta en cada PR, en cada push a `main` y, sobre todo, **cuando se empuja el
+tag `vX.Y.Z`**: como `gh release create vX.Y.Z` crea y empuja ese tag, la
+verificación se dispara automáticamente en el momento de publicar.
+
+Comprueba tres cosas y falla si alguna no cuadra:
+
+1. **`electron/package.json` ↔ `extension/manifest.json`**: ejecuta
+   `build_mei/sync-version.js` y verifica que no queden diferencias (un bump
+   hecho solo en un lado se detecta).
+2. **`latest.yml` ↔ `package.json`** (si el archivo existe; está en
+   `.gitignore` y solo aparece tras un build local): el `version:` de
+   `latest.yml` debe coincidir con la versión de la app.
+3. **Tag `vX.Y.Z` ↔ código**: al empujar un tag `v*`, el número del tag debe
+   coincidir con `electron/package.json` y `extension/manifest.json`.
+
+Si el workflow falla en el paso 3 (tag ≠ código), la causa casi siempre es
+haber publicado el release sin hacer antes el bump; corrígelo con
+`electron/package.json` + `node build_mei/sync-version.js`, vuelve a
+committear/pushear y repite el `gh release create` con el tag correcto.
+
 Las apps instaladas detectan el release nuevo automáticamente (sin firmar,
 Windows puede pedir confirmación: *Más información → Ejecutar de todas formas*).
 

@@ -1,0 +1,65 @@
+name: check-versiones
+
+# Verifica que las versiones estén sincronizadas antes de cada release:
+#   - electron/package.json  (fuente de verdad)
+#   - extension/manifest.json (lo propaga build_mei/sync-version.js)
+#   - electron/dist/latest.yml (lo genera electron-builder en el build)
+#   - el tag vX.Y.Z (cuando se empuja, que es como se dispara cada release)
+#
+# latest.yml está en .gitignore (solo existe tras un build local), por eso
+# esa comprobación es condicional: se omite cuando no hay build en el checkout.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: package.json ↔ extension/manifest.json
+        run: |
+          node build_mei/sync-version.js
+          if ! git diff --quiet -- extension/manifest.json; then
+            echo "::error::extension/manifest.json no está sincronizado con electron/package.json. Corré: node build_mei/sync-version.js"
+            git diff -- extension/manifest.json
+            exit 1
+          fi
+          echo "✓ manifest.json sincronizado con package.json"
+
+      - name: latest.yml (si existe) ↔ package.json
+        run: |
+          if [ ! -f electron/dist/latest.yml ]; then
+            echo "Sin electron/dist/latest.yml en el checkout (está en .gitignore); se omite esta comprobación."
+            exit 0
+          fi
+          LY_VERSION=$(sed -n 's/^version:[[:space:]]*//p' electron/dist/latest.yml | tr -d '[:space:]')
+          PKG_VERSION=$(node -p "require('./electron/package.json').version")
+          echo "latest.yml version=$LY_VERSION package.json=$PKG_VERSION"
+          if [ "$LY_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::latest.yml (${LY_VERSION}) no coincide con electron/package.json (${PKG_VERSION}). Reconstruí con: cd electron && npm run dist"
+            exit 1
+          fi
+          echo "✓ latest.yml sincronizado con package.json"
+
+      - name: tag vX.Y.Z ↔ versión del código
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          TAG=${GITHUB_REF#refs/tags/v}
+          PKG_VERSION=$(node -p "require('./electron/package.json').version")
+          MANIFEST_VERSION=$(node -p "require('./extension/manifest.json').version")
+          echo "tag=$TAG package.json=$PKG_VERSION manifest.json=$MANIFEST_VERSION"
+          if [ "$TAG" != "$PKG_VERSION" ] || [ "$TAG" != "$MANIFEST_VERSION" ]; then
+            echo "::error::el tag v${TAG} no coincide con las versiones del código (package.json=${PKG_VERSION}, manifest.json=${MANIFEST_VERSION}). Bump primero: electron/package.json + node build_mei/sync-version.js"
+            exit 1
+          fi
+          echo "✓ tag v${TAG} coincide con el código"

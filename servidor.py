@@ -33,7 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import motor
 import hosters
 import mega
-import zonaleros
+import zonaleros_copia as zonaleros   # variante copia de perfil (Chrome abierto, sin taskkill destructivo)
 import pivigames
 import cuenta
 import descomprimir
