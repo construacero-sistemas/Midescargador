@@ -193,12 +193,40 @@
     ov.style.top = Math.max(8, r.top + 8) + "px";
   }
 
+  // Prefetch: al pasar el cursor sobre el video, pedimos las calidades en
+  // segundo plano (sin mostrar nada). Cuando el usuario pulsa "Calidad de
+  // descarga", el servidor ya lo tiene en caché o en curso → respuesta
+  // casi instantánea en vez de esperar los ~3-4 s de yt-dlp en ese momento.
+  // La promesa se guarda para que el clic reutilice la misma consulta.
+  const prefetched = new Map();   // url -> Promise<formatos>
+  const prefetchTimers = new Map(); // url -> timeout
+  function prefetchCalidades(v) {
+    const url = urlParaEnviar(v);
+    if (!url || prefetched.has(url)) return;
+    // debounce 350 ms: si el cursor solo pasa rozando el video (scroll por
+    // feeds), no disparamos yt-dlp; solo se consulta si el usuario se
+    // detiene sobre él.
+    const prev = prefetchTimers.get(url);
+    if (prev) clearTimeout(prev);
+    prefetchTimers.set(url, setTimeout(() => {
+      prefetchTimers.delete(url);
+      if (prefetched.has(url)) return;
+      // se guarda la promesa SIN tragar el error: el menú que la reutilice
+      // verá el rechazo y mostrará el mensaje; el catch vacío evita el
+      // "unhandled rejection" cuando el prefetch muere solo.
+      const p = consultarFormatos(url);
+      p.catch(() => {});
+      prefetched.set(url, p);
+    }, 350));
+  }
+
   function mostrar(v) {
     const ov = ovs.get(v);
     if (!ov || !esVisible(v)) return;
     ov.style.display = "";
     posicionar(ov, v);
     ov.classList.add("dentro");
+    prefetchCalidades(v);
   }
 
   function ocultar(v) {
@@ -306,7 +334,12 @@
     menu.appendChild(spinner);
     ov.appendChild(menu);
 
-    consultarFormatos(url).then(lista => {
+    // reutiliza el prefetch del hover/principal si sigue en curso; si ese
+    // prefetch falló (servidor caído al cargar la página, etc.), reintenta
+    // con una consulta nueva en lugar de mostrar el error viejo.
+    const promesa = (prefetched.get(url) || consultarFormatos(url))
+      .catch(() => consultarFormatos(url));
+    promesa.then(lista => {
       menu.innerHTML = "";
       menu.appendChild(cab);
       const opciones = [
@@ -422,6 +455,30 @@
     return ov;
   }
 
+  // Prefetch del video PRINCIPAL de la página (sin esperar el hover): el
+  // video visible más grande. Cubre YouTube/SPA — al cambiar de video (o de
+  // página) la URL cambia y el prefetch se dispara solo, sin repetir por el
+  // mismo video. La guarda `prefetched`/`prefetchTimers` de prefetchCalidades
+  // evita duplicados con el prefetch del hover.
+  let ultimaPrincipalUrl = null;
+  function prefetchPrincipal() {
+    // solo donde yt-dlp agrega valor: en una página con un .mp4 directo no
+    // hay calidades que listar y la consulta sería gasto inútil
+    if (!SITIOS_PAGINA.test(location.href)) return;
+    let mejor = null, mejorArea = 0;
+    for (const v of ovs.keys()) {
+      if (!esVisible(v)) continue;
+      const r = v.getBoundingClientRect();
+      const a = r.width * r.height;
+      if (a > mejorArea) { mejorArea = a; mejor = v; }
+    }
+    if (!mejor) return;
+    const url = urlParaEnviar(mejor);
+    if (!url || url === ultimaPrincipalUrl) return;
+    ultimaPrincipalUrl = url;
+    prefetchCalidades(mejor);
+  }
+
   function procesar() {
     document.querySelectorAll("video").forEach(v => {
       if (ovs.has(v)) return;
@@ -440,6 +497,8 @@
     for (const [v, ov] of ovs) {
       if (!v.isConnected) { ov.remove(); ovs.delete(v); }
     }
+
+    prefetchPrincipal();
   }
 
   procesar();

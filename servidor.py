@@ -442,6 +442,36 @@ def _ruta_ffmpeg():
 _FORMATOS_CACHE = {}        # clave -> (timestamp, lista, titulo)
 _FORMATOS_CACHE_TTL = 1800  # 30 minutos
 _FORMATOS_LOCK = threading.Lock()
+_FORMATOS_CACHE_ARCHIVO = os.path.join(_dir_datos(), "formatos_cache.json")
+# single-flight: si dos peticiones piden el mismo video a la vez (p. ej. el
+# prefetch del hover y el clic), una sola corre yt-dlp y la otra espera.
+_FORMATOS_EN_CURSO = {}     # clave -> threading.Event
+_FORMATOS_EN_CURSO_LOCK = threading.Lock()
+
+
+def _cargar_formatos_cache():
+    """Restaura la caché de calidades desde disco (sobrevive reinicios)."""
+    try:
+        with open(_FORMATOS_CACHE_ARCHIVO, encoding="utf-8") as f:
+            datos = json.load(f)
+        ahora = time.time()
+        with _FORMATOS_LOCK:
+            for k, (ts, lista, titulo) in (datos or {}).items():
+                if ahora - ts < _FORMATOS_CACHE_TTL:
+                    _FORMATOS_CACHE[k] = (ts, lista, titulo)
+    except Exception:
+        pass
+
+
+def _guardar_formatos_cache():
+    """Persiste la caché de calidades a disco (se llama al llenar una clave)."""
+    try:
+        with _FORMATOS_LOCK:
+            datos = dict(_FORMATOS_CACHE)
+        with open(_FORMATOS_CACHE_ARCHIVO, "w", encoding="utf-8") as f:
+            json.dump(datos, f)
+    except Exception:
+        pass
 
 
 def _clave_video(url):
@@ -453,7 +483,16 @@ def _clave_video(url):
 
 def _ytdlp_info(url, extra, timeout=30):
     """Una consulta -J a yt-dlp con un cliente concreto. Devuelve
-    (json, stderr) o (None, stderr) si falla/expira."""
+    (json, stderr) o (None, stderr) si falla/expira.
+
+    Vía rápida: yt_dlp EN PROCESO (el paquete lo trae como módulo), que
+    evita arrancar el yt-dlp.exe externo (onefile: ~1,4 s de arranque por
+    consulta). Si el módulo no está disponible o falla, cae al exe."""
+    # 1) en proceso: sin arrancar un proceso nuevo
+    info = _ytdlp_info_proceso(url, extra, timeout)
+    if info is not None:
+        return info, ""
+    # 2) respaldo: el exe externo (onefile autocontenido)
     cmd = _cmd_ytdlp() + [
         "--no-playlist", "--no-warnings", "--skip-download", "-J",
     ] + extra + [url]
@@ -467,6 +506,57 @@ def _ytdlp_info(url, extra, timeout=30):
         return json.loads(r.stdout), ""
     except Exception as e:
         return None, str(e)
+
+
+def _ytdlp_info_proceso(url, extra, timeout=30):
+    """Consulta yt-dlp en el mismo proceso (sin subproceso) usando la API
+    de yt_dlp. Devuelve el dict de info (igual que -J) o None si no se
+    puede (módulo ausente, timeout, error). Los extra se traducen de
+    argumentos CLI a opciones de YoutubeDL: --extractor-args, --cookies y
+    --cookies-from-browser."""
+    try:
+        import yt_dlp
+    except Exception:
+        return None
+    opts = {"quiet": True, "no_warnings": True, "skip_download": True,
+            "noplaylist": True, "socket_timeout": 15}
+    i = 0
+    while i < len(extra):
+        a = extra[i]
+        if a == "--extractor-args" and i + 1 < len(extra):
+            # formato: youtube:player_client=default,android
+            texto = extra[i + 1]
+            if ":" in texto:
+                sitio, _, par = texto.partition(":")
+                claves = par.split(",")
+                d = opts.setdefault("extractor_args", {}).setdefault(sitio, {})
+                for c in claves:
+                    if "=" in c:
+                        k, _, v = c.partition("=")
+                        d.setdefault(k, []).append(v)
+            i += 2
+        elif a == "--cookies" and i + 1 < len(extra):
+            opts["cookiefile"] = extra[i + 1]
+            i += 2
+        elif a == "--cookies-from-browser" and i + 1 < len(extra):
+            opts["cookiefrombrowser"] = (extra[i + 1], None, None, None)
+            i += 2
+        else:
+            i += 1
+    ex = _futuros.ThreadPoolExecutor(max_workers=1)
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            # corre en un hilo para poder cortar por timeout (la API no
+            # acepta timeout propio; socket_timeout corta sockets colgados)
+            fut = ex.submit(lambda: ydl.extract_info(url, download=False))
+            info = fut.result(timeout=timeout)
+        return info or None
+    except _futuros.TimeoutError:
+        return None
+    except Exception:
+        return None
+    finally:
+        ex.shutdown(wait=False)
 
 
 def _formato_sin_marca(selector):
@@ -501,20 +591,10 @@ def _fusionar_formatos(info, mejores):
             mejores[h] = (ext, tam)
 
 
-def _formatos(url):
-    """Consulta a yt-dlp TODAS las resoluciones disponibles del video, rápido:
-    los dos clientes principales corren EN PARALELO (≈ 2-3 s en vez de 4
-    secuenciales), los demás solo como respaldo, y el resultado se guarda
-    en caché 30 minutos por video. Devuelve
-    [{"altura", "etiqueta", "ext", "tamano", "formato"}] o [] si falla.
-    """
-    clave = _clave_video(url)
-    with _FORMATOS_LOCK:
-        if clave in _FORMATOS_CACHE:
-            ts, lista, _titulo = _FORMATOS_CACHE[clave]
-            if time.time() - ts < _FORMATOS_CACHE_TTL:
-                return lista
-
+def _calcular_formatos(url):
+    """Ejecuta la consulta real a yt-dlp (sin caché ni single-flight).
+    Devuelve [{"altura", "etiqueta", "ext", "tamano", "formato"}], un
+    dict {"error": ...} o [] si falla."""
     variantes = [
         ["--extractor-args", "youtube:player_client=default,android"],
         ["--extractor-args", "youtube:player_client=android"],
@@ -544,18 +624,31 @@ def _formatos(url):
             if not titulo:
                 titulo = info.get("title") or None
 
-    # 1) vía rápida: los dos clientes más fiables, en paralelo.
-    #    Normalmente el primero responde en 1-3 s con todas las calidades.
+    # 1) vía rápida: los dos clientes más fiables, en paralelo. Nos vamos en
+    #    cuanto el PRIMERO responda con un set de calidades completo (≥ 3
+    #    alturas); si el primero es un cliente pobre (1-2 alturas, p. ej.
+    #    android solo), seguimos esperando al otro para fusionar — así nunca
+    #    se pierden resoluciones por querer ir rápido.
     ex = _futuros.ThreadPoolExecutor(max_workers=2)
     futuros = [ex.submit(_correr, v) for v in variantes[:2]]
-    _futuros.wait(futuros, timeout=20)
+    while futuros:
+        hechos, futuros = _futuros.wait(
+            futuros, timeout=20, return_when=_futuros.FIRST_COMPLETED)
+        if len(mejores) >= 3:      # set completo → no esperar al segundo
+            break
+        if not hechos and not futuros:
+            break
     ex.shutdown(wait=False)
 
     # 2) respaldo (solo si no salió nada): tv y cookies de Chrome, en paralelo
     if not mejores:
         ex2 = _futuros.ThreadPoolExecutor(max_workers=2)
         futuros2 = [ex2.submit(_correr, v) for v in variantes[2:]]
-        _futuros.wait(futuros2, timeout=25)
+        while futuros2:
+            hechos2, futuros2 = _futuros.wait(
+                futuros2, timeout=25, return_when=_futuros.FIRST_COMPLETED)
+            if len(mejores) >= 3 or (not hechos2 and not futuros2):
+                break
         ex2.shutdown(wait=False)
 
     if not mejores:
@@ -585,9 +678,46 @@ def _formatos(url):
         })
     lista.append({"altura": 0, "etiqueta": "Solo audio (mp3)",
                   "ext": "mp3", "tamano": None, "formato": "audio"})
-    with _FORMATOS_LOCK:
-        _FORMATOS_CACHE[clave] = (time.time(), lista, titulo)
     return lista
+
+
+def _formatos(url):
+    """Calidades de un video: caché (30 min, persistida a disco) + single-
+    flight (dos peticiones simultáneas del mismo video comparten la consulta
+    yt-dlp). Devuelve [{"altura", ...}] o {"error": ...} o [] si falla."""
+    clave = _clave_video(url)
+    with _FORMATOS_LOCK:
+        if clave in _FORMATOS_CACHE:
+            ts, lista, _titulo = _FORMATOS_CACHE[clave]
+            if time.time() - ts < _FORMATOS_CACHE_TTL:
+                return lista
+    # single-flight: si otra petición ya está consultando este video,
+    # esperamos su resultado en vez de lanzar otro yt-dlp
+    with _FORMATOS_EN_CURSO_LOCK:
+        ev = _FORMATOS_EN_CURSO.get(clave)
+        if ev is None:
+            ev = threading.Event()
+            _FORMATOS_EN_CURSO[clave] = ev
+            soy_el_primero = True
+        else:
+            soy_el_primero = False
+    if not soy_el_primero:
+        ev.wait(timeout=35)
+        with _FORMATOS_LOCK:
+            if clave in _FORMATOS_CACHE:
+                return _FORMATOS_CACHE[clave][1]
+        return []
+    try:
+        resultado = _calcular_formatos(url)
+        if isinstance(resultado, list):
+            with _FORMATOS_LOCK:
+                _FORMATOS_CACHE[clave] = (time.time(), resultado, None)
+            _guardar_formatos_cache()
+        return resultado
+    finally:
+        with _FORMATOS_EN_CURSO_LOCK:
+            _FORMATOS_EN_CURSO.pop(clave, None)
+        ev.set()
 
 
 # ---------------------------------------------------- enlaces (zona-leros/pivigames)
@@ -2158,6 +2288,7 @@ atexit.register(_detener_trabajos_al_salir)
 
 def main():
     os.makedirs(CARPETA_DEFECTO, exist_ok=True)
+    _cargar_formatos_cache()   # calidades en disco sobreviven al reinicio
     motor.limpiar_restos()   # quita .partes viejas y fragmentos huérfanos
 
     def _depurar_periodico():
