@@ -1021,6 +1021,7 @@ class _TrabajoYtdlp:
         self.velocidad = 0.0
         self.estado = "esperando"
         self.error = None
+        self._aviso = None   # aviso visible en la tarjeta (p. ej. anti-cuelgue)
         self._proc = None
         self._hilo = None
         self._cancelar = threading.Event()
@@ -1109,6 +1110,7 @@ class _TrabajoYtdlp:
                         + [v for v in restantes if not _variante_con_cookies(v)])
                 errores_resume.append(f"intento {intento + 1}: {detalle or codigo}")
             self.estado = "error"
+            self._aviso = None   # el banner de error explica el fallo final
             self.error = "yt-dlp falló: " + " // ".join(errores_resume[-3:])
             _registrar_error(self)
             return
@@ -1162,6 +1164,7 @@ class _TrabajoYtdlp:
             errores.append(f"intento {intento + 1}: {detalle or 'código ' + str(codigo)}")
         # todos los intentos fallaron
         self.estado = "error"
+        self._aviso = None   # el banner de error explica el fallo final
         resumen = " // ".join(errores[-3:])
         altura = self._altura_pedida()
         # Video DRM/restringido: YouTube corta los streams altos con 403 y
@@ -1231,15 +1234,31 @@ class _TrabajoYtdlp:
             # más reintentos para aguantar caídas puntuales
             "--retries", "10", "--fragment-retries", "10",
             "--file-access-retries", "5",
+            # anti-cuelgue (las de alta resolución se quedaban colgadas a
+            # mitad con la velocidad congelada):
+            #  - socket muerto se corta a los 15 s (antes el default de 20 s
+            #    con 10 reintentos por fragmento = minutos sin progreso)
+            #  - si YouTube empieza a ESTRANGULAR (trickle de bytes que nunca
+            #    dispara el socket timeout), --throttled-rate aborta y
+            #    re-extrae URLs frescas en vez de quedar congelado para siempre
+            "--socket-timeout", "15",
+            "--throttled-rate", "128K",
             # descarga fragmentos en paralelo (como hace el reproductor de
-            # YouTube) — acelera mucho y es estable porque no parece bot
-            "--concurrent-fragments", str(self.conexiones or 8),
+            # YouTube) — acelera mucho; 8+ parece bot y dispara el
+            # estrangulamiento de YouTube, así que se topea en 4
+            "--concurrent-fragments", str(min(self.conexiones or 8, 4)),
             # progreso en JSON por línea: archivo, bajado, total, altura, velocidad
             "--progress-template",
             "download:{'f':'%(info.filename)s','d':%(progress.downloaded_bytes)s,"
             "'t':%(progress.total_bytes)s,'h':'%(info.height)s',"
             "'s':%(progress.speed)s}",
         ]
+        # runtime JS (deno) también en la descarga: el PO token puede
+        # pedirse a mitad de archivo (re-extracción por throttling) y sin
+        # él la sesión/cookies fallan con 'page needs to be reloaded'
+        _deno = _ruta_deno()
+        if _deno:
+            cmd += ["--js-runtimes", "deno:" + _deno]
         if self.formato == "audio":
             cmd += ["-f", "ba/b", "-x", "--audio-format", "mp3"]
         elif self.formato == "mejor":
@@ -1297,10 +1316,47 @@ class _TrabajoYtdlp:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         except Exception as e:
             return -1, f"yt-dlp no disponible: {e}"
+        # centinela anti-cuelgue (red de seguridad por si yt-dlp se queda
+        # mudo pese a --socket-timeout/--throttled-rate: p. ej. extracción
+        # o fusión eterna). Si no llega NADA durante 180 s con el proceso
+        # vivo, se mata y el bucle de reintentos retoma el .part con
+        # --continue en vez de dejar la tarjeta congelada para siempre.
+        _avance = {"ts": time.time()}
+        _proc_actual = self._proc
+
+        def _centinela():
+            while True:
+                time.sleep(15)
+                if _proc_actual.poll() is not None:
+                    return
+                if time.time() - _avance["ts"] > 180:
+                    try:
+                        _log_servidor(
+                            "anti-cuelgue: %s sin progreso, se corta yt-dlp "
+                            "para retomar el .part" % self.id)
+                    except Exception:
+                        pass
+                    # aviso visible en la tarjeta: el usuario ve que no se
+                    # colgó, que se está reanudando el .part donde quedó
+                    try:
+                        self._aviso = (
+                            "YouTube cortó la conexión a mitad de archivo — "
+                            "se está reanudando donde quedó (no vuelve a "
+                            "empezar).")
+                    except Exception:
+                        pass
+                    try:
+                        _proc_actual.kill()
+                    except Exception:
+                        pass
+                    return
+
+        threading.Thread(target=_centinela, daemon=True).start()
         while True:
             linea = self._proc.stdout.readline()
             if not linea:
                 break
+            _avance["ts"] = time.time()
             linea = linea.strip()
             if linea.startswith("{'f':") and "'t':" in linea:
                 self._parsear_json(linea)
@@ -1317,6 +1373,7 @@ class _TrabajoYtdlp:
             return -2, "pausada"
         if codigo == 0:
             self.estado = "completa"
+            self._aviso = None   # ya terminó: el aviso ya no aplica
             self._verificar_y_organizar()
             return 0, ""
         detalle = " | ".join(self._salida[-3:])
@@ -1544,7 +1601,8 @@ class _TrabajoYtdlp:
             "id": self.id, "url": self.url, "nombre": self.nombre,
             "estado": self.estado, "total": self.total,
             "descargado": self.descargado, "velocidad": self.velocidad,
-            "eta": None, "error": self.error, "tipo": "yt-dlp",
+            "eta": None, "error": self.error, "aviso": self._aviso,
+            "tipo": "yt-dlp",
             "categoria": categoria,
             "calidad": calidad,
             "calidad_real": self.calidad_real,

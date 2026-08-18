@@ -1302,6 +1302,26 @@
       gap: 8px;
     }
 
+    .aviso-banner {
+      margin-top: 10px;
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      background: rgba(245, 158, 11, 0.12);
+      border: 1px solid rgba(245, 158, 11, 0.35);
+      color: #fbbf24;
+      font-size: 12px;
+      word-break: break-word;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      animation: aviso-pulso 2.4s ease-in-out infinite;
+    }
+
+    @keyframes aviso-pulso {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.72; }
+    }
+
     /* ==========================================================================
        EMPTY STATE
        ========================================================================== */
@@ -2888,8 +2908,9 @@
   // y la app parecía "tardar mucho" en reaccionar)
   function firmaTarjeta(dato) {
     return [dato.id, dato.estado, dato.descargado, dato.total, dato.velocidad,
-            dato.error, dato.nombre, dato.calidad, dato.calidad_real,
-            dato.descompresion, dato.descompresion_msg || ""].join("|");
+            dato.error, dato.aviso || "", dato.nombre, dato.calidad,
+            dato.calidad_real, dato.descompresion,
+            dato.descompresion_msg || ""].join("|");
   }
 
   function tarjeta(dato) {
@@ -2959,6 +2980,15 @@
             <circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line>
           </svg>
           <span>${escapeHtml(dato.error)}</span>
+        </div>
+      ` : ""}
+
+      ${dato.aviso && (dato.estado === "descargando" || dato.estado === "esperando" || dato.estado === "uniendo") ? `
+        <div class="aviso-banner">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line>
+          </svg>
+          <span>${escapeHtml(dato.aviso)}</span>
         </div>
       ` : ""}
 
