@@ -92,6 +92,7 @@ def _dir_datos():
 LOG_RUTA = os.path.join(_dir_datos(), "errores.log")
 LOG_SERVIDOR = os.path.join(_dir_datos(), "servidor.log")
 LOG_MAX = 400          # máximo de líneas que se guardan
+_RUTA_COLA = os.path.join(_dir_datos(), "cola.json")   # cola persistida
 
 
 def _log_servidor(msg):
@@ -200,7 +201,8 @@ SERVIDORES = [
     ("mediafire.com", "MediaFire"), ("mega.nz", "Mega"),
     ("mega.co.nz", "Mega"), ("rootz.so", "Rootz"),
     ("fireload.com", "Fireload"), ("megaup.net", "MegaUp"),
-    ("gofile.io", "GoFile"),
+    ("gofile.io", "GoFile"), ("drive.google.com", "Google Drive"),
+    ("drive.usercontent.google.com", "Google Drive"),
 ]
 
 
@@ -381,6 +383,7 @@ def _al_error(trabajo):
     except Exception:
         pass
     _procesar_cola()   # un fallo libera hueco: entra la siguiente
+    _guardar_cola()    # el estado cambió: persistir
 
 
 def _cookies_sesion_activas():
@@ -1327,6 +1330,18 @@ class Gestor:
             resuelto = hosters.resolver(url)
         except Exception as e:
             resuelto = {"error": str(e)}
+        if resuelto and isinstance(resuelto, dict) and "carpeta_drive" in resuelto:
+            # carpeta compartida de Google Drive: encolar cada archivo
+            tids = []
+            for f in resuelto.get("carpeta_drive") or []:
+                f_id = self.agregar(f.get("url"), segmentos=segmentos,
+                                    carpeta=carpeta, formato=formato,
+                                    iniciar_auto=False, origen=origen)
+                if f_id:
+                    tids.append(f_id)
+            if iniciar_auto:
+                _procesar_cola()  # arranca los que quepan en MAX_SIMULTANEAS
+            return tids[0] if tids else None
         if resuelto and resuelto.get("error"):
             t = motor.Descarga(url, carpeta, segmentos=segmentos)
             t.nombre = "⚠ " + resuelto["error"]
@@ -1373,6 +1388,7 @@ class Gestor:
             t.iniciar()
         else:
             t.estado = "en cola"
+        _guardar_cola()
         return t.id
 
     def estado(self):
@@ -1400,6 +1416,7 @@ class Gestor:
         if not t:
             return False
         getattr(t, accion)()
+        _guardar_cola()
         return True
 
     def borrar(self, tid):
@@ -1408,6 +1425,7 @@ class Gestor:
             if t:
                 t.cancelar()
                 del self.trabajos[tid]
+        _guardar_cola()
         # depuración inteligente: borra los fragmentos de la descarga borrada
         nombre = getattr(t, "nombre", None)
         if nombre:
@@ -1468,6 +1486,137 @@ class Gestor:
 
 
 GESTOR = Gestor()
+
+
+def _guardar_cola():
+    """Persiste la cola en disco (cola.json) para restaurarla si el servidor
+    se reinicia. Se llama en cada cambio de estado relevante (agregar, borrar,
+    pausar/reanudar/cancelar/reintentar, completar, error)."""
+    try:
+        datos = []
+        with GESTOR._lock:
+            for t in list(GESTOR.trabajos.values()):
+                try:
+                    p = t.progreso()
+                except Exception:
+                    continue
+                e = {
+                    "tipo": p.get("tipo"),
+                    "id": t.id,
+                    "url": getattr(t, "pagina", None) or getattr(t, "url", ""),
+                    "pagina": getattr(t, "pagina", None),
+                    "carpeta": getattr(t, "carpeta", None),
+                    "nombre": p.get("nombre"),
+                    "total": p.get("total"),
+                    "estado": p.get("estado"),
+                    "error": p.get("error"),
+                    "origen": getattr(t, "origen", "") or "",
+                    "categoria": p.get("categoria"),
+                    "servidor": p.get("servidor"),
+                    "calidad": p.get("calidad"),
+                    "calidad_real": p.get("calidad_real"),
+                }
+                # estado interno necesario para REANUDAR tras el reinicio
+                if isinstance(t, motor.Descarga):
+                    e["url_directa"] = t.url          # URL ya resuelta
+                    e["segmentos"] = t.segmentos_max
+                    e["post"] = t.post
+                    e["cookies"] = t.cookies
+                    e["unico"] = bool(t._forzar_unico)
+                elif isinstance(t, mega.Descarga):
+                    e["info"] = t.info                # {url, nombre, tamano, clave...}
+                    e["segmentos"] = t.segmentos_max
+                elif isinstance(t, _TrabajoYtdlp):
+                    e["formato"] = t.formato
+                    e["conexiones"] = t.conexiones
+                datos.append(e)
+        with open(_RUTA_COLA, "w", encoding="utf-8") as f:
+            json.dump(datos, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+
+def _pausar_restaurada(t):
+    """Marca una tarea restaurada como pausada sin arrancar su hilo."""
+    try:
+        ev = getattr(t, "_pausa", None)
+        if ev is not None:
+            ev.set()
+        if getattr(t, "_pausado", None) is not None:
+            t._pausado = True
+    except Exception:
+        pass
+
+
+def _restaurar_cola():
+    """Recarga la cola persistida tras un reinicio. Las tareas vivas
+    (descargando/esperando/en cola/uniendo) se reanudan — el motor retoma
+    los fragmentos .part en disco; las pausadas/completas/error/canceladas
+    se restauran tal cual."""
+    try:
+        with open(_RUTA_COLA, "r", encoding="utf-8") as f:
+            datos = json.load(f)
+    except Exception:
+        return
+    if not isinstance(datos, list):
+        return
+    for d in datos:
+        try:
+            tipo = d.get("tipo")
+            carpeta = d.get("carpeta") or CARPETA_DEFECTO
+            url = d.get("url") or ""
+            if tipo == "directa":
+                t = motor.Descarga(d.get("url_directa") or url, carpeta,
+                                   segmentos=d.get("segmentos") or 8,
+                                   nombre=d.get("nombre"),
+                                   total=d.get("total"),
+                                   post=d.get("post"),
+                                   cookies=d.get("cookies"),
+                                   unico=d.get("unico"))
+            elif tipo == "mega":
+                t = mega.Descarga(d.get("info") or {}, carpeta,
+                                  segmentos=d.get("segmentos") or 8)
+            elif tipo == "torrent":
+                t = torrents.TrabajoTorrent(url, carpeta)
+            elif tipo == "yt-dlp":
+                t = _TrabajoYtdlp(url, carpeta, formato=d.get("formato"),
+                                  conexiones=d.get("conexiones"))
+            else:
+                continue
+            t.id = d.get("id") or uuid.uuid4().hex[:8]
+            t.pagina = d.get("pagina") or None
+            t.origen = d.get("origen") or ""
+            if t.nombre is None:
+                t.nombre = d.get("nombre")
+            estado = d.get("estado")
+            if estado == "completa":
+                t.estado = "completa"
+                if d.get("total"):
+                    t.total = d["total"]
+            elif estado == "error":
+                t.estado = "error"
+                t.error = d.get("error")
+            elif estado == "cancelada":
+                t.estado = "cancelada"
+            elif estado == "pausada":
+                t.estado = "pausada"
+                _pausar_restaurada(t)
+            elif estado == "en cola":
+                # espera su turno: la arranca _procesar_cola() respetando
+                # MAX_SIMULTANEAS al final de la restauración
+                t.estado = "en cola"
+            else:
+                # viva (descargando/esperando/uniendo): reanudar ya
+                t.estado = "esperando"
+                t.iniciar()
+            with GESTOR._lock:
+                GESTOR.trabajos[t.id] = t
+        except Exception:
+            continue
+    try:
+        _procesar_cola()   # arranca las "en cola" restauradas que quepan
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------- lote (cola)
@@ -1647,6 +1796,7 @@ def _al_completar(trabajo):
         pass
     # una descarga terminó (o falló): entra la siguiente de la cola
     _procesar_cola()
+    _guardar_cola()    # el estado cambió: persistir
 
 
 motor.on_completada = _al_completar
@@ -2021,6 +2171,7 @@ def main():
     threading.Thread(target=_depurar_periodico, daemon=True).start()
 
     _cargar_config()   # restaura toggle/contraseña guardados en config.json
+    _restaurar_cola()  # recarga la cola persistida (reanuda lo vivo)
 
     try:
         srv = ThreadingHTTPServer(("127.0.0.1", PUERTO), Manejador)

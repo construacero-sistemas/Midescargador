@@ -250,6 +250,9 @@ class Descarga:
         with self._lock:
             if self.estado == "pausada":
                 self.estado = "descargando"
+        # tras restaurar la cola desde disco no hay hilo vivo: arrancarlo
+        if self._hilo is None or not self._hilo.is_alive():
+            self.iniciar()
 
     def cancelar(self):
         self._cancelar.set()

@@ -42,7 +42,7 @@ SOPORTADOS = ("rootz.so", "www.rootz.so", "fireload.com", "www.fireload.com",
               "www.fuckingfast.net", "1fichier.com", "www.1fichier.com",
               "lolaup.com", "www.lolaup.com", "rapidshare.co", "www.rapidshare.co",
               "upto.cash", "www.upto.cash", "solred.app", "www.solred.app",
-              "drive.marketcat.io")
+              "drive.marketcat.io", "drive.google.com", "drive.usercontent.google.com")
 
 # etiquetas amigables por dominio (para la lista del panel)
 ETIQUETAS = {
@@ -51,7 +51,7 @@ ETIQUETAS = {
     "fuckingfast.net": "FuckingFast", "1fichier.com": "1Fichier",
     "lolaup.com": "LolaUp", "rapidshare.co": "RapidShare",
     "upto.cash": "UpToCash", "solred.app": "Solred",
-    "drive.marketcat.io": "MarketCat",
+    "drive.marketcat.io": "MarketCat", "google.com": "Google Drive",
 }
 
 
@@ -914,11 +914,236 @@ def _extraer_1fichier(url):
     return {"url": directa, "nombre": nombre, "tamano": tam, "pagina": url}
 
 
+def _drive_nombre(cd):
+    """Extrae el nombre de archivo de un Content-Disposition."""
+    m = re.search(r"filename\*?=(?:UTF-8'')?\"?([^\";]+)\"?", cd, re.I)
+    if m:
+        return urllib.parse.unquote(m.group(1).strip())
+    return None
+
+
+def _mensaje_drive(html):
+    """Convierte la página de error de Google Drive en un mensaje claro."""
+    h = html.lower()
+    if "too large" in h or "exceeded" in h or "cannot scan" in h:
+        return ("Google Drive no pudo escanear el archivo (muy grande o con "
+                "virus). Probá descargarlo manualmente desde el navegador.")
+    if "accounts.google.com" in h or "sign in" in h:
+        return ("Google Drive pide iniciar sesión: el archivo no está "
+                "compartido como 'cualquier persona con el enlace'.")
+    return ("Google Drive respondió con una página de verificación y no se "
+            "pudo obtener el token de descarga. Probá más tarde.")
+
+
+def _extraer_google_drive(url):
+    """Google Drive: enlace compartido -> URL directa de descarga.
+
+    El enlace /file/d/<ID>/view es una PÁGINA, no el archivo. Resolvemos el
+    ID y apuntamos al endpoint de descarga drive.usercontent.google.com. Si
+    Google responde con la página de confirmación (archivos grandes o aviso
+    de virus), extraemos el token 'confirm' del formulario y reintentamos.
+    Devuelve {"url", "nombre", "tamano", "pagina"} o lanza RuntimeError.
+    """
+    m = re.search(r"/file/d/([^/?#]+)|[?&]id=([^&#]+)", url)
+    fid = (m.group(1) or m.group(2)) if m else None
+    if not fid:
+        raise RuntimeError(
+            "no es un enlace de archivo de Google Drive: usá uno del tipo "
+            ".../file/d/<ID>/view (los enlaces de carpeta no se soportan)")
+    fid = re.sub(r"[^A-Za-z0-9_-]", "", fid)
+    if not fid:
+        raise RuntimeError("el enlace de Google Drive no tiene un ID válido")
+
+    base = "https://drive.usercontent.google.com/download"
+    token = "t"
+    uuid = ""
+    for intento in range(3):
+        directa = "%s?id=%s&export=download&confirm=%s" % (base, fid, token)
+        if uuid:
+            directa += "&uuid=%s" % uuid
+        try:
+            req = urllib.request.Request(directa, headers={
+                "User-Agent": UA,
+                "Accept": "*/*",
+                "Range": "bytes=0-0",
+            })
+            with urllib.request.urlopen(req, timeout=TIMEOUT,
+                                        context=_CTX) as r:
+                final = r.geturl()
+                tipo = (r.headers.get("Content-Type") or "").lower()
+                if "text/html" in tipo:
+                    # página de confirmación o "no se puede escanear": el
+                    # formulario trae confirm (+ uuid para el 'Download
+                    # anyway') -> re-solicitar con esos valores
+                    html = r.read(300000).decode("utf-8", errors="replace")
+                    m2 = re.search(r'name="confirm"\s+value="([^"]+)"',
+                                   html)
+                    m3 = re.search(r'name="uuid"\s+value="([^"]+)"',
+                                   html)
+                    nuevo_token = m2.group(1) if m2 else None
+                    nuevo_uuid = m3.group(1) if m3 else None
+                    if (nuevo_token or nuevo_uuid) and intento < 2:
+                        if nuevo_token:
+                            token = nuevo_token
+                        if nuevo_uuid:
+                            uuid = nuevo_uuid
+                        continue
+                    raise RuntimeError(_mensaje_drive(html))
+                # binario: el rango 0-0 alcanza; cerrar sin bajar el resto
+                r.read(1)
+                cr = r.headers.get("Content-Range", "")
+                m3 = re.search(r"/(\d+)\s*$", cr)
+                tamano = int(m3.group(1)) if m3 else None
+                if tamano is None:
+                    cl = r.headers.get("Content-Length")
+                    tamano = int(cl) if cl and cl.isdigit() else None
+                nombre = _drive_nombre(
+                    r.headers.get("Content-Disposition", ""))
+                if not nombre:
+                    nombre = "descarga_drive_%s" % fid[:8]
+                return {"url": final, "nombre": nombre, "tamano": tamano,
+                        "pagina": url}
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                raise RuntimeError(
+                    "Google Drive no encontró el archivo (¿borrado o enlace "
+                    "mal copiado?)") from e
+            if e.code in (403, 429):
+                raise RuntimeError(
+                    "Google Drive bloqueó la descarga (HTTP %d). El archivo "
+                    "debe estar compartido como 'cualquier persona con el "
+                    "enlace'." % e.code) from e
+            raise RuntimeError(
+                "Google Drive respondió HTTP %d" % e.code) from e
+        except urllib.error.URLError as e:
+            raise RuntimeError(
+                "no se pudo conectar con Google Drive: %s" % e.reason) from e
+    raise RuntimeError("no se pudo resolver el enlace de Google Drive")
+
+
+def _drive_ivd_entradas(cid):
+    """Devuelve [(nombre, id, es_carpeta), ...] de una carpeta compartida de
+    Google Drive, leyendo el JSON embebido en la página de la carpeta
+    (window['_DRIVE_ivd']). Soporta el formato actual (escapado con \\xNN)
+    y el clásico (JSON plano)."""
+    pagina = "https://drive.google.com/drive/folders/%s" % cid
+    try:
+        req = urllib.request.Request(pagina, headers={
+            "User-Agent": UA, "Accept-Language": "es-ES,es;q=0.9"})
+        with urllib.request.urlopen(req, timeout=TIMEOUT, context=_CTX) as r:
+            html = r.read(2000000).decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(
+            "Google Drive no encontró la carpeta (HTTP %d)" % e.code) from e
+    except Exception as e:
+        raise RuntimeError(
+            "no se pudo abrir la carpeta de Google Drive: %s" % e) from e
+    datos = None
+    # formato actual: string con escapes \xNN
+    m = re.search(r"window\['_DRIVE_ivd'\]\s*=\s*'([^']+)';", html)
+    if m:
+        try:
+            datos = json.loads(
+                m.group(1).encode("utf-8").decode("unicode_escape"))
+        except Exception:
+            datos = None
+    # formato clásico: JSON plano
+    if datos is None:
+        m = re.search(r"window\['_DRIVE_ivd'\]\s*=\s*(\[.*?\]);", html, re.S)
+        if m:
+            try:
+                datos = json.loads(m.group(1))
+            except Exception:
+                datos = None
+    if not isinstance(datos, list):
+        raise RuntimeError(
+            "no se pudo leer el contenido de la carpeta (¿vacía o sin "
+            "permiso?)")
+
+    def es_nuevo(info):
+        # [id, [padres], nombre, mime, ...]
+        return (isinstance(info, list) and len(info) > 3
+                and isinstance(info[0], str)
+                and re.match(r"[A-Za-z0-9_-]{25,}", info[0] or "")
+                and isinstance(info[1], list)
+                and isinstance(info[2], str)
+                and isinstance(info[3], str))
+
+    def es_clasico(info):
+        # [nombre, id, tipo]
+        return (isinstance(info, list) and len(info) > 2
+                and isinstance(info[0], str)
+                and isinstance(info[1], str)
+                and re.match(r"[A-Za-z0-9_-]{25,}", info[1] or "")
+                and isinstance(info[2], int))
+
+    def colectar(nodo, salida, profundidad):
+        # Google anida las entradas de forma distinta según la respuesta:
+        # a veces data[0] es la lista, a veces cada data[i] envuelve una.
+        # Recorremos en profundidad (acotado) recogiendo toda entrada que
+        # tenga forma de archivo/carpeta.
+        if profundidad > 5:
+            return
+        if es_nuevo(nodo):
+            salida.append((str(nodo[2]), str(nodo[0]),
+                           (nodo[3] or "") ==
+                           "application/vnd.google-apps.folder"))
+            return
+        if es_clasico(nodo):
+            salida.append((str(nodo[0]), str(nodo[1]), nodo[2] == 2))
+            return
+        if isinstance(nodo, list):
+            for x in nodo:
+                colectar(x, salida, profundidad + 1)
+
+    salida = []
+    colectar(datos, salida, 0)
+    # quitar duplicados por id (mismo archivo puede aparecer varias veces)
+    vistos = set()
+    unicos = []
+    for nombre, fid, es_carpeta in salida:
+        if fid not in vistos:
+            vistos.add(fid)
+            unicos.append((nombre, fid, es_carpeta))
+    return unicos
+
+
+def _lista_carpeta_drive(url):
+    """Carpeta compartida de Drive -> lista de archivos
+    [{"url", "nombre"}...]. Recorre subcarpetas hasta 3 niveles."""
+    m = re.search(
+        r"/drive/(?:u/\d+/)?folders/([^/?#]+)"
+        r"|[?&]folder=([^&#]+)"
+        r"|folderview\?id=([^&#]+)", url)
+    cid = next((g for g in m.groups() if g), None) if m else None
+    if not cid:
+        return None
+    archivos = []
+
+    def expandir(carpeta_id, prof):
+        if prof > 3:
+            return
+        for nombre, fid, es_carpeta in _drive_ivd_entradas(carpeta_id):
+            if es_carpeta:
+                expandir(fid, prof + 1)
+            else:
+                archivos.append({
+                    "url": "https://drive.google.com/file/d/%s/view" % fid,
+                    "nombre": nombre,
+                })
+
+    expandir(cid, 0)
+    if not archivos:
+        raise RuntimeError("la carpeta está vacía o sin archivos accesibles")
+    return archivos
+
+
 def resolver(url):
     """Intenta convertir un enlace de file hoster en su URL directa.
 
-    Devuelve dict {"url", "nombre", "tamano", "pagina"} o None si el
-    dominio no está soportado.
+    Devuelve dict {"url", "nombre", "tamano", "pagina"}, {"carpeta_drive":
+    [...]} para carpetas de Google Drive, o None si el dominio no está
+    soportado.
     """
     host = (urllib.parse.urlparse(url).hostname or "").lower()
     if host in ("rootz.so", "www.rootz.so"):
@@ -943,6 +1168,13 @@ def resolver(url):
         return _extraer_solred(url)
     if host in ("drive.marketcat.io",):
         return _extraer_marketcat(url)
+    if host in ("drive.google.com", "www.drive.google.com",
+                "drive.usercontent.google.com"):
+        if host != "drive.usercontent.google.com" and (
+                "/folders/" in url or "folderview" in url
+                or "?folder=" in url):
+            return {"carpeta_drive": _lista_carpeta_drive(url)}
+        return _extraer_google_drive(url)
     if host in ("upto.cash", "www.upto.cash"):
         raise RuntimeError(
             "upto.cash exige resolver un captcha en el navegador. "
