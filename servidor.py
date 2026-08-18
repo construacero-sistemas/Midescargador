@@ -398,11 +398,18 @@ def _variantes_ytdlp():
 
 
 def _ruta_ffmpeg():
-    """Localiza ffmpeg como ffmpeg.exe (copia local con el nombre que yt-dlp espera)."""
+    """Localiza ffmpeg como ffmpeg.exe (copia local con el nombre que yt-dlp
+    espera). Al empaquetar con PyInstaller el exe puede quedar como directorio
+    anidado (bin/ffmpeg.exe/ffmpeg.exe): os.path.exists() ve el directorio y
+    lo devolvería como comando, rompiendo la verificación en silencio."""
     base = _base_dir()
     local = os.path.join(base, "bin", "ffmpeg.exe")
-    if os.path.exists(local):
+    if os.path.isfile(local):
         return local
+    # directorio anidado que PyInstaller a veces crea
+    anidado = os.path.join(local, "ffmpeg.exe")
+    if os.path.isfile(anidado):
+        return anidado
     try:
         import imageio_ffmpeg
         origen = imageio_ffmpeg.get_ffmpeg_exe()
@@ -998,53 +1005,103 @@ class _TrabajoYtdlp:
     def _verificar_y_organizar(self):
         """Lee el archivo final con ffmpeg: tamaño y resolución REALES.
         Así comprobamos que YouTube entregó la calidad elegida (o cuál dio).
-        """
+        Los fallos quedan en servidor.log (nada en silencio)."""
         import re as _re
         ff = _ruta_ffmpeg()
-        if ff and os.path.exists(self.carpeta):
-            try:
-                # preferir el archivo que vimos en el progreso; si no,
-                # el más reciente de la carpeta (evita coger el de otra
-                # descarga si hay varias corriendo a la vez)
-                cand = [os.path.join(self.carpeta, f)
-                        for f in os.listdir(self.carpeta)
-                        if os.path.isfile(os.path.join(self.carpeta, f))]
-                ruta = None
-                # 1) por el TÍTULO del video: el template de salida es
-                #    "%(title).120s.%(ext)s", así que el archivo empieza
-                #    por el nombre de la descarga. Con descargas a la vez
-                #    esto es lo único fiable (el "más reciente" puede ser
-                #    el archivo de OTRA descarga)
-                nombre_base = (self.nombre or "").strip()[:120]
-                if nombre_base:
-                    for c in cand:
-                        if os.path.basename(c).startswith(nombre_base):
-                            ruta = c
-                            break
-                # 2) por el archivo que vimos en el progreso
-                if ruta is None and self._archivo_progreso:
-                    for c in cand:
-                        if os.path.basename(c) == os.path.basename(self._archivo_progreso):
-                            ruta = c
-                            break
-                # 3) último recurso: el más reciente
-                if ruta is None and cand:
-                    ruta = max(cand, key=os.path.getmtime)
-                if ruta:
-                    self._archivo_final = ruta
-                    self.total = os.path.getsize(ruta)
-                    self.descargado = self.total
-                    # resolución real con ffmpeg -i (stderr trae los streams)
-                    r = subprocess.run(
-                        [ff, "-i", ruta], capture_output=True, text=True,
-                        encoding="utf-8", errors="replace", timeout=30,
-                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-                    m = _re.search(r"(\d{3,4})x(\d{3,4})", r.stderr)
-                    if m:
-                        h = int(m.group(2))
-                        self.calidad_real = f"{h}p"
-            except Exception:
-                pass
+        if not ff:
+            _log_servidor("verificar calidad: no hay ffmpeg, se omite")
+            _al_completar(self)
+            return
+        if not os.path.isdir(self.carpeta):
+            _log_servidor("verificar calidad: carpeta inexistente %s"
+                          % self.carpeta)
+            _al_completar(self)
+            return
+        try:
+            cand = [os.path.join(self.carpeta, f)
+                    for f in os.listdir(self.carpeta)
+                    if os.path.isfile(os.path.join(self.carpeta, f))]
+        except OSError as e:
+            _log_servidor("verificar calidad: no se pudo listar %s: %s"
+                          % (self.carpeta, e))
+            _al_completar(self)
+            return
+
+        def _es_final(nombre):
+            """Archivo final: sin .part ni marcador .fNNN de fragmento DASH."""
+            n = nombre.lower()
+            if n.endswith(".part"):
+                return False
+            if _re.search(r"\.f\d+\.", n):
+                return False
+            return True
+
+        def _base_ytdlp(nombre):
+            """'titulo.f399.mp4.part' -> 'titulo': quita los marcadores
+            temporales con los que yt-dlp nombra los streams (la barra |
+            del título se convierte en ｜ fullwidth al grabar, así que el
+            inicio del nombre es la parte fiable)."""
+            n = nombre
+            if n.lower().endswith(".part"):
+                n = n[:-5]
+            n = _re.sub(r"\.f\d+\.[^.]*$", "", n)
+            return n
+
+        ruta = None
+        # 1) por el TÍTULO del video: el template de salida es
+        #    "%(title).120s.%(ext)s", así que el archivo empieza por el
+        #    nombre de la descarga. yt-dlp sanea algunos caracteres del
+        #    título al grabar, por eso comparamos el inicio del nombre
+        #    (prefiriendo el archivo final, sin fragmentos)
+        nombre_base = (self.nombre or "").strip()[:120]
+        if nombre_base:
+            coinciden = [c for c in cand
+                         if _base_ytdlp(os.path.basename(c))
+                         .startswith(nombre_base)]
+            if coinciden:
+                finales = [c for c in coinciden
+                           if _es_final(os.path.basename(c))]
+                ruta = max(finales or coinciden, key=os.path.getmtime)
+        # 2) por el archivo que vimos en el progreso (normalizado)
+        if ruta is None and self._archivo_progreso:
+            prog = _base_ytdlp(os.path.basename(self._archivo_progreso))
+            coinciden = [c for c in cand
+                         if _base_ytdlp(os.path.basename(c)) == prog]
+            if coinciden:
+                finales = [c for c in coinciden
+                           if _es_final(os.path.basename(c))]
+                ruta = max(finales or coinciden, key=os.path.getmtime)
+        # 3) último recurso: el archivo final más reciente (nunca un
+        #    fragmento .part: ese daría una resolución falsa o ninguna)
+        if ruta is None:
+            finales = [c for c in cand if _es_final(os.path.basename(c))]
+            if finales:
+                ruta = max(finales, key=os.path.getmtime)
+        if ruta is None:
+            _log_servidor("verificar calidad: no se encontró archivo final "
+                          "en %s" % self.carpeta)
+            _al_completar(self)
+            return
+        try:
+            self._archivo_final = ruta
+            self.total = os.path.getsize(ruta)
+            self.descargado = self.total
+            # resolución real con ffmpeg -i (stderr trae los streams)
+            r = subprocess.run(
+                [ff, "-i", ruta], capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=30,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            m = _re.search(r"(\d{3,4})x(\d{3,4})", r.stderr)
+            if m:
+                h = int(m.group(2))
+                self.calidad_real = f"{h}p"
+                _log_servidor("verificar calidad: %s -> %s"
+                              % (os.path.basename(ruta), self.calidad_real))
+            else:
+                _log_servidor("verificar calidad: sin resolución en %s"
+                              % os.path.basename(ruta))
+        except Exception as e:
+            _log_servidor("verificar calidad FALLÓ para %s: %s" % (ruta, e))
         _al_completar(self)
 
     def _parsear_json(self, linea):

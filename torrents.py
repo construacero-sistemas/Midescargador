@@ -46,8 +46,21 @@ def _base_dir():
     return BASE_DIR
 
 
-RUTA_ARIA2 = os.path.join(_base_dir(), "bin", "aria2c.exe")
 _TEMP_TORRENT = os.path.join(tempfile.gettempdir(), "MiDescargador", "torrents")
+
+
+def _ruta_aria2():
+    """Ruta REAL a aria2c.exe (un archivo, no un directorio). Al empaquetar
+    con PyInstaller a veces el exe queda como directorio anidado
+    (bin/aria2c.exe/aria2c.exe); os.path.exists() vería el directorio y
+    rompería el comando en silencio."""
+    ruta = os.path.join(_base_dir(), "bin", "aria2c.exe")
+    if os.path.isfile(ruta):
+        return ruta
+    anidado = os.path.join(ruta, "aria2c.exe")
+    if os.path.isfile(anidado):
+        return anidado
+    return ruta
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
@@ -94,7 +107,7 @@ _MADIASHARE = ("madiashare.com", "www.madiashare.com")
 
 def disponible():
     """True si aria2c está en bin/ (motor de torrents operativo)."""
-    return os.path.exists(RUTA_ARIA2)
+    return os.path.isfile(_ruta_aria2())
 
 
 def es_torrent(url):
@@ -293,7 +306,7 @@ class TrabajoTorrent:
             self._notificar_error()
             return
         cmd = [
-            RUTA_ARIA2,
+            _ruta_aria2(),
             "--dir=" + self.carpeta,
             "--seed-time=0",
             "--summary-interval=1",
