@@ -131,9 +131,20 @@ def _lanzar_visible(url, plataforma):
     return None, "Chrome no respondió"
 
 
+def _login_google_completado(cookies):
+    """True si el usuario terminó el login en Google: cookies de sesión
+    SID + SAPISID + HSID en dominios google.com. Solo marca el paso 1: las
+    cookies de YouTube (.youtube.com, LOGIN_INFO...) aparecen recién al
+    visitar youtube.com con esa sesión."""
+    nombres = {c.get("name") for c in cookies
+               if "google.com" in (c.get("domain") or "")}
+    return {"SID", "SAPISID", "HSID"} <= nombres
+
+
 def _leer_y_guardar(ws, plataforma):
     """Lee las cookies de la plataforma del perfil en vivo y las guarda en
-    formato Netscape para yt-dlp. Devuelve (guardadas, hay_sesion)."""
+    formato Netscape para yt-dlp. Devuelve (guardadas, hay_sesion,
+    google_listo)."""
     cfg = _config(plataforma)
     id_ = [0]
 
@@ -153,11 +164,26 @@ def _leer_y_guardar(ws, plataforma):
                   if any(d in (c.get("domain") or "")
                          for d in cfg["dominios"])]
     if not relevantes:
-        return False, False
+        return False, False, False
+    # señal de que el usuario TERMINÓ el login en Google (cookies de sesión
+    # en .google.com). No alcanza para yt-dlp (faltan las .youtube.com), pero
+    # permite navegar a youtube.com automáticamente para que aparezcan.
+    google_listo = _login_google_completado(relevantes)\
+        if plataforma == "youtube" else False
     # sesión CONFIRMADA solo con el set completo (LOGIN_INFO + SAPISID para
     # YouTube): si capturamos apenas aparecen las 3P, el login sigue en curso
     # y el archivo quedaría incompleto (yt-dlp lo trataría como anónimo)
     hay_sesion = _hay_sesion_cookies(relevantes, cfg)
+    _escribir_cookies(plataforma, relevantes)
+    return True, hay_sesion, google_listo
+
+
+def _escribir_cookies(plataforma, relevantes):
+    """Escribe cookies (dicts con name/value/domain/path/secure/expires) en
+    el archivo de sesión con formato Netscape CORREGIDO y limpia la caché de
+    validación. Compartido por la captura vía CDP (_leer_y_guardar) y la
+    exportación desde la extensión (exportar)."""
+    cfg = _config(plataforma)
     os.makedirs(os.path.dirname(cfg["ruta"]), exist_ok=True)
     lineas = ["# Netscape HTTP Cookie File"]
     for c in relevantes:
@@ -180,7 +206,37 @@ def _leer_y_guardar(ws, plataforma):
         f.write("\n".join(lineas) + "\n")
     # el archivo cambió: forzar re-validación en vivo la próxima vez
     _VALIDACION_CACHE.pop(plataforma, None)
-    return True, hay_sesion
+    return True
+
+
+def exportar(cookies, plataforma="youtube"):
+    """Guarda cookies recibidas de la extensión (chrome.cookies del perfil
+    donde corre) en el archivo de sesión con el formato corregido, sin volver
+    a iniciar sesión. Valida el set completo y, si está, en vivo contra
+    YouTube. Devuelve un dict para el endpoint /api/sesion/exportar."""
+    cfg = _config(plataforma)
+    relevantes = [c for c in (cookies or [])
+                  if any(d in (c.get("domain") or "")
+                         for d in cfg["dominios"])]
+    if not relevantes:
+        return {"ok": False,
+                "error": "no se recibieron cookies de la plataforma"}
+    hay_sesion = _hay_sesion_cookies(relevantes, cfg)
+    _escribir_cookies(plataforma, relevantes)
+    # si estaba marcada como vencida, al exportar de nuevo vuelve a activa
+    try:
+        if os.path.exists(cfg["ruta"] + ".rotada"):
+            os.remove(cfg["ruta"] + ".rotada")
+    except OSError:
+        pass
+    if not hay_sesion:
+        return {"ok": True, "activa": False, "hay_sesion": False,
+                "error": ("el set de cookies está incompleto: faltan "
+                           "LOGIN_INFO o las de sesión (SAPISID)")}
+    est = estado(plataforma)
+    return {"ok": True, "activa": bool(est.get("activa")),
+            "rotada": bool(est.get("rotada")), "hay_sesion": True,
+            "edad_min": est.get("edad_min", 0)}
 
 
 def _sesion_activa(plataforma="youtube"):
@@ -236,6 +292,11 @@ class _LogAvisos:
         return any("no longer valid" in a.lower() for a in self.avisos)
 
 
+# alias público para usarlo desde servidor.py (recolectar warnings de una
+# descarga/consulta sin abrir el panel)
+LogAvisos = _LogAvisos
+
+
 def _validar_en_vivo(plataforma):
     """Comprueba que YouTube acepta de verdad las cookies del archivo.
     True = sesión válida; False = cookies rechazadas (rotadas); None = no se
@@ -250,9 +311,16 @@ def _validar_en_vivo(plataforma):
         return None
     log = _LogAvisos()
     try:
+        # las cookies van en un jar EN MEMORIA (no cookiefile): yt-dlp
+        # reescribe el archivo de cookies al terminar si se pasa cookiefile
+        # (guarda el jar con las Set-Cookie de la respuesta), y eso podía
+        # corromper la sesión (p. ej. perder LOGIN_INFO) en cada validación
+        import http.cookiejar
+        cj = http.cookiejar.MozillaCookieJar()
+        cj.load(cfg["ruta"], ignore_discard=True, ignore_expires=True)
         with yt_dlp.YoutubeDL({
                 "quiet": True, "skip_download": True, "noplaylist": True,
-                "cookiefile": cfg["ruta"], "socket_timeout": 15,
+                "cookiejar": cj, "socket_timeout": 15,
                 "logger": log}) as ydl:
             ie = YoutubeIE(ydl)
             autenticado_local = bool(ie.is_authenticated)
@@ -289,6 +357,11 @@ def _validar_en_vivo_cached(plataforma):
 def estado(plataforma="youtube"):
     cfg = _config(plataforma)
     if not _sesion_activa(plataforma):
+        # marcada como vencida en plena descarga (cookies rotadas): el panel
+        # muestra 'Vencida' con el aviso de reiniciar sesión, no 'Inactiva'
+        if os.path.exists(cfg["ruta"] + ".rotada"):
+            return {"activa": False, "plataforma": plataforma,
+                    "rotada": True, "edad_min": 0}
         return {"activa": False, "plataforma": plataforma}
     # validación en vivo: si YouTube rechaza las cookies (rotadas), la
     # sesión NO está activa aunque el archivo esté perfecto
@@ -318,15 +391,39 @@ def iniciar_sesion(plataforma="youtube", espera_max=240):
     ws_url, err = _lanzar_visible(cfg["login_url"], plataforma)
     if err:
         return {"error": err}
+    # limpiar el marcador de sesión vencida del intento anterior: al
+    # capturar de nuevo, el archivo vuelve a ser el activo
+    try:
+        if os.path.exists(cfg["ruta"] + ".rotada"):
+            os.remove(cfg["ruta"] + ".rotada")
+    except OSError:
+        pass
     ws = None
     try:
         ws = _ws.create_connection(ws_url, timeout=30)
+        navegado_youtube = False
+        nav_id = [1000]
         fin = time.time() + espera_max
         while time.time() < fin:
             try:
-                guardadas, hay_sesion = _leer_y_guardar(ws, plataforma)
+                guardadas, hay_sesion, google_listo = _leer_y_guardar(
+                    ws, plataforma)
                 if guardadas and hay_sesion:
                     return {"ok": True, "ruta": cfg["ruta"]}
+                # el login en Google ya está completo pero faltan las cookies
+                # de YouTube (.youtube.com): navegamos a youtube.com una sola
+                # vez para que Chrome las genere (sin esto, el flujo esperaba
+                # 4 min y fallaba aunque el usuario hubiera entrado)
+                if (plataforma == "youtube" and google_listo
+                        and not navegado_youtube):
+                    try:
+                        nav_id[0] += 1
+                        ws.send(json.dumps({
+                            "id": nav_id[0], "method": "Page.navigate",
+                            "params": {"url": "https://www.youtube.com/"}}))
+                        navegado_youtube = True
+                    except Exception:
+                        pass
             except Exception:
                 pass
             time.sleep(5)
@@ -341,6 +438,126 @@ def iniciar_sesion(plataforma="youtube", espera_max=240):
                 pass
         zonaleros._matar_chrome()
         zonaleros._restaurar_cookies_si_danadas()
+
+
+# ---------------------------------------------------------------- detección
+# de sesión en los perfiles de Chrome: los NOMBRES y DOMINIOS de las cookies
+# están en claro en la base SQLite (los valores van encriptados v10/v20), así
+# que podemos saber DÓNDE hay una sesión de YouTube sin descifrar nada. Eso
+# permite avisar al usuario en qué perfil tiene la sesión activa (para
+# exportarla con la extensión sin volver a iniciar sesión).
+_EPOCH_CHROME_US = 11644473600000000   # microsegundos 1601-01-01 -> 1970
+
+
+def _base_chrome():
+    return os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
+
+
+def _perfiles_chrome():
+    """Perfiles de Chrome con base de cookies (Default y Profile N), Default
+    primero y el resto por número."""
+    base = _base_chrome()
+    if not os.path.isdir(base):
+        return []
+    salida = []
+    for nombre in os.listdir(base):
+        if nombre in ("Guest Profile", "System Profile"):
+            continue
+        if os.path.isfile(os.path.join(base, nombre, "Network", "Cookies")):
+            salida.append(nombre)
+
+    def clave(n):
+        if n == "Default":
+            return (0, 0)
+        num = 0
+        if n.startswith("Profile "):
+            try:
+                num = int(n[len("Profile "):])
+            except ValueError:
+                num = 0
+        return (1, num)
+    return sorted(salida, key=clave)
+
+
+def _leer_cookies_perfil(nombre):
+    """Lee (name, host, expires_utc) de la base de cookies de un perfil de
+    Chrome. Se copia a un archivo temporal porque la base en uso está
+    bloqueada; los valores encriptados no hacen falta para la detección."""
+    db = os.path.join(_base_chrome(), nombre, "Network", "Cookies")
+    if not os.path.isfile(db):
+        return []
+    import shutil, sqlite3, tempfile
+    tmp = tempfile.mktemp(prefix="md_perfil_", suffix=".db")
+    try:
+        shutil.copy2(db, tmp)
+        con = sqlite3.connect(tmp)
+        rows = con.execute(
+            "SELECT name, host_key, expires_utc FROM cookies").fetchall()
+        con.close()
+        return rows
+    except Exception:
+        return []
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
+
+
+def perfiles_con_sesion(plataforma="youtube"):
+    """Escanea los perfiles de Chrome y devuelve cuáles tienen la sesión de
+    la plataforma (para YouTube: LOGIN_INFO + SAPISID sin expirar, el mismo
+    criterio que yt-dlp). No hace falta descifrar las cookies: basta con
+    nombres y dominios para saber dónde hay sesión. Marca el recomendado."""
+    cfg = _config(plataforma)
+    ahora_us = int(time.time() * 1000000) + _EPOCH_CHROME_US
+    resultados = []
+    for nombre in _perfiles_chrome():
+        cookies = []
+        expira_us = 0
+        for name, host, exp_us in _leer_cookies_perfil(nombre):
+            if not any(d in (host or "") for d in cfg["dominios"]):
+                continue
+            if exp_us and exp_us > 0 and exp_us < ahora_us:
+                continue   # expirada
+            cookies.append({"name": name, "domain": host or ""})
+            if exp_us and exp_us > 0 and exp_us > expira_us:
+                expira_us = exp_us
+        if not cookies:
+            continue
+        completa = _hay_sesion_cookies(cookies, cfg)
+        resultados.append({
+            "perfil": nombre,
+            "cookies": len(cookies),
+            "completa": completa,
+            "expira": int((expira_us - _EPOCH_CHROME_US) // 1000000)
+                      if expira_us else None,
+        })
+    recomendado = None
+    completos = [r for r in resultados if r["completa"]]
+    if completos:
+        recomendado = max(completos,
+                          key=lambda r: r["expira"] or 0)["perfil"]
+    for r in resultados:
+        r["recomendado"] = (r["perfil"] == recomendado)
+    return resultados
+
+
+def invalidar(plataforma="youtube"):
+    """Marca la sesión como vencida al instante: las cookies ya no sirven
+    (YouTube las rotó) y yt-dlp lo reportó en una descarga/consulta, no en
+    el panel. Mueve el archivo a .rotada y limpia la caché de validación:
+    el badge pasa a 'Vencida' (estado() lo detecta), las próximas descargas
+    dejan de usar cookies muertas y el archivo queda para diagnóstico."""
+    cfg = _config(plataforma)
+    _VALIDACION_CACHE.pop(plataforma, None)
+    try:
+        if os.path.exists(cfg["ruta"]):
+            os.replace(cfg["ruta"], cfg["ruta"] + ".rotada")
+        return True
+    except OSError:
+        return False
 
 
 def borrar(plataforma="youtube"):

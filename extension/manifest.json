@@ -1,14 +1,18 @@
 {
   "manifest_version": 3,
   "name": "MiDescargador",
-  "version": "2.2.8",
+  "version": "2.2.9",
   "description": "Pestaña de descarga estilo IDM sobre cada video, con elección de resolución, que envía a MiDescargador local.",
   "permissions": [
     "downloads",
-    "storage"
+    "storage",
+    "cookies"
   ],
   "host_permissions": [
-    "http://127.0.0.1:17890/*"
+    "http://127.0.0.1:17890/*",
+    "*://*.google.com/*",
+    "*://*.youtube.com/*",
+    "*://*.googleapis.com/*"
   ],
   "background": {
     "service_worker": "background.js"

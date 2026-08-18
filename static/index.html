@@ -1551,6 +1551,32 @@
       flex-shrink: 0;
     }
 
+    .session-aviso {
+      display: none;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+      border: 1px solid rgba(16, 185, 129, 0.35);
+      border-radius: var(--radius-lg);
+      background: rgba(16, 185, 129, 0.08);
+      font-size: 12px;
+      line-height: 1.55;
+      color: var(--text-primary);
+    }
+    .session-aviso-icon {
+      font-size: 15px;
+      flex-shrink: 0;
+    }
+    .session-aviso-titulo {
+      font-weight: 700;
+      color: #34d399;
+      margin-bottom: 2px;
+    }
+    .session-aviso-texto strong {
+      color: #34d399;
+    }
+
     /* Keyframe Animations */
     @keyframes fadeIn {
       from { opacity: 0; }
@@ -2078,6 +2104,14 @@
         </div>
       </div>
 
+      <div class="session-aviso" id="sesion-aviso-perfiles">
+        <span class="session-aviso-icon">🔑</span>
+        <div>
+          <div class="session-aviso-titulo" data-i18n="sesion.perfiles.titulo">Sesión detectada en Chrome</div>
+          <div class="session-aviso-texto" id="sesion-aviso-texto"></div>
+        </div>
+      </div>
+
       <div class="session-card">
         <div class="session-card-left">
           <div class="session-logo tiktok">♪</div>
@@ -2406,6 +2440,8 @@
       "sesion.activa": "Activa",
       "sesion.inactiva": "Inactiva",
       "sesion.rotada": "Vencida — YouTube rechazó las cookies (volvé a iniciar sesión)",
+      "sesion.perfiles.titulo": "Sesión detectada en Chrome",
+      "sesion.perfiles.aviso": "Tu sesión de YouTube está en el perfil <strong>«{perfil}»</strong> de Chrome. Para usarla sin volver a iniciar sesión: instalá la extensión en ese perfil y pulsá «Exportar sesión 🔑».\n",
       "sesion.hace": " · hace {n} min",
       "sesion.pill.placeholder": "Sesión: …",
       "sesion.pill.activa": "Sesión Activa",
@@ -2616,6 +2652,8 @@
       "sesion.activa": "Active",
       "sesion.inactiva": "Inactive",
       "sesion.rotada": "Expired — YouTube rejected the cookies (sign in again)",
+      "sesion.perfiles.titulo": "Session detected in Chrome",
+      "sesion.perfiles.aviso": "Your YouTube session lives in Chrome profile <strong>«{perfil}»</strong>. To use it without signing in again: install the extension in that profile and press «Export session 🔑».\n",
       "sesion.hace": " · {n} min ago",
       "sesion.pill.placeholder": "Session: …",
       "sesion.pill.activa": "Active Session",
@@ -3915,8 +3953,33 @@
         btn.classList.remove("active-state");
       }
       SESIONES.forEach(p => renderSesionCard(p, d[p] || {}));
+      // si la sesión de la app no está activa, avisar dónde hay una en
+      // Chrome (detección por perfil) para exportarla con la extensión
+      const youtube = d.youtube || {};
+      cargarAvisoPerfiles(!youtube.activa);
     } catch (e) {
       txt.textContent = t("sesion.pill.iniciar");
+    }
+  }
+
+  async function cargarAvisoPerfiles(mostrar) {
+    const aviso = $("#sesion-aviso-perfiles");
+    if (!aviso) return;
+    if (!mostrar) { aviso.style.display = "none"; return; }
+    try {
+      const r = await fetch("/api/sesion/perfiles");
+      const d = await r.json();
+      const completos = (d.perfiles || []).filter(p => p.completa);
+      const rec = completos.find(p => p.recomendado) || completos[0];
+      if (rec) {
+        $("#sesion-aviso-texto").innerHTML = t("sesion.perfiles.aviso",
+          { perfil: rec.perfil });
+        aviso.style.display = "flex";
+      } else {
+        aviso.style.display = "none";
+      }
+    } catch (e) {
+      aviso.style.display = "none";
     }
   }
 

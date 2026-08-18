@@ -115,6 +115,34 @@
     color: var(--text-primary);
     border-color: rgba(59, 130, 246, 0.4);
   }
+  .btn-export {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    background: rgba(16, 185, 129, 0.12);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.35);
+    padding: 9px 14px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 700;
+    cursor: pointer;
+    margin-top: 10px;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+  }
+  .btn-export:hover {
+    background: rgba(16, 185, 129, 0.2);
+    color: #6ee7b7;
+    border-color: rgba(16, 185, 129, 0.6);
+  }
+  .export-note {
+    font-size: 10.5px;
+    color: var(--text-secondary);
+    margin-top: 8px;
+    line-height: 1.4;
+  }
 </style>
 </head>
 <body>
@@ -162,6 +190,16 @@
     </svg>
   </a>
 
+  <button class="btn-export" id="btn-exportar">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 3v12"></path>
+      <path d="M7 10l5 5 5-5"></path>
+      <path d="M5 21h14"></path>
+    </svg>
+    <span id="btn-exportar-text">Exportar sesión 🔑 de este perfil</span>
+  </button>
+  <p class="export-note">Exporta la sesión de YouTube del perfil donde corre esta extensión al servidor, sin volver a iniciar sesión. Instalala en el perfil donde ya estás logueado en YouTube.</p>
+
   <button class="btn-reload" id="btn-recargar">
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
       <path d="M23 4v6h-6"></path>
@@ -194,6 +232,52 @@
         dot.style.background = "#ef4444";
         txt.textContent = "Servidor apagado";
       });
+
+    // Exportar la sesión de YouTube del perfil actual (chrome.cookies) al
+    // servidor: Chrome descifra las cookies por nosotros, así que funciona
+    // incluso con las nuevas v20/App-Bound de Chrome 2025+.
+    const btnExportar = document.getElementById("btn-exportar");
+    btnExportar.addEventListener("click", async () => {
+      const txt = document.getElementById("btn-exportar-text");
+      txt.textContent = "Leyendo cookies…";
+      try {
+        const todas = await chrome.cookies.getAll({});
+        const relevantes = todas.filter(c =>
+          ["google.com", "youtube.com", "googleapis.com"]
+            .some(d => (c.domain || "").indexOf(d) !== -1));
+        if (!relevantes.length) {
+          txt.textContent = "✗ No hay cookies de YouTube/Google en este perfil";
+          setTimeout(() => { txt.textContent = "Exportar sesión 🔑 de este perfil"; }, 3500);
+          return;
+        }
+        txt.textContent = "Enviando al servidor…";
+        const r = await fetch("http://127.0.0.1:17890/api/sesion/exportar", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            plataforma: "youtube",
+            cookies: relevantes.map(c => ({
+              name: c.name, value: c.value, domain: c.domain, path: c.path,
+              secure: c.secure, httpOnly: c.httpOnly,
+              expires: c.expirationDate ? Math.floor(c.expirationDate) : 0,
+            })),
+          }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (d.activa) {
+          txt.textContent = "✓ Sesión exportada y validada por YouTube";
+        } else if (d.rotada) {
+          txt.textContent = "✗ Cookies rechazadas por YouTube (vencidas)";
+        } else if (d.error) {
+          txt.textContent = "✗ " + d.error;
+        } else {
+          txt.textContent = "✗ La sesión quedó incompleta";
+        }
+      } catch (e) {
+        txt.textContent = "✗ Error: " + (e.message || String(e));
+      }
+      setTimeout(() => { txt.textContent = "Exportar sesión 🔑 de este perfil"; }, 3500);
+    });
 
     document.getElementById("btn-recargar").addEventListener("click", () => {
       const t = document.getElementById("btn-reload-text");

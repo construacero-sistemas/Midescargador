@@ -396,6 +396,26 @@ def _cookies_sesion_activas():
     return extras
 
 
+def _plataforma_sesion_en(args):
+    """Qué plataforma de sesión 🔑 lleva un comando/extra de yt-dlp (por la
+    ruta exacta de su cookiefile), o None si no lleva cookies de la app."""
+    for p in ("youtube", "tiktok"):
+        ruta = cuenta._ruta_cookies(p)
+        if any(str(a) == ruta or ruta in str(a) for a in (args or [])):
+            return p
+    return None
+
+
+def _invalidar_sesion_detectada(plataforma):
+    """Marca la sesión 🔑 como vencida al instante cuando yt-dlp reportó que
+    sus cookies ya no son válidas ('no longer valid'), sin esperar a que el
+    panel consulte /api/sesion. Registra el motivo en servidor.log."""
+    if cuenta.invalidar(plataforma):
+        _log_servidor("sesión %s marcada como vencida: yt-dlp reportó "
+                      "cookies no válidas (rotadas) durante una descarga o "
+                      "consulta" % plataforma)
+
+
 def _variantes_ytdlp():
     """Estrategias de extractor para evitar el 403 anti-bot de YouTube.
     Cada elemento es una lista de argumentos extra para yt-dlp.
@@ -519,7 +539,8 @@ def _ytdlp_info_proceso(url, extra, timeout=30):
     except Exception:
         return None
     opts = {"quiet": True, "no_warnings": True, "skip_download": True,
-            "noplaylist": True, "socket_timeout": 15}
+            "noplaylist": True, "socket_timeout": 15,
+            "logger": cuenta.LogAvisos()}
     i = 0
     while i < len(extra):
         a = extra[i]
@@ -536,7 +557,17 @@ def _ytdlp_info_proceso(url, extra, timeout=30):
                         d.setdefault(k, []).append(v)
             i += 2
         elif a == "--cookies" and i + 1 < len(extra):
-            opts["cookiefile"] = extra[i + 1]
+            ruta_cj = extra[i + 1]
+            # jar en memoria: con cookiefile, yt-dlp REESCRIBE el archivo al
+            # terminar (guarda el jar con las Set-Cookie de la respuesta) y
+            # eso podía corromper la sesión 🔑 en cada consulta de calidades
+            try:
+                import http.cookiejar as _cj
+                _jar = _cj.MozillaCookieJar()
+                _jar.load(ruta_cj, ignore_discard=True, ignore_expires=True)
+                opts["cookiejar"] = _jar
+            except Exception:
+                opts["cookiefile"] = ruta_cj
             i += 2
         elif a == "--cookies-from-browser" and i + 1 < len(extra):
             opts["cookiefrombrowser"] = (extra[i + 1], None, None, None)
@@ -550,6 +581,13 @@ def _ytdlp_info_proceso(url, extra, timeout=30):
             # acepta timeout propio; socket_timeout corta sockets colgados)
             fut = ex.submit(lambda: ydl.extract_info(url, download=False))
             info = fut.result(timeout=timeout)
+        # yt-dlp avisó que las cookies de la sesión 🔑 ya no son válidas:
+        # invalidar al instante (el panel no tiene que estar abierto)
+        if (isinstance(opts.get("logger"), cuenta.LogAvisos)
+                and opts["logger"].cookies_rotadas()):
+            p = _plataforma_sesion_en(extra)
+            if p:
+                _invalidar_sesion_detectada(p)
         return info or None
     except _futuros.TimeoutError:
         return None
@@ -1215,6 +1253,12 @@ class _TrabajoYtdlp:
                 self._parsear_json(linea)
             elif linea.startswith("ERROR"):
                 self._salida.append(linea)
+            # cookies de la sesión 🔑 rotadas: yt-dlp lo avisa aquí, en plena
+            # descarga, sin que el panel esté abierto -> invalidar YA
+            if "no longer valid" in linea.lower():
+                p = _plataforma_sesion_en(cmd)
+                if p:
+                    _invalidar_sesion_detectada(p)
         codigo = self._proc.wait()
         if self._pausado:
             return -2, "pausada"
@@ -2099,6 +2143,11 @@ class Manejador(BaseHTTPRequestHandler):
         elif ruta == "/api/sesion":
             self._json({"youtube": cuenta.estado("youtube"),
                         "tiktok": cuenta.estado("tiktok")})
+        elif ruta == "/api/sesion/perfiles":
+            # perfiles de Chrome donde hay una sesión de YouTube detectada
+            # (por nombres/dominios de cookies): avisa al usuario dónde
+            # exportar con la extensión sin volver a iniciar sesión
+            self._json({"perfiles": cuenta.perfiles_con_sesion()})
         elif ruta == "/api/enlaces/estado":
             qs = urllib.parse.parse_qs(
                 urllib.parse.urlparse(self.path).query)
@@ -2233,6 +2282,17 @@ class Manejador(BaseHTTPRequestHandler):
                 _HILO_SESION = threading.Thread(target=_trabajo, daemon=True)
                 _HILO_SESION.start()
             self._json({"ok": True})
+        elif ruta == "/api/sesion/exportar":
+            # cookies del perfil donde corre la extensión (chrome.cookies):
+            # Chrome las descifra por nosotros (incluidas las v20/ABE), así
+            # que la sesión se regenera sin volver a iniciar sesión
+            plataforma = datos.get("plataforma") or "youtube"
+            if plataforma not in cuenta.plataformas():
+                self._json({"ok": False,
+                            "error": "plataforma desconocida: "
+                                      + str(plataforma)}, 400)
+            else:
+                self._json(cuenta.exportar(datos.get("cookies"), plataforma))
         elif ruta == "/api/sesion/borrar":
             plataforma = datos.get("plataforma") or "youtube"
             if plataforma not in cuenta.plataformas():
