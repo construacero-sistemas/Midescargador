@@ -559,6 +559,11 @@ def _ytdlp_info_proceso(url, extra, timeout=30):
         ex.shutdown(wait=False)
 
 
+def _variante_con_cookies(extra):
+    """True si la variante de descarga lleva cookies (Chrome o sesión 🔑)."""
+    return any(a.startswith("--cookies") for a in (extra or []))
+
+
 def _formato_sin_marca(selector):
     """Preferir formatos SIN marca de agua (TikTok marca el suyo con
     format_note='watermarked'): aplica el filtro a cada alternativa del
@@ -992,9 +997,11 @@ class _TrabajoYtdlp:
                 return
             errores_resume = [f"reanudar: {detalle or codigo}"]
             # intento fresco desde cero si el reanudado no funcionó
-            for intento, extra in enumerate(self._variantes()):
+            variantes = self._variantes()
+            for intento in range(len(variantes)):
                 if self._cancelar.is_set() or self._pausado:
                     return
+                extra = variantes[intento]
                 cmd = self._cmd_base(extra)
                 self._cmd_activo = cmd
                 codigo, detalle = self._ejecutar(cmd)
@@ -1002,6 +1009,16 @@ class _TrabajoYtdlp:
                     return
                 if codigo == -2:
                     return
+                # misma priorización de cookies que en el flujo principal
+                if (self._altura_pedida()
+                        and detalle
+                        and "Requested format is not available" in detalle
+                        and any(_variante_con_cookies(v)
+                               for v in variantes[intento + 1:])):
+                    restantes = variantes[intento + 1:]
+                    variantes[intento + 1:] = (
+                        [v for v in restantes if _variante_con_cookies(v)]
+                        + [v for v in restantes if not _variante_con_cookies(v)])
                 errores_resume.append(f"intento {intento + 1}: {detalle or codigo}")
             self.estado = "error"
             self.error = "yt-dlp falló: " + " // ".join(errores_resume[-3:])
@@ -1015,11 +1032,13 @@ class _TrabajoYtdlp:
         self._salida = []
 
         errores = []
-        for intento, extra in enumerate(self._variantes()):
+        variantes = self._variantes()
+        for intento in range(len(variantes)):
             if self._cancelar.is_set():
                 return
             if self._pausado:
                 return  # quedó pausado a mitad de intento
+            extra = variantes[intento]
             cmd = self._cmd_base(extra)
             self._cmd_activo = cmd
             # mismo cliente con reintento: si falla a mitad (caída de red,
@@ -1038,19 +1057,58 @@ class _TrabajoYtdlp:
                     return  # pausado por el usuario
                 if reintento < 2:
                     time.sleep(5)   # respiro antes de retomar el .part
+            # Pedido de altura concreta y el cliente no la expone
+            # ("Requested format is not available"): en vez de seguir con
+            # clientes anónimos que van a fallar igual, priorizamos los
+            # intentos CON cookies (Chrome / sesión 🔑), que exponen todas
+            # las calidades y desbloquean la altura pedida.
+            if (self._altura_pedida()
+                    and detalle and "Requested format is not available" in detalle
+                    and any(_variante_con_cookies(v) for v in variantes[intento + 1:])):
+                restantes = variantes[intento + 1:]
+                con_cookies = [v for v in restantes if _variante_con_cookies(v)]
+                sin_cookies = [v for v in restantes if not _variante_con_cookies(v)]
+                variantes[intento + 1:] = con_cookies + sin_cookies
+                _log_servidor("calidad concreta: el cliente no tiene la altura, "
+                              "se priorizan las cookies para reintentar")
             errores.append(f"intento {intento + 1}: {detalle or 'código ' + str(codigo)}")
         # todos los intentos fallaron
         self.estado = "error"
-        self.error = "yt-dlp falló en todos los intentos: " + " // ".join(errores[-3:])
+        resumen = " // ".join(errores[-3:])
+        altura = self._altura_pedida()
+        # Video DRM/restringido: YouTube corta los streams altos con 403 y
+        # los clientes anónimos solo llegan a baja calidad (o a nada). En vez
+        # de un error genérico, decimos qué pasó y qué desbloquearía la altura.
+        if (altura and ("403" in resumen or "DRM" in resumen
+                        or "Requested format is not available" in resumen)):
+            self.error = (
+                f"YouTube no permite descargar {altura}p de este video sin "
+                "sesión iniciada (DRM): cortó la descarga con error 403 en "
+                "todos los clientes. Activá la sesión 🔑 con tu cuenta de "
+                "YouTube o iniciá sesión en YouTube dentro de Chrome y "
+                "reintentá. Para bajar algo igual ahora, elegí 'Mejor "
+                "calidad disponible' (puede quedar en 360p). "
+                f"Detalle: {resumen}")
+        else:
+            self.error = "yt-dlp falló en todos los intentos: " + resumen
         _registrar_error(self)
 
-    @staticmethod
-    def _variantes():
+    def _altura_pedida(self):
+        """La altura exacta que pidió el usuario (de un selector bv[height=N]),
+        o None si pidió 'mejor'/'audio'/otro selector."""
+        m = re.search(r"bv\[height=(\d+)\]", self.formato or "")
+        return int(m.group(1)) if m else None
+
+    def _variantes(self):
         """Estrategias de descarga en cadena, de la más completa a la más simple.
         default,android expone TODAS las calidades (web primero, android de
         respaldo contra el 403); las cookies de la sesión 🔑 van antes que
         las de chrome (que fallan con DPAPI si el navegador está abierto).
-        """
+
+        Con una altura CONCRETA pedida, los clientes con cookies van primero:
+        los anónimos (android, tv) no siempre exponen la altura pedida, así
+        que un fallback a ellos perdería calidad o fallaría; los autenticados
+        sí la tienen."""
         variantes = [
             ["--extractor-args", "youtube:player_client=default,android"],
             ["--extractor-args", "youtube:player_client=android"],
@@ -1066,6 +1124,13 @@ class _TrabajoYtdlp:
                                  "youtube:player_client=default,android"])
         if cuenta._sesion_activa("tiktok"):
             variantes.append(["--cookies", cuenta._ruta_cookies("tiktok")])
+        if self._altura_pedida():
+            primero = variantes[0]   # default,android siempre primero
+            con_cookies = [v for v in variantes[1:]
+                           if _variante_con_cookies(v)]
+            sin_cookies = [v for v in variantes[1:]
+                           if not _variante_con_cookies(v)]
+            variantes = [primero] + con_cookies + sin_cookies
         return variantes
 
     def _cmd_base(self, extra):
@@ -1096,7 +1161,19 @@ class _TrabajoYtdlp:
                     # WhatsApp sin problemas (webm/AV1 no lo reproducen todos)
                     "-S", "res,ext:mp4:m4a"]
         else:
-            cmd += ["-f", _formato_sin_marca(self.formato)]
+            # Altura CONCRETA pedida por el usuario: selector ESTRICTO, sin
+            # el fallback bv[height<=N] que degrada silenciosamente. Si el
+            # cliente de turno no expone la altura exacta (YouTube DRM, el
+            # cliente android solo trae 360p...), yt-dlp FALLA ese intento y
+            # el código pasa al siguiente cliente en vez de completar con
+            # menos calidad de la pedida. Si ningún cliente la tiene, marca
+            # error claro en lugar de entregar 360p por 2160p.
+            m = re.search(r"bv\[height=(\d+)\]", self.formato or "")
+            if m:
+                sel = "bv[height=%s]+ba" % m.group(1)
+            else:
+                sel = self.formato
+            cmd += ["-f", _formato_sin_marca(sel)]
             # formatos concretos: también prefiere mp4 si el servidor lo da
             cmd += ["-S", "res,ext:mp4:m4a"]
         ff = _ruta_ffmpeg()
@@ -1243,6 +1320,18 @@ class _TrabajoYtdlp:
                 self.calidad_real = f"{h}p"
                 _log_servidor("verificar calidad: %s -> %s"
                               % (os.path.basename(ruta), self.calidad_real))
+                # aviso si YouTube entregó MENOS de lo pedido: el badge del
+                # panel ya lo muestra, pero también queda en errores.log
+                pedida = re.search(r"bv\[height=(\d+)\]", self.formato or "")
+                if pedida and h < int(pedida.group(1)):
+                    tmp = self.error
+                    self.error = ("calidad menor de la pedida: se pidió %sp "
+                                  "y YouTube entregó %sp (DRM o cliente sin "
+                                  "esa altura). Reintentá con la sesión 🔑 "
+                                  "abierta o el video en Chrome."
+                                  % (pedida.group(1), h))
+                    _registrar_error(self)
+                    self.error = tmp
             else:
                 _log_servidor("verificar calidad: sin resolución en %s"
                               % os.path.basename(ruta))

@@ -2405,6 +2405,7 @@
       "sesion.cerrar": "Cerrar sesión",
       "sesion.activa": "Activa",
       "sesion.inactiva": "Inactiva",
+      "sesion.rotada": "Vencida — YouTube rechazó las cookies (volvé a iniciar sesión)",
       "sesion.hace": " · hace {n} min",
       "sesion.pill.placeholder": "Sesión: …",
       "sesion.pill.activa": "Sesión Activa",
@@ -2614,6 +2615,7 @@
       "sesion.cerrar": "Sign out",
       "sesion.activa": "Active",
       "sesion.inactiva": "Inactive",
+      "sesion.rotada": "Expired — YouTube rejected the cookies (sign in again)",
       "sesion.hace": " · {n} min ago",
       "sesion.pill.placeholder": "Session: …",
       "sesion.pill.activa": "Active Session",
@@ -3884,6 +3886,11 @@
       estado.textContent = t("sesion.activa") + (st.edad_min != null ? t("sesion.hace", { n: st.edad_min }) : "");
       estado.style.color = "#34d399";
       loginBtn.style.display = "none";
+      borrarBtn.style.display = "";
+    } else if (st.rotada) {
+      estado.textContent = t("sesion.rotada");
+      estado.style.color = "#fbbf24";
+      loginBtn.style.display = "";
       borrarBtn.style.display = "";
     } else {
       estado.textContent = t("sesion.inactiva");

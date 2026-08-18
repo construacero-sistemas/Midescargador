@@ -7,6 +7,7 @@ electron/node_modules/
 # Builds y artefactos
 backend/
 electron/dist/
+build/
 build_mei/
 dist/
 
