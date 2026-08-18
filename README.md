@@ -106,10 +106,14 @@ Windows puede pedir confirmación: *Más información → Ejecutar de todas form
     --distpath backend --workpath build_mei --specpath build_mei \
     --add-binary "venv/Scripts/yt-dlp.exe;venv/Scripts/yt-dlp.exe" \
     --add-binary "bin/ffmpeg.exe;bin/ffmpeg.exe" \
+    --add-binary "bin/ffprobe.exe;bin/ffprobe.exe" \
     --add-binary "bin/aria2c.exe;bin/aria2c.exe" \
     --add-data "static;static" servidor.py
   # (si los binarios quedan anidados en _internal/bin/<nombre>/<nombre>,
   #  subirlos un nivel: mover el .exe a la carpeta de su nombre)
+  # Los binarios de bin/ vienen de los builds essentials de gyan.dev
+  # (https://www.gyan.dev/ffmpeg/builds/): ffmpeg.exe y ffprobe.exe del mismo
+  # paquete (ffprobe es necesario para extraer audio a mp3).
 
   # 2) app de escritorio: Electron + electron-builder
   cd electron && npm install && npm run dist
@@ -131,6 +135,7 @@ MiDescargador/
 │   ├── background.js    ← respaldo con chrome.downloads
 │   └── popup.html
 ├── bin/ffmpeg.exe       ← ffmpeg estático (fusiona video+audio)
+├── bin/ffprobe.exe      ← ffprobe estático (extrae audio a mp3)
 ├── bin/aria2c.exe       ← motor BitTorrent (magnet y .torrent)
 ├── backend/servidor/    ← servidor.exe compilado (PyInstaller, usado por Electron)
 ├── electron/            ← app de escritorio (Electron + electron-builder)
