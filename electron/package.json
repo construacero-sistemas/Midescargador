@@ -1,6 +1,6 @@
 {
   "name": "midescargador",
-  "version": "2.2.9",
+  "version": "2.2.10",
   "description": "MiDescargador - gestor de descargas segmentado, videos y torrents",
   "main": "main.js",
   "author": "MiDescargador",

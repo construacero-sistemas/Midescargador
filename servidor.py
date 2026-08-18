@@ -243,6 +243,39 @@ def _candidatos_ytdlp():
     return candidatos
 
 
+def _candidatos_deno():
+    """Rutas candidatas al runtime JS de yt-dlp (deno), en orden de
+    prioridad. En dev vive en venv/Scripts/deno.exe (paquete pip 'deno');
+    al empaquetar con PyInstaller se copia a bin/deno.exe (y a veces queda
+    el directorio anidado venv/Scripts/deno.exe/deno.exe, igual que
+    yt-dlp).
+
+    yt-dlp moderno resuelve el desafío JS de YouTube (PO token) con un
+    runtime externo: sin deno no se genera el token y la variante con
+    cookies de sesión falla con 'The page needs to be reloaded'."""
+    base = _base_dir()
+    candidatos = [
+        os.path.join(base, "bin", "deno.exe"),
+        os.path.join(base, "venv", "Scripts", "deno.exe"),
+        os.path.join(base, "venv", "bin", "deno"),
+    ]
+    # directorio anidado que PyInstaller a veces crea
+    for c in list(candidatos):
+        candidatos.append(os.path.join(c, "deno.exe"))
+        candidatos.append(os.path.join(c, "deno"))
+    import shutil
+    p = shutil.which("deno")
+    if p:
+        candidatos.append(p)
+    return [c for c in candidatos if os.path.isfile(c)]
+
+
+def _ruta_deno():
+    """Primera ruta real de deno, o None si no hay runtime JS disponible."""
+    c = _candidatos_deno()
+    return c[0] if c else None
+
+
 def _ytdlp_disponible():
     return any(os.path.isfile(p) for p in _candidatos_ytdlp())
 
@@ -541,6 +574,17 @@ def _ytdlp_info_proceso(url, extra, timeout=30):
     opts = {"quiet": True, "no_warnings": True, "skip_download": True,
             "noplaylist": True, "socket_timeout": 15,
             "logger": cuenta.LogAvisos()}
+    # runtime JS (deno) para el desafío de YouTube: sin él, la variante con
+    # cookies de sesión no genera el PO token y falla con 'The page needs
+    # to be reloaded'. Si no hay deno, yt-dlp cae a lo que encuentre en
+    # PATH (o anónimo, como antes).
+    _deno = _ruta_deno()
+    if _deno:
+        opts["js_runtimes"] = {"deno": {"path": _deno}}
+    # jar en memoria para --cookies (ver abajo): la opción "cookiejar" del
+    # constructor de YoutubeDL NO existe en yt-dlp moderno, así que el jar se
+    # asigna a ydl.cookiejar directamente tras crear el YoutubeDL
+    _jar_memoria = None
     i = 0
     while i < len(extra):
         a = extra[i]
@@ -562,10 +606,10 @@ def _ytdlp_info_proceso(url, extra, timeout=30):
             # terminar (guarda el jar con las Set-Cookie de la respuesta) y
             # eso podía corromper la sesión 🔑 en cada consulta de calidades
             try:
-                import http.cookiejar as _cj
-                _jar = _cj.MozillaCookieJar()
-                _jar.load(ruta_cj, ignore_discard=True, ignore_expires=True)
-                opts["cookiejar"] = _jar
+                from yt_dlp.cookies import YoutubeDLCookieJar as _YDCJ
+                _jar_memoria = _YDCJ(ruta_cj)
+                _jar_memoria.load(ruta_cj, ignore_discard=True,
+                                  ignore_expires=True)
             except Exception:
                 opts["cookiefile"] = ruta_cj
             i += 2
@@ -577,6 +621,8 @@ def _ytdlp_info_proceso(url, extra, timeout=30):
     ex = _futuros.ThreadPoolExecutor(max_workers=1)
     try:
         with yt_dlp.YoutubeDL(opts) as ydl:
+            if _jar_memoria is not None:
+                ydl.cookiejar = _jar_memoria
             # corre en un hilo para poder cortar por timeout (la API no
             # acepta timeout propio; socket_timeout corta sockets colgados)
             fut = ex.submit(lambda: ydl.extract_info(url, download=False))
@@ -648,9 +694,13 @@ def _calcular_formatos(url):
     # si hay sesión de Google iniciada (botón 🔑), pruébala antes que los
     # clientes sin sesión — pasa los videos bloqueados por el anti-bot
     if cuenta._sesion_activa("youtube"):
+        # web_embedded (no tv_downgraded): el cliente por defecto para
+        # sesiones logueadas quedó roto con 'The page needs to be reloaded'
+        # (yt-dlp #17389); el maintainer recomienda default,web_embedded
+        # para usar las cookies sin que YouTube pida recargar.
         variantes.insert(2, ["--cookies", cuenta._ruta_cookies("youtube"),
                              "--extractor-args",
-                             "youtube:player_client=default,android"])
+                             "youtube:player_client=default,web_embedded"])
     if cuenta._sesion_activa("tiktok"):
         variantes.append(["--cookies", cuenta._ruta_cookies("tiktok")])
     mejores = {}   # altura -> (ext, tamano)
@@ -1156,10 +1206,13 @@ class _TrabajoYtdlp:
             [],
         ]
         if cuenta._sesion_activa("youtube"):
+            # web_embedded (ver _calcular_formatos): el cliente por defecto
+            # para logueados (tv_downgraded) falla con 'The page needs to be
+            # reloaded' (yt-dlp #17389); web_embedded usa las cookies bien.
             variantes.insert(2, ["--cookies",
                                  cuenta._ruta_cookies("youtube"),
                                  "--extractor-args",
-                                 "youtube:player_client=default,android"])
+                                 "youtube:player_client=default,web_embedded"])
         if cuenta._sesion_activa("tiktok"):
             variantes.append(["--cookies", cuenta._ruta_cookies("tiktok")])
         if self._altura_pedida():

@@ -2082,7 +2082,7 @@
         </div>
       </div>
 
-      <div class="config-section-title" data-i18n="config.sesiones">Sesiones de descarga</div>
+      <div class="config-section-title" id="config-seccion-sesiones" data-i18n="config.sesiones">Sesiones de descarga</div>
       <div class="config-nota" data-i18n="config.sesiones.nota">
         Iniciar sesión permite descargar videos que exigen cuenta (anti-bot de YouTube,
         mayor calidad y menos bloqueos en TikTok). Al pulsar «Iniciar sesión» se abre
@@ -2882,11 +2882,22 @@
     return dato.descompresion_msg || t("descomp.estado.error");
   }
 
+  // firma del estado de una tarjeta: si no cambia, el refresh NO la
+  // reconstruye (reconstruir todo cada 900 ms hacía que el clic en un
+  // botón se perdiera si aterrizaba justo al reemplazar la tarjeta,
+  // y la app parecía "tardar mucho" en reaccionar)
+  function firmaTarjeta(dato) {
+    return [dato.id, dato.estado, dato.descargado, dato.total, dato.velocidad,
+            dato.error, dato.nombre, dato.calidad, dato.calidad_real,
+            dato.descompresion, dato.descompresion_msg || ""].join("|");
+  }
+
   function tarjeta(dato) {
     const pct = dato.total ? Math.min(100, dato.descargado / dato.total * 100) : 0;
     const div = document.createElement("div");
     div.className = "download-card";
     div.dataset.id = dato.id;
+    div.dataset.firma = firmaTarjeta(dato);
 
     const av = getAvatarClass(dato.categoria, dato.tipo);
     const estadoClass = dato.estado.replace(/\s+/g, '-');
@@ -2995,6 +3006,12 @@
           abrirReproductor(dato);
           return;
         }
+        // "borrar" quita la tarjeta AL INSTANTE (feedback inmediato) y
+        // solo la re-agrega el próximo refresh si el servidor la rechazó.
+        if (acc === "borrar") {
+          const card = div.closest(".download-card");
+          if (card) card.remove();
+        }
         fetchConTimeout("/api/" + acc, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -3002,6 +3019,9 @@
         }).then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => {
           if (!ok) {
             mostrarAvisoCalidad(d.error || t("accion.error"), true);
+          } else if (acc === "borrar") {
+            // refresco inmediato: empty-state y contador al instante
+            refrescar();
           }
         }).catch(() => {
           fallosServidor++;
@@ -3126,15 +3146,23 @@
       // lista totalmente vacía, nunca encima de las tarjetas
       LISTA.querySelectorAll(".empty-state").forEach(el => el.remove());
 
-      const actuales = new Set([...LISTA.children].map(c => c.dataset.id));
-      // Actualizar existentes
+      // Actualizar existentes SIN reconstruir todo: solo se re-renderiza
+      // la tarjeta si su estado cambió (firma distinta). Esto evita que el
+      // DOM se reemplace entero cada 900 ms (clic perdido + sensación de
+      // lentitud) y hace el refresh O(1) por tarjeta.
       LISTA.querySelectorAll(".download-card").forEach(card => {
         const t = lista.find(item => item.id === card.dataset.id);
-        if (t) card.replaceWith(tarjeta(t));
-        else card.remove();
+        if (t) {
+          if (card.dataset.firma !== firmaTarjeta(t)) {
+            card.replaceWith(tarjeta(t));
+          }
+        } else {
+          card.remove();
+        }
       });
 
       // Añadir nuevos
+      const actuales = new Set([...LISTA.children].map(c => c.dataset.id));
       lista.forEach(t => {
         if (!actuales.has(t.id)) LISTA.appendChild(tarjeta(t));
       });
@@ -4033,8 +4061,33 @@
     cargarSesiones();
   }
 
+  // "Sign In" abre la configuración directamente en la sección de sesiones
+  // (y resalta la card de YouTube); "Settings" abre la config completa.
+  function abrirConfigSesiones() {
+    abrirConfig();
+    const cuerpo = document.querySelector("#config-panel .modal-body");
+    const seccion = $("#config-seccion-sesiones");
+    if (cuerpo && seccion) {
+      // scroll directo del contenedor (scrollIntoView no siempre mueve
+      // el modal-body, que es el que tiene overflow-y:auto)
+      requestAnimationFrame(() => {
+        cuerpo.scrollTo({ top: seccion.offsetTop - 10, behavior: "smooth" });
+      });
+      const card = $("#sesion-login-youtube").closest(".session-card");
+      if (card) {
+        card.style.transition = "box-shadow 0.4s, border-color 0.4s";
+        card.style.boxShadow = "0 0 0 2px var(--primary)";
+        card.style.borderColor = "var(--primary)";
+        setTimeout(() => {
+          card.style.boxShadow = "";
+          card.style.borderColor = "";
+        }, 1800);
+      }
+    }
+  }
+
   $("#btn-config").onclick = abrirConfig;
-  $("#btn-sesion").onclick = abrirConfig;
+  $("#btn-sesion").onclick = abrirConfigSesiones;
   $("#config-cerrar").onclick = () => { $("#config-panel").style.display = "none"; };
   $("#config-panel").onclick = e => {
     if (e.target === $("#config-panel")) $("#config-panel").style.display = "none";

@@ -315,13 +315,34 @@ def _validar_en_vivo(plataforma):
         # reescribe el archivo de cookies al terminar si se pasa cookiefile
         # (guarda el jar con las Set-Cookie de la respuesta), y eso podía
         # corromper la sesión (p. ej. perder LOGIN_INFO) en cada validación
-        import http.cookiejar
-        cj = http.cookiejar.MozillaCookieJar()
+        # OJO: la opción "cookiejar" del constructor de YoutubeDL NO existe
+        # en yt-dlp moderno — cookiejar es una cached_property que solo se
+        # construye desde cookiefile/cookiesfrombrowser. Pasarla por params
+        # hacía que yt-dlp usara un jar VACÍO: is_authenticated daba False
+        # siempre y el login (que guardaba bien las cookies) quedaba como
+        # "rotada" para siempre en el panel. Se asigna DIRECTAMENTE después
+        # de crear el ydl, con el jar propio de yt-dlp (YoutubeDLCookieJar,
+        # que sí tiene get_cookie_header).
+        from yt_dlp.cookies import YoutubeDLCookieJar
+        cj = YoutubeDLCookieJar(cfg["ruta"])
         cj.load(cfg["ruta"], ignore_discard=True, ignore_expires=True)
-        with yt_dlp.YoutubeDL({
-                "quiet": True, "skip_download": True, "noplaylist": True,
-                "cookiejar": cj, "socket_timeout": 15,
-                "logger": log}) as ydl:
+        _opts = {
+            "quiet": True, "skip_download": True, "noplaylist": True,
+            "socket_timeout": 15,
+            "logger": log,
+        }
+        # runtime JS (deno) para el PO token: sin él, YouTube con sesión
+        # responde 'The page needs to be reloaded' y la validación daría
+        # falso negativo (sesión perfecta marcada como rotada).
+        try:
+            import servidor as _srv
+            _deno = _srv._ruta_deno()
+            if _deno:
+                _opts["js_runtimes"] = {"deno": {"path": _deno}}
+        except Exception:
+            pass
+        with yt_dlp.YoutubeDL(_opts) as ydl:
+            ydl.cookiejar = cj
             ie = YoutubeIE(ydl)
             autenticado_local = bool(ie.is_authenticated)
             # extracción mínima (video corto) para que YouTube evalúe las

@@ -82,6 +82,11 @@ def _lanzar(url, tiempo_max=50):
     ruta = _ruta_chrome()
     if not ruta:
         return None, "no se encontró Chrome instalado"
+    # protección v20: el junction sobre un perfil con App-Bound lo destruye
+    # (Chrome no descifra v20 fuera de su ruta real y elimina las cookies al
+    # cerrar). Se detecta ANTES de crear el junction / lanzar Chrome.
+    if _perfil_usa_abe("Default"):
+        return None, _MENSAJE_ABE
     perfil = _crear_junction()
     if not perfil:
         return None, "no se pudo preparar el perfil temporal de Chrome"
@@ -117,7 +122,8 @@ def _lanzar(url, tiempo_max=50):
 
 def _matar_chrome():
     """Cierra la instancia de Chrome que lanzamos (la única, porque al
-    arrancar exigimos que Chrome estuviera cerrado)."""
+    arrancar exigimos que Chrome estuviera cerrado). Al final restaura las
+    cookies de cualquier perfil que haya quedado dañado (red de seguridad)."""
     try:
         subprocess.run(
             ["taskkill", "/IM", "chrome.exe", "/F"],
@@ -125,26 +131,101 @@ def _matar_chrome():
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except Exception:
         pass
+    _restaurar_cookies_si_danadas()
+
+
+# ---------------- protección App-Bound (cookies v20) ----------------
+# Chrome 2025+ migra sus cookies al formato v20/App-Bound Encryption: solo
+# Chrome, corriendo sobre la ruta REAL del perfil (con su servicio de
+# elevación), puede descifrarlas. Abrir ese perfil con el JUNCTION es
+# DESTRUCTIVO: Chrome no las descifra y, al cerrar, guarda la base sin ellas
+# (así se perdió la sesión de un perfil en pruebas). El prefijo del valor
+# encriptado está en claro en la base (v10/v20), así que podemos detectarlo
+# ANTES de lanzar y avisar que use la exportación vía extensión.
+_MENSAJE_ABE = (
+    "El perfil «Default» de Chrome usa cookies protegidas App-Bound (v20) "
+    "de Chrome 2025+: abrirlo con el junction las destruiría (Chrome no "
+    "puede descifrarlas fuera de su ruta real). Para tu sesión de YouTube, "
+    "instalá la extensión en ese perfil y pulsá «Exportar sesión 🔑» en "
+    "vez de iniciar sesión aquí.")
+
+
+def _perfil_usa_abe(nombre="Default"):
+    """True si el perfil tiene alguna cookie encriptada con App-Bound (v20).
+    Lee una copia temporal de la base (los prefijos v10/v20 están en claro)."""
+    db = os.path.join(os.path.expandvars(
+        r"%LOCALAPPDATA%\Google\Chrome\User Data"),
+        nombre, "Network", "Cookies")
+    if not os.path.isfile(db):
+        return False
+    import shutil, sqlite3, tempfile
+    tmp = tempfile.mktemp(prefix="md_abe_", suffix=".db")
+    try:
+        shutil.copy2(db, tmp)
+        con = sqlite3.connect(tmp)
+        row = con.execute(
+            "SELECT count(*) FROM cookies "
+            "WHERE substr(encrypted_value, 1, 3) = X'763230'").fetchone()
+        con.close()
+        return bool(row and row[0] > 0)
+    except Exception:
+        return False
+    finally:
+        try:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        except OSError:
+            pass
 
 
 # ---------------- red de seguridad del perfil ----------------
-# Lanzar Chrome con el perfil real es lo que permite pasar los retos, pero
-# un cierre forzado puede dejar la base de cookies tocada. Antes de lanzar
-# se respalda el perfil Default y, si al terminar quedó con muchas menos
-# cookies de las que tenía, se restaura el respaldo.
+# Lanzar Chrome con el perfil real (junction) es lo que permite pasar los
+# retos, pero un cierre forzado puede dejar la base de cookies tocada — y con
+# las cookies v20/App-Bound de Chrome 2025+, el junction puede hacer que
+# Chrome las elimine al cerrar (no las puede descifrar con el path del
+# junction). Antes de lanzar se respalda Local State y las cookies de TODOS
+# los perfiles; si al terminar alguno quedó con muchas menos cookies, se
+# restaura su respaldo.
 _RESPALDO_DIR = os.path.join(tempfile.gettempdir(), "midesc-respaldo-perfil")
 
 
+def _perfiles_chrome_con_cookies():
+    """Perfiles de Chrome (Default y Profile N) que tienen base de cookies."""
+    base = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
+    if not os.path.isdir(base):
+        return []
+    salida = []
+    for nombre in os.listdir(base):
+        if nombre in ("Guest Profile", "System Profile"):
+            continue
+        if os.path.isfile(os.path.join(base, nombre, "Network", "Cookies")):
+            salida.append(nombre)
+    return salida
+
+
 def _respaldar_cookies():
+    """Respalda Local State (clave de encriptación, global) y la base de
+    cookies de TODOS los perfiles de Chrome. No pisa un respaldo anterior que
+    tenga MÁS cookies que la base actual (perfil ya dañado de una corrida
+    anterior: el respaldo bueno se conserva)."""
     try:
         import shutil
         base = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
         os.makedirs(_RESPALDO_DIR, exist_ok=True)
-        for rel in ("Local State", os.path.join("Default", "Network", "Cookies")):
-            ori = os.path.join(base, rel)
-            dst = os.path.join(_RESPALDO_DIR, rel.replace(os.sep, "_"))
-            if os.path.exists(ori):
-                shutil.copy2(ori, dst)
+        ori = os.path.join(base, "Local State")
+        if os.path.exists(ori):
+            shutil.copy2(ori, os.path.join(_RESPALDO_DIR, "Local State"))
+        for nombre in _perfiles_chrome_con_cookies():
+            ori = os.path.join(base, nombre, "Network", "Cookies")
+            dst = os.path.join(_RESPALDO_DIR,
+                               nombre.replace(os.sep, "_") + "_Network_Cookies")
+            if os.path.exists(dst):
+                actual = _contar_cookies(ori)
+                previo = _contar_cookies(dst)
+                if (actual is not None and previo is not None
+                        and actual < previo):
+                    continue   # el respaldo previo es mejor: no pisarlo
+            shutil.copy2(ori, dst)
         return True
     except Exception:
         return False
@@ -169,24 +250,31 @@ def _contar_cookies(ruta_db):
 
 
 def _restaurar_cookies_si_danadas():
-    """Si el perfil Default perdió más de la mitad de sus cookies durante la
-    extracción, restaura el respaldo tomado antes de lanzar Chrome."""
+    """Si algún perfil perdió más de la mitad de sus cookies durante la
+    extracción/login (p. ej. las v20/App-Bound que Chrome no puede descifrar
+    con el junction y elimina al cerrar), restaura el respaldo tomado antes
+    de lanzar Chrome. Devuelve True si restauró algo."""
     try:
         import shutil
         base = os.path.expandvars(r"%LOCALAPPDATA%\Google\Chrome\User Data")
-        db_vivo = os.path.join(base, "Default", "Network", "Cookies")
-        db_resp = os.path.join(_RESPALDO_DIR, "Default_Network_Cookies")
-        if not os.path.exists(db_resp) or not os.path.exists(db_vivo):
-            return False
-        vivas = _contar_cookies(db_vivo)
-        respaldo = _contar_cookies(db_resp)
-        if vivas is not None and respaldo is not None and vivas < respaldo * 0.5:
-            shutil.copy2(db_resp, db_vivo)
+        restaurado = False
+        for nombre in _perfiles_chrome_con_cookies():
+            db_vivo = os.path.join(base, nombre, "Network", "Cookies")
+            db_resp = os.path.join(
+                _RESPALDO_DIR, nombre.replace(os.sep, "_") + "_Network_Cookies")
+            if not os.path.exists(db_resp) or not os.path.exists(db_vivo):
+                continue
+            vivas = _contar_cookies(db_vivo)
+            respaldo = _contar_cookies(db_resp)
+            if (vivas is not None and respaldo is not None
+                    and vivas < respaldo * 0.5):
+                shutil.copy2(db_resp, db_vivo)
+                restaurado = True
+        if restaurado:
             ls_res = os.path.join(_RESPALDO_DIR, "Local State")
             if os.path.exists(ls_res):
                 shutil.copy2(ls_res, os.path.join(base, "Local State"))
-            return True
-        return False
+        return restaurado
     except Exception:
         return False
 
