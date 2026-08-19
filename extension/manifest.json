@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MiDescargador",
-  "version": "2.3.8",
+  "version": "2.3.9",
   "description": "Pestaña de descarga estilo IDM sobre cada video, con elección de resolución, que envía a MiDescargador local.",
   "icons": {
     "16": "icon.png",
