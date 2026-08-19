@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Popup MiDescargador — harness</title>
+<style>
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: radial-gradient(1200px 800px at 50% 30%, #232733 0%, #171a21 60%, #10131a 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 28px;
+    font-family: "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif;
+  }
+  /* el card del popup (el CSS real de popup.html apunta a body, aquí lo
+     replicamos sobre un contenedor para poder centrarlo en el preview) */
+  #popup {
+    width: 300px;
+    background: var(--bg-base);
+    padding: 16px 16px 14px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+  }
+</style>
+</head>
+<body>
+<div id="popup">
+<style>
+
+  :root {
+    --bg-base: #0a0e15;
+    --bg-surface: #121826;
+    --bg-surface-2: #0e1420;
+    --border: rgba(255, 255, 255, 0.08);
+    --border-strong: rgba(255, 255, 255, 0.14);
+    --text-primary: #f8fafc;
+    --text-secondary: #93a4bd;
+    --text-muted: #64748b;
+    --primary: #3b82f6;
+    --primary-gradient: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+    --success: #10b981;
+    --success-dim: rgba(16, 185, 129, 0.12);
+    --danger: #ef4444;
+    --warn: #f59e0b;
+    --radius: 11px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  [hidden] { display: none !important; }
+  body {
+    width: 300px;
+    background: var(--bg-base);
+    color: var(--text-primary);
+    font-family: "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif;
+    padding: 16px 16px 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---------- cabecera ---------- */
+  .header { display: flex; align-items: center; gap: 11px; margin-bottom: 13px; }
+  .logo {
+    width: 38px;
+    height: 38px;
+    border-radius: 11px;
+    background: var(--primary-gradient);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    box-shadow: 0 4px 14px rgba(59, 130, 246, 0.35);
+    flex-shrink: 0;
+  }
+  .header-txt { min-width: 0; }
+  h1 {
+    font-size: 14.5px;
+    font-weight: 750;
+    letter-spacing: -0.01em;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    white-space: nowrap;
+  }
+  .subtitle {
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 1px;
+  }
+  .badge {
+    font-size: 9.5px;
+    font-weight: 700;
+    padding: 2px 6px;
+    border-radius: 9999px;
+    background: rgba(59, 130, 246, 0.14);
+    color: #7cb0ff;
+    border: 1px solid rgba(59, 130, 246, 0.28);
+  }
+
+  .intro {
+    font-size: 11.5px;
+    color: var(--text-secondary);
+    line-height: 1.55;
+    margin-bottom: 13px;
+  }
+  .intro b { color: var(--text-primary); font-weight: 650; }
+
+  /* ---------- estado del servidor ---------- */
+  .status-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 11px;
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    background: var(--text-muted);
+  }
+  .status-box.ok .dot { background: var(--success); box-shadow: 0 0 8px var(--success); }
+  .status-box.err .dot { background: var(--danger); box-shadow: 0 0 8px var(--danger); }
+  .status-box.busy .dot { background: var(--warn); animation: pulse 1.1s ease-in-out infinite; }
+  .status-box.err { border-color: rgba(239, 68, 68, 0.35); color: #fca5a5; }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+  }
+
+  /* ---------- chips de actividad ---------- */
+  .stats {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .stat-chip {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    background: var(--bg-surface-2);
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 6px 9px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+  }
+  .stat-ico {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--text-muted);
+    flex-shrink: 0;
+  }
+  .stat-chip.activo .stat-ico { background: var(--success); box-shadow: 0 0 6px var(--success); animation: pulse 1.3s ease-in-out infinite; }
+
+  /* ---------- sesión de YouTube ---------- */
+  .sesion {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg-surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 8px 11px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 10px;
+    line-height: 1.35;
+  }
+  .sesion .key { font-size: 12px; }
+  .sesion.activa { border-color: rgba(16, 185, 129, 0.35); color: #6ee7b7; background: var(--success-dim); }
+  .sesion.vencida { border-color: rgba(245, 158, 11, 0.4); color: #fcd34d; background: rgba(245, 158, 11, 0.08); }
+
+  /* ---------- botones ---------- */
+  .btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    border-radius: var(--radius);
+    padding: 10px 14px;
+    font-size: 12.5px;
+    font-weight: 700;
+    cursor: pointer;
+    border: 1px solid transparent;
+    transition: filter 0.15s, transform 0.12s, border-color 0.15s, background 0.15s, color 0.15s;
+  }
+  .btn:active { transform: translateY(1px); }
+  .btn:focus-visible { outline: 2px solid rgba(96, 165, 250, 0.8); outline-offset: 2px; }
+  .btn svg { flex-shrink: 0; }
+
+  .btn-open {
+    background: var(--primary-gradient);
+    color: #fff;
+    text-decoration: none;
+    box-shadow: 0 4px 16px rgba(59, 130, 246, 0.3);
+    margin-bottom: 10px;
+  }
+  .btn-open:hover { filter: brightness(1.09); }
+
+  .btn-export {
+    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    color: #fff;
+    border-color: transparent;
+    box-shadow: 0 4px 14px rgba(16, 185, 129, 0.28);
+    margin-bottom: 8px;
+  }
+  .btn-export:hover { filter: brightness(1.08); }
+  .btn-export:disabled { opacity: 0.55; cursor: wait; filter: saturate(0.7); }
+
+  .btn-folder {
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    border-color: var(--border);
+    margin-bottom: 10px;
+  }
+  .btn-folder:hover { color: var(--text-primary); border-color: var(--border-strong); }
+  .btn-folder:disabled { opacity: 0.6; cursor: wait; }
+
+  .btn-reload {
+    background: var(--bg-surface);
+    color: var(--text-secondary);
+    border-color: var(--border);
+  }
+  .btn-reload:hover { color: var(--text-primary); border-color: var(--border-strong); }
+
+  .export-note {
+    font-size: 10px;
+    color: var(--text-muted);
+    line-height: 1.45;
+    margin-bottom: 12px;
+    padding: 0 2px;
+  }
+
+</style>
+
+  <header class="header">
+    <div class="logo">
+      <svg width="34" height="34" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="popBg" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#161e31"/>
+            <stop offset="100%" stop-color="#0b101d"/>
+          </linearGradient>
+          <linearGradient id="popRing" x1="0" y1="0" x2="64" y2="64" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stop-color="#3b82f6"/>
+            <stop offset="50%" stop-color="#8b5cf6"/>
+            <stop offset="100%" stop-color="#06b6d4"/>
+          </linearGradient>
+        </defs>
+        <rect x="3" y="3" width="58" height="58" rx="18" fill="url(#popBg)" stroke="url(#popRing)" stroke-width="2.5"/>
+        <path d="M21 16V24" stroke="url(#popRing)" stroke-width="3" stroke-linecap="round" stroke-opacity="0.85"/>
+        <path d="M32 13V22" stroke="#38bdf8" stroke-width="3.5" stroke-linecap="round"/>
+        <path d="M43 16V24" stroke="url(#popRing)" stroke-width="3" stroke-linecap="round" stroke-opacity="0.85"/>
+        <path d="M21 30L32 41L43 30" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M32 22V40" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M19 48H45" stroke="url(#popRing)" stroke-width="3" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <div class="header-txt">
+      <h1>MiDescargador <span class="badge" id="version-badge"></span></h1>
+      <div class="subtitle">Gestor de descargas local</div>
+    </div>
+  </header>
+
+  <p class="intro">Pasa el ratón sobre un video y verás la pestaña <b>“Descargar”</b> (como IDM): elige la resolución y se envía al gestor.</p>
+
+  <div class="status-box busy" id="status-box" role="status">
+    <span class="dot" id="status-dot"></span>
+    <span id="status-text">Conectando…</span>
+  </div>
+
+  <div class="stats" id="stats" hidden>
+    <div class="stat-chip" id="chip-descargando">
+      <span class="stat-ico"></span>
+      <span id="stat-descargando">En reposo</span>
+    </div>
+    <div class="stat-chip">
+      <span class="stat-ico"></span>
+      <span id="stat-cola">En cola: —</span>
+    </div>
+  </div>
+
+  <a class="btn btn-open" href="http://127.0.0.1:17890" target="_blank" role="button">
+    <span id="btn-panel-text">Abrir Panel</span>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+      <polyline points="15 3 21 3 21 9"></polyline>
+      <line x1="10" y1="14" x2="21" y2="3"></line>
+    </svg>
+  </a>
+
+  <button class="btn btn-folder" id="btn-carpeta">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+    </svg>
+    <span id="btn-carpeta-text">Carpeta de descargas</span>
+  </button>
+
+  <div class="sesion" id="sesion-box" hidden>
+    <span class="key">🔑</span>
+    <span id="sesion-text">Sesión de YouTube…</span>
+  </div>
+
+  <button class="btn btn-export" id="btn-exportar">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 3v12"></path>
+      <path d="M7 10l5 5 5-5"></path>
+      <path d="M5 21h14"></path>
+    </svg>
+    <span id="btn-exportar-text">Exportar sesión de este perfil</span>
+  </button>
+  <p class="export-note">Exporta la sesión de YouTube del perfil donde corre esta extensión al servidor, sin volver a iniciar sesión. Instalala en el perfil donde ya estás logueado en YouTube.</p>
+
+  <button class="btn btn-reload" id="btn-recargar">
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M23 4v6h-6"></path>
+      <path d="M1 20v-6h6"></path>
+      <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"></path>
+      <path d="M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+    </svg>
+    <span id="btn-reload-text">Recargar extensión</span>
+  </button>
+
+  
+  
+
+</div>
+<script>
+window.chrome = {
+  runtime: {
+    getManifest: () => ({ version: "2.3.3" }),
+    reload: () => { console.log("[mock] chrome.runtime.reload()"); },
+  },
+  cookies: {
+    getAll: () => Promise.resolve([
+      { name: "SID", value: "s", domain: ".youtube.com", path: "/", secure: true, httpOnly: true },
+      { name: "HSID", value: "h", domain: ".google.com", path: "/", secure: true, httpOnly: true },
+      { name: "SAPISID", value: "a", domain: ".youtube.com", path: "/", secure: true, httpOnly: false },
+    ]),
+  },
+  tabs: { create: (o) => Promise.resolve(o) },
+  storage: {
+    local: {
+      get: (k, cb) => { const r = {}; if (cb) cb(r); return Promise.resolve(r); },
+      set: (o, cb) => { if (cb) cb(); return Promise.resolve(); },
+    },
+  },
+};
+</script>
+<script>
+window.__offline = false;
+window.fetch = function (url, opts) {
+  var u = String(url);
+  if (window.__offline) return Promise.reject(new TypeError("Failed to fetch"));
+  var body;
+  if (u.indexOf("/api/token") !== -1) body = { token: "fake-token" };
+  else if (u.indexOf("/api/version") !== -1) body = { version: "2.3.3" };
+  else if (u.indexOf("/api/lote") !== -1) body = { pendientes: 3, descargando: true };
+  else if (u.indexOf("/api/carpeta") !== -1) body = { ok: true, ruta: "C:\\Users\\test\\Downloads\\MiDescargador" };
+  else if (u.indexOf("/api/sesion/exportar") !== -1) body = { activa: true };
+  else if (u.indexOf("/api/sesion") !== -1) body = { youtube: { activa: true, edad_min: 12 } };
+  else body = {};
+  return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(body) });
+};
+</script>
+<script>
+// token.js — token de la API local de MiDescargador.
+// Lo comparten el service worker (importScripts), el popup (<script>) y el
+// content script (manifest). El servidor genera el token al arrancar y lo
+// persiste; aquí se pide una vez (GET /api/token — solo accesible a
+// procesos locales: sin CORS remoto + verificación de Host) y se cachea
+// en chrome.storage.local para sobrevivir recargas del service worker.
+
+const MDM_SERVIDOR = "http://127.0.0.1:17890";
+const MDM_TOKEN_KEY = "mdm_api_token";
+
+let _tokenPromise = null;
+
+function _mdmTokenDeStorage() {
+  try {
+    const p = chrome.storage.local.get(MDM_TOKEN_KEY);
+    if (p && p.then) {
+      return p.then((d) => (d && d[MDM_TOKEN_KEY]) || null);
+    }
+  } catch (_e) { /* storage opcional */ }
+  return null;
+}
+
+function _mdmPedirToken() {
+  return fetch(MDM_SERVIDOR + "/api/token", { cache: "no-store" })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d) => {
+      const t = (d && d.token) || null;
+      if (t) {
+        try {
+          const p = chrome.storage.local.set({ [MDM_TOKEN_KEY]: t });
+          if (p && p.catch) p.catch(() => {});
+        } catch (_e) { /* storage opcional */ }
+      }
+      return t;
+    })
+    .catch(() => null);
+}
+
+function mdmObtenerToken() {
+  if (!_tokenPromise) {
+    _tokenPromise = _mdmTokenDeStorage().then((t) => {
+      if (t) return t;
+      return _mdmPedirToken();
+    }).catch(() => null);
+  }
+  return _tokenPromise;
+}
+
+// fetch con la cabecera X-MiDescargador-Token puesta. Si el servidor
+// responde 401 (token cambiado/borrado), pide uno fresco y reintenta una
+// sola vez.
+async function mdmFetch(url, opts, _reintento) {
+  opts = opts || {};
+  const token = await mdmObtenerToken();
+  const headers = new Headers(opts.headers || {});
+  if (token) headers.set("X-MiDescargador-Token", token);
+  const r = await fetch(url, Object.assign({}, opts, { headers }));
+  if (r.status === 401 && !_reintento && token) {
+    _tokenPromise = null;
+    try {
+      const p = chrome.storage.local.remove(MDM_TOKEN_KEY);
+      if (p && p.catch) p.catch(() => {});
+    } catch (_e) { /* storage opcional */ }
+    return mdmFetch(url, opts, true);
+  }
+  return r;
+}
+
+</script>
+<script>
+// MiDescargador - lógica del popup.
+// Script EXTERNO a propósito: la CSP de MV3 (script-src 'self') bloquea los
+// scripts inline de las páginas de la extensión (el badge de versión quedaba
+// vacío y el estado clavado en "Conectando…"). token.js se carga antes.
+const $ = (id) => document.getElementById(id);
+
+// Leer versión del manifest para mantenerla siempre sincronizada
+const manifest = chrome.runtime.getManifest();
+const ver = manifest.version;
+$("version-badge").textContent = ver;
+
+const SERVIDOR = "http://127.0.0.1:17890";
+
+function setStatus(estado, texto) {
+  $("status-box").className = "status-box " + estado;
+  $("status-text").textContent = texto;
+}
+
+function setSesion(d) {
+  $("sesion-box").hidden = false;
+  const t = $("sesion-text");
+  if (d && d.activa) {
+    $("sesion-box").className = "sesion activa";
+    t.textContent = "Sesión de YouTube activa"
+      + (d.edad_min ? " · hace " + d.edad_min + " min" : "");
+  } else if (d && d.rotada) {
+    $("sesion-box").className = "sesion vencida";
+    t.textContent = "Sesión de YouTube vencida — reexportala";
+  } else {
+    $("sesion-box").className = "sesion";
+    t.textContent = "Sin sesión de YouTube (exportala desde el perfil logueado)";
+  }
+}
+
+// Estado en vivo: servidor + actividad + sesión, todo en paralelo
+async function cargarEstado() {
+  setStatus("busy", "Conectando…");
+  $("stats").hidden = true;
+  $("sesion-box").hidden = true;
+  try {
+    const [v, lote, sesion] = await Promise.all([
+      mdmFetch(SERVIDOR + "/api/version", { method: "GET" })
+        .then(r => r.ok ? r.json() : null).catch(() => null),
+      mdmFetch(SERVIDOR + "/api/lote", { method: "GET" })
+        .then(r => r.ok ? r.json() : null).catch(() => null),
+      mdmFetch(SERVIDOR + "/api/sesion", { method: "GET" })
+        .then(r => r.ok ? r.json() : null).catch(() => null),
+    ]);
+    if (!v) throw new Error("sin servidor");
+    setStatus("ok", "Servidor listo · v" + (v.version || "?"));
+    if (lote) {
+      $("stats").hidden = false;
+      $("chip-descargando").classList.toggle("activo", !!lote.descargando);
+      $("stat-descargando").textContent = lote.descargando ? "Descargando…" : "En reposo";
+      $("stat-cola").textContent = "En cola: " + (lote.pendientes || 0);
+    }
+    if (sesion && sesion.youtube) setSesion(sesion.youtube);
+  } catch (e) {
+    setStatus("err", "Servidor apagado");
+  }
+}
+cargarEstado();
+
+// Exportar la sesión de YouTube del perfil actual (chrome.cookies) al
+// servidor: Chrome descifra las cookies por nosotros, así que funciona
+// incluso con las nuevas v20/App-Bound de Chrome 2025+.
+const btnExportar = $("btn-exportar");
+const txtExportar = $("btn-exportar-text");
+const TEXTO_EXPORTAR = "Exportar sesión de este perfil";
+btnExportar.addEventListener("click", async () => {
+  if (btnExportar.disabled) return;
+  btnExportar.disabled = true;
+  txtExportar.textContent = "Leyendo cookies…";
+  try {
+    const todas = await chrome.cookies.getAll({});
+    const relevantes = todas.filter(c =>
+      ["google.com", "youtube.com", "googleapis.com"]
+        .some(d => (c.domain || "").indexOf(d) !== -1));
+    if (!relevantes.length) {
+      txtExportar.textContent = "✗ No hay cookies de YouTube/Google en este perfil";
+      setTimeout(() => { txtExportar.textContent = TEXTO_EXPORTAR; }, 3500);
+      return;
+    }
+    txtExportar.textContent = "Enviando al servidor…";
+    const r = await mdmFetch(SERVIDOR + "/api/sesion/exportar", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        plataforma: "youtube",
+        cookies: relevantes.map(c => ({
+          name: c.name, value: c.value, domain: c.domain, path: c.path,
+          secure: c.secure, httpOnly: c.httpOnly,
+          expires: c.expirationDate ? Math.floor(c.expirationDate) : 0,
+        })),
+      }),
+    });
+    const d = await r.json().catch(() => ({}));
+    if (d.activa) {
+      txtExportar.textContent = "✓ Sesión exportada y validada por YouTube";
+      setSesion({ activa: true, edad_min: 0 });
+    } else if (d.rotada) {
+      txtExportar.textContent = "✗ Cookies rechazadas por YouTube (vencidas)";
+      setSesion({ rotada: true });
+    } else if (d.error) {
+      txtExportar.textContent = "✗ " + d.error;
+    } else {
+      txtExportar.textContent = "✗ La sesión quedó incompleta";
+    }
+  } catch (e) {
+    txtExportar.textContent = "✗ Error: " + (e.message || String(e));
+  }
+  setTimeout(() => { txtExportar.textContent = TEXTO_EXPORTAR; }, 3500);
+  setTimeout(() => { btnExportar.disabled = false; }, 400);
+});
+
+// Acceso rápido a la carpeta de descargas: el servidor la abre en el
+// explorador de archivos del sistema (POST /api/carpeta).
+const btnCarpeta = $("btn-carpeta");
+const txtCarpeta = $("btn-carpeta-text");
+const TEXTO_CARPETA = "Carpeta de descargas";
+btnCarpeta.addEventListener("click", async () => {
+  if (btnCarpeta.disabled) return;
+  btnCarpeta.disabled = true;
+  txtCarpeta.textContent = "Abriendo carpeta…";
+  try {
+    const r = await mdmFetch(SERVIDOR + "/api/carpeta", { method: "POST" });
+    const d = await r.json().catch(() => ({}));
+    if (d.ok) txtCarpeta.textContent = "✓ Carpeta abierta en el explorador";
+    else txtCarpeta.textContent = "✗ " + (d.error || "El servidor no pudo abrirla");
+  } catch (e) {
+    txtCarpeta.textContent = "✗ Servidor apagado";
+  }
+  setTimeout(() => { txtCarpeta.textContent = TEXTO_CARPETA; }, 3000);
+  setTimeout(() => { btnCarpeta.disabled = false; }, 400);
+});
+
+$("btn-recargar").addEventListener("click", () => {
+  const t = $("btn-reload-text");
+  try {
+    chrome.runtime.reload();
+    t.textContent = "✓ Extensión recargada";
+  } catch (_) {
+    // no-op: reload() no lanza error en MV3 cuando falla
+  }
+  // Siempre abrir chrome://extensions como respaldo,
+  // porque reload() puede fallar silenciosamente
+  setTimeout(() => {
+    chrome.tabs.create({ url: "chrome://extensions" });
+  }, 200);
+  t.textContent = "Abriendo chrome://extensions…";
+});
+
+</script>
+</body>
+</html>

@@ -83,6 +83,94 @@ jobs:
             console.log("✓ electron/icon.ico válido, con 256px");
           ' "$ICON"
 
+      - name: extensión — icono en manifest y popup sin scripts inline (CSP)
+        # MV3 bloquea los scripts inline (script-src 'self'): un <script> sin
+        # src en el popup deja el badge de versión vacío y el estado clavado en
+        # "Conectando…" (bug ya visto). Este paso exige además que manifest.json
+        # declare el icono y que cada <script src> referencie un archivo real
+        # (evita el bug de popup.html apuntando a popup.js sin commitear) y que
+        # la versión del manifest esté sincronizada con package.json en el
+        # mismo commit.
+        run: |
+          node -e '
+            const fs = require("fs");
+            const AP = String.fromCharCode(39);   // comilla simple
+            const DQ = String.fromCharCode(34);   // comilla doble
+
+            // 0) versión sincronizada con package.json en este mismo commit
+            const m = JSON.parse(fs.readFileSync("extension/manifest.json", "utf8"));
+            const pkg = JSON.parse(fs.readFileSync("electron/package.json", "utf8"));
+            if (m.version !== pkg.version) {
+              throw new Error("extension/manifest.json (" + m.version + ") no coincide con electron/package.json (" + pkg.version + ") en este commit. Bump primero electron/package.json y corré: node build_mei/sync-version.js");
+            }
+            console.log("OK version manifest.json=" + m.version + " == package.json=" + pkg.version);
+            const icons = m.icons || {};
+            for (const t of ["16", "32", "48", "128"]) {
+              if (!(t in icons)) throw new Error("extension/manifest.json no declara icons." + t + " (Chrome lo usa para la toolbar y la web store)");
+              const ruta = "extension/" + icons[t];
+              if (!fs.existsSync(ruta)) throw new Error("icons." + t + " apunta a " + ruta + " pero el archivo no existe");
+            }
+            if (!m.action || !m.action.default_icon) throw new Error("extension/manifest.json no declara action.default_icon (icono del popup en la toolbar)");
+            if (!fs.existsSync("extension/" + m.action.default_icon)) throw new Error("action.default_icon apunta a un archivo inexistente");
+            console.log("OK manifest.json: icons 16/32/48/128 y action.default_icon, archivos presentes");
+
+            // 2) popup.html: cero scripts inline (CSP MV3) y externos existentes
+            const html = fs.readFileSync("extension/popup.html", "utf8");
+            const inline = [];
+            const refs = [];
+            const re = /<\s*script\b([^>]*)>/gi;
+            let mm;
+            while ((mm = re.exec(html)) !== null) {
+              const src = new RegExp("\\ssrc\\s*=\\s*[" + DQ + AP + "]([^" + DQ + AP + "]*)[" + DQ + AP + "]", "i").exec(mm[1]);
+              if (src) refs.push(src[1]);
+              else inline.push(mm[0].trim());
+            }
+            if (inline.length) {
+              throw new Error("popup.html tiene scripts inline bloqueados por la CSP de MV3: " + inline.join(", "));
+            }
+            for (const r of refs) {
+              if (!fs.existsSync("extension/" + r)) throw new Error("popup.html referencia extension/" + r + " pero el archivo no existe");
+            }
+            console.log("OK popup.html: " + refs.length + " script(s) externo(s), 0 inline, todos presentes");
+          '
+
+      - name: extensión — popup.js y token.js registrados en el manifest
+        # MV3 no tiene campo para los scripts del popup: se declaran en
+        # popup.html, que el manifest registra vía action.default_popup. Lo que
+        # SÍ debe estar en el manifest es token.js (content_scripts: lo
+        # comparten el popup y los content scripts; si se saca, el flujo del
+        # token y la sesión exportada se rompe). Además, popup.js NO debe
+        # entrar a content_scripts: correría en todas las páginas esperando el
+        # DOM del popup y las rompería.
+        run: |
+          node -e '
+            const fs = require("fs");
+            const m = JSON.parse(fs.readFileSync("extension/manifest.json", "utf8"));
+            const cs = (m.content_scripts || []).map((c) => c.js || []).flat();
+            if (!cs.includes("token.js")) {
+              throw new Error("token.js no está en content_scripts del manifest (el popup y los content scripts lo usan para el token)");
+            }
+            if (cs.includes("popup.js")) {
+              throw new Error("popup.js NO debe estar en content_scripts: correría en todas las páginas esperando el DOM del popup");
+            }
+            if (!m.action || m.action.default_popup !== "popup.html") {
+              throw new Error("action.default_popup debe ser popup.html (ahí se registran los scripts del popup)");
+            }
+            const html = fs.readFileSync("extension/popup.html", "utf8");
+            const DQ = String.fromCharCode(34), SQ = String.fromCharCode(39);
+            const refs = [];
+            const re = /<\s*script\b([^>]*)>/gi;
+            let mm;
+            while ((mm = re.exec(html)) !== null) {
+              const src = new RegExp("\\ssrc\\s*=\\s*[" + DQ + SQ + "]([^" + DQ + SQ + "]*)[" + DQ + SQ + "]", "i").exec(mm[1]);
+              if (src) refs.push(src[1]);
+            }
+            for (const s of ["popup.js", "token.js"]) {
+              if (!refs.includes(s)) throw new Error("popup.html no carga " + s + " (su registro es popup.html, declarado en action.default_popup)");
+            }
+            console.log("OK manifest.json: token.js en content_scripts, popup.js fuera de ellos, action.default_popup=popup.html y ambos scripts cargados por el popup");
+          '
+
       - name: tag vX.Y.Z ↔ versión del código
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
