@@ -1,6 +1,6 @@
 {
   "name": "midescargador",
-  "version": "2.3.1",
+  "version": "2.3.2",
   "description": "MiDescargador - gestor de descargas segmentado, videos y torrents",
   "main": "main.js",
   "author": "MiDescargador",
@@ -39,11 +39,15 @@
       "target": [
         {
           "target": "nsis",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         },
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ]
     },

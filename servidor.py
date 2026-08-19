@@ -1466,14 +1466,20 @@ class _TrabajoYtdlp:
             # web_embedded (ver _calcular_formatos): el cliente por defecto
             # para logueados (tv_downgraded) falla con 'The page needs to be
             # reloaded' (yt-dlp #17389); web_embedded usa las cookies bien.
-            variantes.insert(2, ["--cookies",
+            # Va PRIMERO (posición 0), igual que en _calcular_formatos: los
+            # clientes anónimos expuestos con un selector tolerante ("mejor")
+            # "tienen éxito" bajando 360p y la sesión que ve 1080p+ nunca
+            # correría. Con la sesión primero, los videos restringidos bajan
+            # la mejor calidad real; si web_embedded falla (anti-bot), la
+            # cadena cae a los anónimos como antes.
+            variantes.insert(0, ["--cookies",
                                  cuenta._ruta_cookies("youtube"),
                                  "--extractor-args",
                                  "youtube:player_client=default,web_embedded"])
         if cuenta._sesion_activa("tiktok"):
             variantes.append(["--cookies", cuenta._ruta_cookies("tiktok")])
         if self._altura_pedida():
-            primero = variantes[0]   # default,android siempre primero
+            primero = variantes[0]   # la sesión 🔑 (si hay) o default,android
             con_cookies = [v for v in variantes[1:]
                            if _variante_con_cookies(v)]
             sin_cookies = [v for v in variantes[1:]

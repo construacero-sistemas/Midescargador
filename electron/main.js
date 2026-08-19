@@ -9,6 +9,25 @@ const path = require("path");
 const fs = require("fs");
 const os = require("os");
 const net = require("net");
+const crypto = require("crypto");
+
+// Cache del updater (misma carpeta que electron-updater): %LOCALAPPDATA%\
+// midescargador-updater. Ahí vive installer.exe (el Setup ya descargado).
+function dirUpdaterCache() {
+  const base = process.env.LOCALAPPDATA
+    || path.join(os.homedir(), "AppData", "Local");
+  return path.join(base, "midescargador-updater");
+}
+
+function sha512Base64(ruta) {
+  return new Promise((res, rej) => {
+    const h = crypto.createHash("sha512");
+    const s = fs.createReadStream(ruta);
+    s.on("data", (d) => h.update(d));
+    s.on("end", () => res(h.digest("base64")));
+    s.on("error", rej);
+  });
+}
 
 const PUERTO = 17890;
 const URL_PANEL = "http://127.0.0.1:" + PUERTO;
@@ -81,6 +100,103 @@ if (app.isPackaged && !esPortable) {
 }
 
 let actualizando = false;
+let updateInfoActual = null;       // info del update-available
+let tokenDescarga = null;          // CancellationToken de la descarga en curso
+let ultimoProgreso = { t: 0, bytes: 0 };
+let watchdog = null;
+let reintentosDescarga = 0;
+
+// electron-updater NO reintenta ni corta una descarga que se queda sin
+// bytes (GitHub lento o conexión cortada): el modal quedaba congelado en
+// un porcentaje para siempre. Este watchdog detecta la descarga congelada
+// (>75s sin avanzar), la cancela y la reintenta (hasta 3 veces); si agota,
+// avisa con un error en vez de quedarse colgado.
+function iniciarWatchdog() {
+  pararWatchdog();
+  ultimoProgreso = { t: Date.now(), bytes: 0 };
+  watchdog = setInterval(() => {
+    const ahora = Date.now();
+    const sinAvance = ahora - ultimoProgreso.t;
+    if (sinAvance > 75000 && tokenDescarga) {
+      log("descarga congelada " + Math.round(sinAvance / 1000) + "s sin progreso — reintentando");
+      reintentosDescarga++;
+      if (reintentosDescarga > 3) {
+        pararWatchdog();
+        const t = tokenDescarga;
+        tokenDescarga = null;
+        try { t.cancel(); } catch (e) {}
+        log("descarga cancelada tras 4 intentos");
+        enviarEstadoActualizacion({
+          estado: "error",
+          error: "La descarga de la actualización se cortó 4 veces (red lenta o inestable). Reintentá más tarde."
+        });
+        return;
+      }
+      const t = tokenDescarga;
+      tokenDescarga = null;
+      try { t.cancel(); } catch (e) {}
+      setTimeout(() => {
+        if (autoUpdater) {
+          log("reintentando descarga (intento " + reintentosDescarga + "/4)");
+          tokenDescarga = new (require("builder-util-runtime").CancellationToken)();
+          autoUpdater.downloadUpdate(tokenDescarga).catch(() => {});
+          ultimoProgreso = { t: Date.now(), bytes: 0 };
+        }
+      }, 3000);
+    }
+  }, 15000);
+}
+
+function pararWatchdog() {
+  if (watchdog) {
+    clearInterval(watchdog);
+    watchdog = null;
+  }
+}
+
+// Si el instalador de la versión nueva YA está completo en el cache del
+// updater (descarga anterior que terminó), no descargarlo de nuevo: se
+// ahorra los ~200 MB y el tiempo de GitHub.
+// electron-updater solo reutiliza el cache si encuentra pending/update-info.json
+// (con el sha512) y el Setup dentro de pending/; por eso lo sembramos acá
+// y después dejamos que downloadUpdate() lo detecte y salte la descarga.
+async function sembrarInstaladorCacheado() {
+  try {
+    if (!updateInfoActual || !updateInfoActual.files
+        || !updateInfoActual.files.length) return false;
+    const fileInfo = updateInfoActual.files[0];
+    const esperado = (fileInfo.sha512 || "").replace(/^base64:/, "");
+    if (!esperado) return false;
+    const inst = path.join(dirUpdaterCache(), "installer.exe");
+    if (!fs.existsSync(inst)) return false;
+    const h = await sha512Base64(inst);
+    if (h !== esperado) return false;
+    // nombre del archivo como lo espera electron-updater (basename de la URL
+    // del Setup: p. ej. MiDescargador-Setup-2.3.1.exe)
+    let nombre = "installer.exe";
+    try {
+      const u = new URL(fileInfo.url);
+      const base = path.basename(u.pathname);
+      if (base && base.includes(".exe")) nombre = base;
+    } catch (e) { /* url rara: queda installer.exe */ }
+    const pending = path.join(dirUpdaterCache(), "pending");
+    fs.mkdirSync(pending, { recursive: true });
+    const destino = path.join(pending, nombre);
+    if (!fs.existsSync(destino) || (await sha512Base64(destino)) !== esperado) {
+      fs.copyFileSync(inst, destino);
+    }
+    fs.writeFileSync(path.join(pending, "update-info.json"), JSON.stringify({
+      fileName: nombre,
+      sha512: fileInfo.sha512,
+      isAdminRightsRequired: fileInfo.isAdminRightsRequired === true
+    }));
+    log("instalador ya descargado y válido (sha512 OK): " + nombre);
+    return true;
+  } catch (e) {
+    log("no se pudo reutilizar el instalador cacheado: " + (e && e.message));
+    return false;
+  }
+}
 
 function enviarEstadoActualizacion(datos) {
   try {
@@ -109,12 +225,8 @@ function configurarAutoUpdate() {
     enviarEstadoActualizacion({ estado: "al-dia", version: info && info.version ? info.version : app.getVersion() });
   });
 
-  autoUpdater.on("error", (err) => {
-    log("error de actualización: " + (err && err.message ? err.message : err));
-    enviarEstadoActualizacion({ estado: "error", error: err && err.message ? err.message : String(err) });
-  });
-
   autoUpdater.on("update-available", (info) => {
+    updateInfoActual = info;
     log("actualización disponible: " + info.version);
     enviarEstadoActualizacion({
       estado: "disponible",
@@ -124,6 +236,7 @@ function configurarAutoUpdate() {
   });
 
   autoUpdater.on("download-progress", (p) => {
+    ultimoProgreso = { t: Date.now(), bytes: p ? p.transferred : 0 };
     const progreso = Math.floor(p && p.percent ? p.percent : 0);
     if (progreso % 5 === 0) {
       log("descargando actualización: " + progreso + "%");
@@ -138,6 +251,8 @@ function configurarAutoUpdate() {
   });
 
   autoUpdater.on("update-downloaded", (info) => {
+    pararWatchdog();
+    tokenDescarga = null;
     log("actualización descargada: " + info.version);
     enviarEstadoActualizacion({
       estado: "lista",
@@ -145,11 +260,28 @@ function configurarAutoUpdate() {
     });
   });
 
+  autoUpdater.on("error", (err) => {
+    // error por cancelación del watchdog: no es un fallo real, se reintenta
+    pararWatchdog();
+    tokenDescarga = null;
+    log("error de actualización: " + (err && err.message ? err.message : err));
+    enviarEstadoActualizacion({ estado: "error", error: err && err.message ? err.message : String(err) });
+  });
+
   // Controladores IPC para responder a acciones desde la UI web
-  ipcMain.on("updater:descargar", () => {
-    if (autoUpdater) {
-      actualizando = true;
-      autoUpdater.downloadUpdate();
+  ipcMain.on("updater:descargar", async () => {
+    if (!autoUpdater) return;
+    // si la versión nueva ya está descargada (Setup completo en cache),
+    // sembrar el estado que electron-updater reconoce para que salte la
+    // descarga de ~200 MB (y deje listo quitAndInstall)
+    const reutilizado = await sembrarInstaladorCacheado();
+    actualizando = true;
+    reintentosDescarga = 0;
+    tokenDescarga = new (require("builder-util-runtime").CancellationToken)();
+    iniciarWatchdog();
+    autoUpdater.downloadUpdate(tokenDescarga).catch(() => {});
+    if (reutilizado) {
+      pararWatchdog();
     }
   });
 
