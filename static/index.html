@@ -551,6 +551,93 @@
       color: var(--primary);
     }
 
+    /* Selects custom: reemplazan el popup nativo del <select> (cuadrado, sin
+       esquinas redondeadas) por una lista propia con el lenguaje visual del
+       panel. El <select> queda oculto pero es la fuente de verdad (valor,
+       evento change y población dinámica siguen igual). */
+    .md-dd { position: relative; }
+    .md-dd-btn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      width: 100%;
+      text-align: left;
+      background-color: var(--bg-input);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 10px 12px 10px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-primary);
+      outline: none;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+      font-family: inherit;
+    }
+    .md-dd-btn:hover {
+      border-color: var(--border-medium);
+      background-color: var(--bg-surface-elevated);
+    }
+    .md-dd-btn:focus-visible {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-glow);
+    }
+    .md-dd-label {
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .md-dd-chev {
+      color: var(--text-secondary);
+      display: inline-flex;
+      flex-shrink: 0;
+      transition: transform var(--transition-fast);
+    }
+    .md-dd.open .md-dd-chev { transform: rotate(180deg); color: var(--primary); }
+    .md-dd-list {
+      position: fixed;
+      z-index: 1200;
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-medium);
+      border-radius: 14px;
+      box-shadow: var(--shadow-lg);
+      padding: 6px;
+      max-height: 280px;
+      overflow-y: auto;
+      display: none;
+      animation: md-dd-in 0.14s ease-out;
+    }
+    .md-dd.open .md-dd-list { display: block; }
+    @keyframes md-dd-in {
+      from { opacity: 0; transform: translateY(-4px) scale(0.98); }
+      to   { opacity: 1; transform: none; }
+    }
+    .md-dd-opt {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 9px 12px;
+      border: none;
+      background: transparent;
+      border-radius: var(--radius-sm);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-primary);
+      cursor: pointer;
+      text-align: left;
+      font-family: inherit;
+      transition: background var(--transition-fast);
+    }
+    .md-dd-opt:hover { background: var(--bg-surface-hover); }
+    .md-dd-opt.selected { background: rgba(59, 130, 246, 0.14); font-weight: 600; }
+    .md-dd-check { margin-left: auto; color: #7cb0ff; display: none; flex-shrink: 0; }
+    .md-dd-opt.selected .md-dd-check { display: inline-flex; }
+    .md-dd-list::-webkit-scrollbar { width: 8px; }
+    .md-dd-list::-webkit-scrollbar-thumb { background: var(--border-medium); border-radius: 9999px; }
+
     .custom-input-number, .custom-input-text {
       width: 100%;
       background: var(--bg-input);
@@ -4348,6 +4435,7 @@
       $("#descomprimir").checked = !!d.descompresion_auto;
       $("#password-descompresion").value = d.password_descompresion || "";
       if (d.limite_kbps != null) $("#config-limite").value = String(d.limite_kbps);
+      mdSelectsActualizar();   // reflejar el límite guardado en el select custom
     } catch (e) {}
   }
 
@@ -4430,6 +4518,156 @@
   }
 
   // ==========================================================================
+  // Selects custom redondeados: el popup nativo del <select> (cuadrado, sin
+  // esquinas) se reemplaza por una lista propia con el lenguaje visual del
+  // panel. El <select> queda oculto pero sigue siendo la fuente de verdad:
+  // valor, evento change y población dinámica (calidad, i18n) funcionan igual.
+  // ==========================================================================
+  const mdSelectsActivos = [];   // { sel, dd, cerrar, pintar }
+
+  function mdInicializarSelects() {
+    document.querySelectorAll(".custom-select-container select.custom-select").forEach(sel => {
+      if (sel.dataset.mdSelect) return;
+      sel.dataset.mdSelect = "1";
+      const cont = sel.closest(".custom-select-container");
+      const icono = cont.querySelector(".custom-select-icon");
+      if (icono) icono.remove();
+
+      const dd = document.createElement("div");
+      dd.className = "md-dd";
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "md-dd-btn";
+      btn.setAttribute("aria-haspopup", "listbox");
+      btn.setAttribute("aria-expanded", "false");
+      btn.innerHTML =
+        '<span class="md-dd-label"></span>' +
+        '<span class="md-dd-chev">' +
+        '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">' +
+        '<polyline points="6 9 12 15 18 9"></polyline></svg></span>';
+      const lista = document.createElement("div");
+      lista.className = "md-dd-list";
+      lista.setAttribute("role", "listbox");
+      dd.appendChild(btn);
+      dd.appendChild(lista);
+      cont.appendChild(dd);
+      sel.style.display = "none";   // oculto pero sigue siendo la fuente de verdad
+
+      function pintar() {
+        lista.innerHTML = "";
+        Array.from(sel.options).forEach((op, i) => {
+          const o = document.createElement("button");
+          o.type = "button";
+          o.className = "md-dd-opt";
+          o.setAttribute("role", "option");
+          o.setAttribute("aria-selected", op.selected ? "true" : "false");
+          o.textContent = op.textContent;
+          o.insertAdjacentHTML("beforeend",
+            '<span class="md-dd-check"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg></span>');
+          if (op.selected) o.classList.add("selected");
+          o.addEventListener("mousedown", e => e.preventDefault());  // no robar el foco
+          o.addEventListener("click", () => {
+            sel.selectedIndex = i;
+            sel.dispatchEvent(new Event("change", { bubbles: true }));
+            actualizarLabel();
+            cerrar();
+          });
+          lista.appendChild(o);
+        });
+        actualizarLabel();
+      }
+
+      function actualizarLabel() {
+        const op = sel.options[sel.selectedIndex];
+        btn.querySelector(".md-dd-label").textContent = op ? op.textContent : "";
+      }
+
+      // la lista es position:fixed para no recortarse dentro del modal
+      // (.modal-card tiene overflow:hidden): se posiciona sobre el botón
+      function posicionar() {
+        const r = btn.getBoundingClientRect();
+        const alto = Math.min(lista.offsetHeight || 280, 280);
+        let top = r.bottom + 6;
+        if (top + alto > innerHeight - 8) top = Math.max(8, r.top - alto - 6);
+        lista.style.top = top + "px";
+        lista.style.left = r.left + "px";
+        lista.style.width = r.width + "px";
+        lista.style.maxHeight = "280px";
+      }
+
+      function abrir() {
+        mdCerrarSelects(dd);
+        dd.classList.add("open");
+        btn.setAttribute("aria-expanded", "true");
+        posicionar();
+        const selOpt = lista.querySelector(".selected");
+        if (selOpt) selOpt.scrollIntoView({ block: "nearest" });
+        window.addEventListener("scroll", alCerrar, true);
+        window.addEventListener("resize", alCerrar);
+      }
+
+      function cerrar() {
+        dd.classList.remove("open");
+        btn.setAttribute("aria-expanded", "false");
+        window.removeEventListener("scroll", alCerrar, true);
+        window.removeEventListener("resize", alCerrar);
+      }
+
+      function alCerrar() { cerrar(); }
+
+      btn.addEventListener("click", () => {
+        if (dd.classList.contains("open")) cerrar(); else abrir();
+      });
+      btn.addEventListener("keydown", e => {
+        if (e.key === "Escape") { cerrar(); btn.focus(); }
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          if (dd.classList.contains("open")) {
+            e.preventDefault();
+            const ops = Array.from(lista.querySelectorAll(".md-dd-opt"));
+            const idx = ops.indexOf(document.activeElement);
+            const sig = e.key === "ArrowDown"
+              ? (idx + 1) % ops.length
+              : (idx - 1 + ops.length) % ops.length;
+            if (ops[sig]) ops[sig].focus();
+          } else if (e.key === "ArrowDown") {
+            e.preventDefault();
+            abrir();
+          }
+        }
+      });
+      lista.addEventListener("keydown", e => {
+        if (e.key === "Escape") { cerrar(); btn.focus(); }
+      });
+
+      // sincronizar cuando el <select> cambia por JS (poblado de #calidad,
+      // i18n que re-traduce las opciones, reset con innerHTML)
+      new MutationObserver(pintar).observe(sel, {
+        childList: true, characterData: true, subtree: true,
+      });
+      pintar();
+      mdSelectsActivos.push({ sel, dd, cerrar, pintar });
+    });
+  }
+
+  function mdCerrarSelects(excluir) {
+    mdSelectsActivos.forEach(m => { if (m.dd !== excluir) m.cerrar(); });
+  }
+
+  // re-pintar todas las listas (etiquetas traducidas, selección programática)
+  function mdSelectsActualizar() {
+    mdSelectsActivos.forEach(m => m.pintar());
+  }
+
+  document.addEventListener("click", e => {
+    if (!e.target.closest(".md-dd")) mdCerrarSelects(null);
+  });
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape") mdCerrarSelects(null);
+  });
+
+  mdInicializarSelects();
+
+  // ==========================================================================
   // I18N — aplicar idioma a toda la interfaz (estático + dinámico)
   // ==========================================================================
   function aplicarIdioma(lang) {
@@ -4449,6 +4687,7 @@
 
     const sel = $("#lang-select");
     if (sel) sel.value = lang;
+    mdSelectsActualizar();   // reflejar la selección en los selects custom
 
     // refrescar las partes generadas dinámicamente
     refrescar();

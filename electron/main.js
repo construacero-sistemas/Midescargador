@@ -417,6 +417,8 @@ function crearVentana() {
     title: "MiDescargador",
     autoHideMenuBar: true,
     backgroundColor: "#0b0f19",
+    // icono propio en la ventana (dev; el instalado lo toma del .exe)
+    icon: path.join(__dirname, "icon.png"),
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
