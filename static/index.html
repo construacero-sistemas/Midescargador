@@ -3431,6 +3431,13 @@
         return;
       }
       lista.forEach(f => {
+        if (f.mejor) {
+          // el "Mejor calidad disponible" ya está como primera opción:
+          // le actualizamos la etiqueta con el tamaño real simulado
+          const opt0 = sel.options[0];
+          if (opt0 && f.tamano) opt0.textContent = t("calidad.mejor") + fmtTam(f.tamano);
+          return;
+        }
         const opt = document.createElement("option");
         opt.value = f.formato;
         opt.textContent = f.etiqueta + fmtTam(f.tamano);

@@ -619,6 +619,44 @@ _FORMATOS_CACHE = {}        # clave -> (timestamp, lista, titulo)
 _FORMATOS_CACHE_TTL = 1800  # 30 minutos
 _FORMATOS_LOCK = threading.Lock()
 _FORMATOS_CACHE_ARCHIVO = os.path.join(_dir_datos(), "formatos_cache.json")
+
+# caché de TAMAÑOS SIMULADOS por video (disco, TTL largo): los tamaños de
+# los formatos cambian poco, así que se calculan UNA vez por video con
+# --simulate y el resto de las consultas abren al instante sin las ~30 s
+# de simulaciones. Estructura: {clave_video: {selector: [tamano, ts]}}
+_FORMATOS_TAM_CACHE = {}
+_FORMATOS_TAM_TTL = 7 * 24 * 3600   # 7 días
+_FORMATOS_TAM_ARCHIVO = os.path.join(_dir_datos(), "formatos_tamanos_cache.json")
+_FORMATOS_TAM_LOCK = threading.Lock()
+
+
+def _cargar_tamanos_cache():
+    """Restaura la caché de tamaños simulados desde disco."""
+    try:
+        with open(_FORMATOS_TAM_ARCHIVO, encoding="utf-8") as f:
+            datos = json.load(f)
+        ahora = time.time()
+        with _FORMATOS_TAM_LOCK:
+            for k, v in (datos or {}).items():
+                if isinstance(v, dict):
+                    v = {s: x for s, x in v.items()
+                         if x and isinstance(x, list) and len(x) == 2
+                         and ahora - x[1] < _FORMATOS_TAM_TTL}
+                    if v:
+                        _FORMATOS_TAM_CACHE[k] = v
+    except Exception:
+        pass
+
+
+def _guardar_tamanos_cache():
+    """Persiste la caché de tamaños simulados a disco."""
+    try:
+        with _FORMATOS_TAM_LOCK:
+            datos = dict(_FORMATOS_TAM_CACHE)
+        with open(_FORMATOS_TAM_ARCHIVO, "w", encoding="utf-8") as f:
+            json.dump(datos, f)
+    except Exception:
+        pass
 # single-flight: si dos peticiones piden el mismo video a la vez (p. ej. el
 # prefetch del hover y el clic), una sola corre yt-dlp y la otra espera.
 _FORMATOS_EN_CURSO = {}     # clave -> threading.Event
@@ -803,6 +841,41 @@ def _fusionar_formatos(info, mejores):
             mejores[h] = (ext, tam)
 
 
+def _simular_tamano(url, selector, extra, timeout=25, extra_args=None):
+    """Tamaño EXACTO (bytes) que descargaría un selector para un video, con
+    yt-dlp --simulate --print. El selector (y args como -S) son los MISMOS
+    que usa la descarga, así el tamaño coincide con el archivo real
+    (video+audio del codec que de verdad elige yt-dlp).
+    Devuelve int o None si falla/expira (se usa el estimado como respaldo)."""
+    cmd = _cmd_ytdlp() + [
+        "--no-playlist", "--no-warnings", "--simulate",
+        "--print", "%(filesize_approx)s", "-f", selector,
+    ] + list(extra_args or []) + extra + [url]
+    try:
+        r = subprocess.run(
+            cmd, capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=timeout,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        if r.returncode != 0:
+            return None
+        for linea in r.stdout.splitlines():
+            s = linea.strip()
+            if s.isdigit():
+                return int(s)
+        return None
+    except Exception:
+        return None
+
+
+def _selector_mejor():
+    """El selector EXACTO que usa la descarga con 'Mejor calidad disponible':
+    bv*+ba sin marca de agua (con respaldo), y la preferencia de contenedor
+    mp4/m4a. Devuelve (selector, args_extra) para --simulate."""
+    return ("bv*+ba[format_note!=watermarked]"
+            "/b[format_note!=watermarked]/bv*+ba/b",
+            ["-S", "res,ext:mp4:m4a"])
+
+
 def _calcular_formatos(url):
     """Ejecuta la consulta real a yt-dlp (sin caché ni single-flight).
     Devuelve [{"altura", "etiqueta", "ext", "tamano", "formato"}], un
@@ -814,14 +887,16 @@ def _calcular_formatos(url):
         ["--cookies-from-browser", "chrome",
          "--extractor-args", "youtube:player_client=default,android"],
     ]
-    # si hay sesión de Google iniciada (botón 🔑), pruébala antes que los
-    # clientes sin sesión — pasa los videos bloqueados por el anti-bot
+    # si hay sesión de Google iniciada (botón 🔑), pruébala ANTES que los
+    # clientes sin sesión — pasa los videos bloqueados por el anti-bot y
+    # expone las alturas que los clientes anónimos ocultan (p. ej. videos
+    # que sin sesión solo muestran 360p y con sesión llegan a 1080p+).
     if cuenta._sesion_activa("youtube"):
         # web_embedded (no tv_downgraded): el cliente por defecto para
         # sesiones logueadas quedó roto con 'The page needs to be reloaded'
         # (yt-dlp #17389); el maintainer recomienda default,web_embedded
         # para usar las cookies sin que YouTube pida recargar.
-        variantes.insert(2, ["--cookies", cuenta._ruta_cookies("youtube"),
+        variantes.insert(0, ["--cookies", cuenta._ruta_cookies("youtube"),
                              "--extractor-args",
                              "youtube:player_client=default,web_embedded"])
     if cuenta._sesion_activa("tiktok"):
@@ -840,13 +915,14 @@ def _calcular_formatos(url):
             if not titulo:
                 titulo = info.get("title") or None
 
-    # 1) vía rápida: los dos clientes más fiables, en paralelo. Nos vamos en
-    #    cuanto el PRIMERO responda con un set de calidades completo (≥ 3
-    #    alturas); si el primero es un cliente pobre (1-2 alturas, p. ej.
-    #    android solo), seguimos esperando al otro para fusionar — así nunca
-    #    se pierden resoluciones por querer ir rápido.
-    ex = _futuros.ThreadPoolExecutor(max_workers=2)
-    futuros = [ex.submit(_correr, v) for v in variantes[:2]]
+    # 1) vía rápida: la sesión 🔑 (si hay) + los clientes más fiables, en
+    #    paralelo. Nos vamos en cuanto el PRIMERO responda con un set de
+    #    calidades completo (≥ 3 alturas); si el primero es un cliente pobre
+    #    (1-2 alturas, p. ej. android solo), seguimos esperando al otro para
+    #    fusionar — así nunca se pierden resoluciones por querer ir rápido.
+    #    Con sesión activa corre de entrada (posición 0), no como respaldo.
+    ex = _futuros.ThreadPoolExecutor(max_workers=3)
+    futuros = [ex.submit(_correr, v) for v in variantes[:3]]
     while futuros:
         hechos, futuros = _futuros.wait(
             futuros, timeout=20, return_when=_futuros.FIRST_COMPLETED)
@@ -856,10 +932,10 @@ def _calcular_formatos(url):
             break
     ex.shutdown(wait=False)
 
-    # 2) respaldo (solo si no salió nada): tv y cookies de Chrome, en paralelo
+    # 2) respaldo (solo si no salió nada): el resto (tv, cookies de Chrome)
     if not mejores:
         ex2 = _futuros.ThreadPoolExecutor(max_workers=2)
-        futuros2 = [ex2.submit(_correr, v) for v in variantes[2:]]
+        futuros2 = [ex2.submit(_correr, v) for v in variantes[3:]]
         while futuros2:
             hechos2, futuros2 = _futuros.wait(
                 futuros2, timeout=25, return_when=_futuros.FIRST_COMPLETED)
@@ -894,6 +970,59 @@ def _calcular_formatos(url):
         })
     lista.append({"altura": 0, "etiqueta": "Solo audio (mp3)",
                   "ext": "mp3", "tamano": None, "formato": "audio"})
+    # tamaño EXACTO por altura: el menú muestra lo que de verdad va a pesar
+    # la descarga (video+audio del codec que elige yt-dlp), no un estimado
+    # de un codec distinto. --simulate con el MISMO selector del menú, en
+    # paralelo; si una simulación falla o expira, queda el estimado.
+    # (Solo en la primera consulta: el resultado se cachea 30 min.)
+    extras_sim = variantes[0] if variantes else []
+    clave = _clave_video(url)
+    # tamaños ya simulados en caché de disco (7 días): esos selectores NO se
+    # vuelven a simular — la consulta abre al instante
+    with _FORMATOS_TAM_LOCK:
+        tam_cache = dict(_FORMATOS_TAM_CACHE.get(clave) or {})
+    pendientes = [o for o in lista
+                  if o["altura"] > 0 and o["formato"] not in tam_cache]
+    for o in lista:
+        if o["altura"] > 0 and o["formato"] in tam_cache:
+            o["tamano"] = tam_cache[o["formato"]][0]
+    sel_mejor, args_mejor = _selector_mejor()
+    if sel_mejor not in tam_cache:
+        pendientes.append({"altura": -1, "formato": sel_mejor,
+                           "tamano": None, "args": args_mejor})
+    # simulamos SOLO lo que falta, en paralelo (máx 4 workers)
+    if pendientes:
+        exs = _futuros.ThreadPoolExecutor(max_workers=min(4, len(pendientes)))
+        futs = {exs.submit(
+            _simular_tamano, url, o["formato"], extras_sim,
+            extra_args=o.get("args")): o for o in pendientes}
+        nuevos = {}
+        try:
+            for fut in _futuros.as_completed(futs, timeout=45):
+                o = futs[fut]
+                try:
+                    tam = fut.result()
+                except Exception:
+                    tam = None
+                if tam:
+                    o["tamano"] = tam
+                    nuevos[o["formato"]] = [tam, time.time()]
+        except _futuros.TimeoutError:
+            pass
+        exs.shutdown(wait=False)
+        if nuevos:
+            with _FORMATOS_TAM_LOCK:
+                _FORMATOS_TAM_CACHE.setdefault(clave, {}).update(nuevos)
+            _guardar_tamanos_cache()
+    # la opción "mejor" va PRIMERO en el menú (como en el panel): le
+    # adjuntamos el tamaño simulado (del cache o recién calculado)
+    mejor_tam = tam_cache.get(sel_mejor, [None])[0]
+    for o in pendientes:
+        if o["altura"] == -1 and o.get("tamano"):
+            mejor_tam = o["tamano"]
+    lista.insert(0, {"altura": None, "etiqueta": "Mejor calidad (recomendada)",
+                     "ext": "", "tamano": mejor_tam,
+                     "formato": None, "mejor": True})
     return lista
 
 
@@ -1729,10 +1858,23 @@ class _TrabajoYtdlp:
                 calidad = m.group(1) + "p"
         # si el archivo ya se guardó, la categoría real está en self.categoria
         categoria = getattr(self, "categoria", None) or _categoria(self.nombre)
+        total = self.total
+        descargado = self.descargado
+        if self.estado == "completa":
+            # tamaño REAL del archivo final en disco (video+audio fusionado),
+            # no el estimado de YouTube: la tarjeta muestra lo que pesa
+            # realmente el archivo que quedó guardado
+            try:
+                ruta = _archivo_real(self)
+                if ruta and os.path.isfile(ruta):
+                    total = os.path.getsize(ruta)
+                    descargado = total
+            except Exception:
+                pass
         return {
             "id": self.id, "url": self.url, "nombre": self.nombre,
-            "estado": self.estado, "total": self.total,
-            "descargado": self.descargado, "velocidad": self.velocidad,
+            "estado": self.estado, "total": total,
+            "descargado": descargado, "velocidad": self.velocidad,
             "eta": None, "error": self.error, "aviso": self._aviso,
             "tipo": "yt-dlp",
             "categoria": categoria,
@@ -1750,22 +1892,93 @@ def _archivo_real(trabajo):
     carpeta = getattr(trabajo, "carpeta", None)
     nombre = getattr(trabajo, "nombre", None) or getattr(trabajo, "_nombre", None)
     if carpeta and nombre and os.path.isdir(carpeta):
+        # 1) directo en la carpeta base
         ruta = os.path.join(carpeta, nombre)
         if os.path.isfile(ruta):
             return ruta
-        # yt-dlp pudo nombrar el archivo distinto: buscar por TÍTULO
+        # 2) en las subcarpetas de organización (Videos/, Musica/, mp3/,
+        #    Comprimidos/…): las tareas restauradas de la cola no tienen
+        #    _archivo_final y el archivo ya fue movido a su categoría
         try:
             nombre_base = (nombre or "").strip()[:120]
-            candidatos = [os.path.join(carpeta, f) for f in os.listdir(carpeta)
-                          if os.path.isfile(os.path.join(carpeta, f))
-                          and not f.endswith(".part")
-                          and nombre_base
-                          and f.startswith(nombre_base)]
-            if candidatos:
-                return max(candidatos, key=os.path.getmtime)
+            subcarpetas = [d for d in os.listdir(carpeta)
+                           if os.path.isdir(os.path.join(carpeta, d))]
+            for sub in subcarpetas:
+                dir_sub = os.path.join(carpeta, sub)
+                try:
+                    lista = os.listdir(dir_sub)
+                except Exception:
+                    continue
+                for f in lista:
+                    if not os.path.isfile(os.path.join(dir_sub, f)):
+                        continue
+                    if f.endswith(".part"):
+                        continue
+                    # nombre exacto o por TÍTULO (yt-dlp puede nombrar distinto)
+                    if f == nombre or (nombre_base and f.startswith(nombre_base)):
+                        return os.path.join(dir_sub, f)
+        except Exception:
+            pass
+        # 3) fallback: tareas restauradas con nombre genérico ("watch"): el
+        #    archivo real quedó en alguna subcarpeta. Si el nombre tiene
+        #    extensión, matchea por tipo (Videos/, Musica/…) y mtime; si es
+        #    genérico sin extensión, busca el archivo de video más reciente.
+        try:
+            ext = (nombre or "").rsplit(".", 1)[-1].lower()
+            tiene_ext = "." in (nombre or "") and len(ext) in (3, 4)
+            for sub in ["Videos", "Musica", "mp3", "Imagenes",
+                        "Comprimidos", "Documentos", "Otros"]:
+                dir_sub = os.path.join(carpeta, sub)
+                if not os.path.isdir(dir_sub):
+                    continue
+                try:
+                    lista = os.listdir(dir_sub)
+                except Exception:
+                    continue
+                for f in lista:
+                    p = os.path.join(dir_sub, f)
+                    if not os.path.isfile(p) or f.endswith(".part"):
+                        continue
+                    if tiene_ext:
+                        if f.lower().endswith("." + ext):
+                            return p
+                    elif sub == "Videos" and f.lower().endswith(
+                            (".mp4", ".mkv", ".webm", ".avi", ".mov")):
+                        # nombre genérico ("watch"): inequívoco cuando el
+                        # video NO tiene su MP3 extraído todavía (el resto ya
+                        # se convirtió) o es el único de la carpeta
+                        base = os.path.splitext(f)[0]
+                        mp3dir = os.path.join(carpeta, "mp3")
+                        tiene_mp3 = (os.path.isdir(mp3dir) and any(
+                            x.lower().endswith(".mp3")
+                            and os.path.splitext(x)[0].startswith(base)
+                            for x in os.listdir(mp3dir)))
+                        videos = [x for x in lista
+                                  if x.lower().endswith((".mp4", ".mkv",
+                                                         ".webm", ".avi",
+                                                         ".mov"))]
+                        if not tiene_mp3 and (len(videos) == 1
+                                              or sum(1 for v in videos
+                                                     if not _tiene_mp3_ya(
+                                                         carpeta, v)) == 1):
+                            return p
         except Exception:
             pass
     return None
+
+
+def _tiene_mp3_ya(carpeta, video):
+    """True si un video ya tiene su MP3 extraído en la carpeta mp3/."""
+    try:
+        base = os.path.splitext(video)[0]
+        mp3dir = os.path.join(carpeta, "mp3")
+        if not os.path.isdir(mp3dir):
+            return False
+        return any(os.path.splitext(x)[0].startswith(base)
+                   for x in os.listdir(mp3dir)
+                   if x.lower().endswith(".mp3"))
+    except Exception:
+        return False
 
 
 _TIPOS_MEDIA = {
@@ -2016,11 +2229,10 @@ class Gestor:
         if ext in (".mp3", ".m4a", ".aac", ".flac", ".wav", ".ogg", ".opus"):
             return False, "el archivo ya es audio (%s)" % ext.lstrip(".")
         base = getattr(t, "carpeta", None) or os.path.dirname(ruta)
-        if ORGANIZAR_POR_TIPO:
-            destino = os.path.join(base, "Musica")
-            os.makedirs(destino, exist_ok=True)
-        else:
-            destino = base
+        # el MP3 extraído va SIEMPRE a una subcarpeta "mp3" dentro de la
+        # carpeta de descargas (independiente de Organizar por Tipo)
+        destino = os.path.join(base, "mp3")
+        os.makedirs(destino, exist_ok=True)
         # yt-dlp no acepta rutas Windows con letra de unidad: se pasa la ruta
         # como file:/// (codificada) y se habilita con --enable-file-urls
         ff = _ruta_ffmpeg()
@@ -2822,6 +3034,7 @@ atexit.register(_detener_trabajos_al_salir)
 def main():
     os.makedirs(CARPETA_DEFECTO, exist_ok=True)
     _cargar_formatos_cache()   # calidades en disco sobreviven al reinicio
+    _cargar_tamanos_cache()     # y los tamaños simulados (7 días)
     motor.limpiar_restos()   # quita .partes viejas y fragmentos huérfanos
 
     def _depurar_periodico():

@@ -363,9 +363,13 @@
     promesa.then(lista => {
       menu.innerHTML = "";
       menu.appendChild(cab);
+      // el servidor devuelve también el tamaño real simulado del "Mejor
+      // calidad" (marcado con f.mejor); el resto son las alturas concretas
+      const mejor = lista.find(f => f.mejor);
       const opciones = [
-        { formato: null, etiqueta: "Mejor calidad (recomendada)" },
-        ...lista.map(f => ({
+        { formato: null, etiqueta: "Mejor calidad (recomendada)",
+          tamano: mejor ? mejor.tamano : null },
+        ...lista.filter(f => !f.mejor).map(f => ({
           formato: f.formato, etiqueta: f.etiqueta, tamano: f.tamano,
         })),
       ];
