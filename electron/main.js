@@ -255,6 +255,22 @@ let ultimoProgreso = { t: 0, bytes: 0 };
 let watchdog = null;
 let reintentosDescarga = 0;
 
+// builder-util-runtime suele quedar ANIDADO bajo electron-updater en el asar
+// (dependencia de electron-updater), así que el require directo desde main.js
+// falla con "Cannot find module 'builder-util-runtime'" y la descarga de
+// actualizaciones nunca arrancaba (el handler moría antes de downloadUpdate).
+// Lo resolvemos desde la carpeta de electron-updater, que siempre lo tiene.
+function nuevoTokenCancelacion() {
+  try {
+    const base = path.dirname(require.resolve("electron-updater"));
+    const { CancellationToken } = require(require.resolve("builder-util-runtime", { paths: [base] }));
+    return new CancellationToken();
+  } catch (e) {
+    log("sin CancellationToken (descarga sin cancelación por watchdog): " + (e && e.message));
+    return null;
+  }
+}
+
 // electron-updater NO reintenta ni corta una descarga que se queda sin
 // bytes (GitHub lento o conexión cortada): el modal quedaba congelado en
 // un porcentaje para siempre. Este watchdog detecta la descarga congelada
@@ -294,8 +310,8 @@ function iniciarWatchdog() {
       setTimeout(() => {
         if (autoUpdater) {
           log("reintentando descarga (intento " + reintentosDescarga + "/4)");
-          tokenDescarga = new (require("builder-util-runtime").CancellationToken)();
-          autoUpdater.downloadUpdate(tokenDescarga).catch(() => {});
+          tokenDescarga = nuevoTokenCancelacion();
+          autoUpdater.downloadUpdate(tokenDescarga || undefined).catch(() => {});
           ultimoProgreso = { t: Date.now(), bytes: 0 };
         }
       }, WD_PAUSA_MS);
@@ -433,9 +449,9 @@ function configurarAutoUpdate() {
     const reutilizado = await sembrarInstaladorCacheado();
     actualizando = true;
     reintentosDescarga = 0;
-    tokenDescarga = new (require("builder-util-runtime").CancellationToken)();
+    tokenDescarga = nuevoTokenCancelacion();
     iniciarWatchdog();
-    autoUpdater.downloadUpdate(tokenDescarga).catch(() => {});
+    autoUpdater.downloadUpdate(tokenDescarga || undefined).catch(() => {});
     if (reutilizado) {
       pararWatchdog();
     }
