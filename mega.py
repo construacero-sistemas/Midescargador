@@ -189,10 +189,13 @@ def resolver(url):
 
 # ------------------------------------------------------------ Descarga
 
+LIMITE_GLOBAL_BPS = 0  # límite global en bytes/s (0 = sin límite); lo setea el servidor
+
+
 class Descarga:
     """Descarga un archivo Mega descifrándolo en streaming."""
 
-    def __init__(self, info, carpeta, segmentos=8):
+    def __init__(self, info, carpeta, segmentos=8, limite_bps=0):
         self.info = info or {}
         self.url = self.info.get("url") or ""
         self.carpeta = os.path.abspath(carpeta)
@@ -205,6 +208,10 @@ class Descarga:
         self.id = None
         self.pagina = None
         self.segmentos_max = max(1, min(int(segmentos), 32))
+        self.limite_bps = max(0, int(limite_bps or 0))
+        self._throttle_lock = threading.Lock()
+        self._t0 = None
+        self._acum = 0.0
 
         self._lock = threading.Lock()
         self._pausa = threading.Event()
@@ -310,6 +317,30 @@ class Descarga:
             except Exception:
                 pass
 
+    def _limitar(self, n):
+        """Igual que el throttle del motor principal: limita la velocidad
+        TOTAL de esta descarga a limite_bps o al límite global."""
+        lim = self.limite_bps if self.limite_bps else LIMITE_GLOBAL_BPS
+        if not lim or lim <= 0:
+            return
+        with self._throttle_lock:
+            ahora = time.time()
+            if self._t0 is None:
+                self._t0 = ahora
+                self._acum = 0.0
+            self._acum += n
+            restante = (self._acum / lim) - (ahora - self._t0)
+            if restante <= 0:
+                return
+            fin = time.time() + restante
+            while True:
+                if self._cancelar.is_set() or self._pausa.is_set():
+                    return
+                falta = fin - time.time()
+                if falta <= 0:
+                    return
+                time.sleep(min(falta, 0.2))
+
     def _sumar(self, n):
         with self._lock:
             self.descargado += n
@@ -401,6 +432,7 @@ class Descarga:
                 f.write(plano)
                 pf.write(cif)
                 self._sumar(len(cif))
+                self._limitar(len(cif))
         if self._cancelar.is_set():
             with self._lock:
                 self.estado = "cancelada"

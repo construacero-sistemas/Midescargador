@@ -1302,6 +1302,19 @@
       gap: 8px;
     }
 
+    .retry-banner {
+      margin-top: 10px;
+      padding: 8px 12px;
+      border-radius: var(--radius-sm);
+      background: rgba(59, 130, 246, 0.12);
+      border: 1px solid rgba(59, 130, 246, 0.35);
+      color: #93c5fd;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
     .aviso-banner {
       margin-top: 10px;
       padding: 8px 12px;
@@ -1902,6 +1915,32 @@
         </div>
       </div>
 
+      <div class="control-field">
+        <label class="control-label" for="limite-tarea">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="10"></circle>
+            <path d="M12 6v6l4 2"></path>
+          </svg>
+          <span data-i18n="campo.limite">Límite de Velocidad</span>
+        </label>
+        <div class="custom-select-container">
+          <select id="limite-tarea" class="custom-select">
+            <option value="" data-i18n="limite.global">Global</option>
+            <option value="512">512 KB/s</option>
+            <option value="1024">1 MB/s</option>
+            <option value="2048">2 MB/s</option>
+            <option value="5120">5 MB/s</option>
+            <option value="10240">10 MB/s</option>
+            <option value="20480">20 MB/s</option>
+          </select>
+          <span class="custom-select-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </span>
+        </div>
+      </div>
+
       <div class="control-field" style="justify-content: flex-end;">
         <label class="switch-wrapper">
           <div class="switch-toggle">
@@ -2093,6 +2132,30 @@
           <select id="lang-select" class="custom-select">
             <option value="es">Español</option>
             <option value="en">English</option>
+          </select>
+          <span class="custom-select-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </span>
+        </div>
+      </div>
+
+      <div class="config-section-title" data-i18n="config.velocidad">Límite de velocidad</div>
+      <div class="config-nota" data-i18n="config.velocidad.nota">
+        Límite global para todas las descargas (se puede limitar por descarga desde el formulario). Aplica en vivo a las descargas en curso.
+      </div>
+      <div class="config-nota" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:18px;">
+        <span style="flex:1; min-width:200px;" data-i18n="config.velocidad.elige">Elige el límite global de descarga.</span>
+        <div class="custom-select-container" style="min-width:180px; max-width:240px;">
+          <select id="config-limite" class="custom-select">
+            <option value="0" data-i18n="limite.sin">Sin límite</option>
+            <option value="512">512 KB/s</option>
+            <option value="1024">1 MB/s</option>
+            <option value="2048">2 MB/s</option>
+            <option value="5120">5 MB/s</option>
+            <option value="10240">10 MB/s</option>
+            <option value="20480">20 MB/s</option>
           </select>
           <span class="custom-select-icon">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -2426,6 +2489,12 @@
       "campo.conexiones": "Conexiones Paralelas",
       "campo.simultaneas": "Descargas Simultáneas",
       "campo.carpeta": "Carpeta Destino",
+      "campo.limite": "Límite de Velocidad",
+      "limite.global": "Global",
+      "limite.sin": "Sin límite",
+      "config.velocidad": "Límite de velocidad",
+      "config.velocidad.nota": "Límite global para todas las descargas (se puede limitar por descarga desde el formulario). Aplica en vivo a las descargas en curso.",
+      "config.velocidad.elige": "Elige el límite global de descarga.",
       "campo.organizar": "Organizar por Tipo",
       "carpeta.descargas": "Descargas \\ MiDescargador",
       "carpeta.escritorio": "Escritorio",
@@ -2542,10 +2611,15 @@
       "tarjeta.reintentar": "Reintentar",
       "tarjeta.reproducir": "Reproducir",
       "tarjeta.reproducir.title": "Reproducir en el panel (Abrir con VLC para formatos especiales)",
+      "tarjeta.extraer_mp3": "Extraer MP3",
+      "tarjeta.extraer_mp3.haciendo": "Extrayendo…",
+      "tarjeta.extraer_mp3.ok": "✓ MP3 extraído",
       "tarjeta.abrir": "Abrir carpeta",
       "tarjeta.quitar": "Quitar",
       "tarjeta.quitar.title": "Eliminar de la lista",
       "tarjeta.peers": "Buscando peers…",
+      "tarjeta.reintento.en": "Reintento automático en {s}s (intento {n}/{max})",
+      "tarjeta.reintento.ahora": "Reintentando automáticamente… ({n}/{max})",
       "eta.restante1": "restante",
       "eta.restanteN": "restantes",
       "accion.error": "No se pudo completar la acción.",
@@ -2638,6 +2712,12 @@
       "campo.conexiones": "Parallel Connections",
       "campo.simultaneas": "Simultaneous Downloads",
       "campo.carpeta": "Destination Folder",
+      "campo.limite": "Speed Limit",
+      "limite.global": "Global",
+      "limite.sin": "Unlimited",
+      "config.velocidad": "Speed limit",
+      "config.velocidad.nota": "Global limit for all downloads (you can also limit per download from the form). Applies live to running downloads.",
+      "config.velocidad.elige": "Choose the global download limit.",
       "campo.organizar": "Organize by Type",
       "carpeta.descargas": "Downloads \\ MiDescargador",
       "carpeta.escritorio": "Desktop",
@@ -2754,9 +2834,14 @@
       "tarjeta.reintentar": "Retry",
       "tarjeta.reproducir": "Play",
       "tarjeta.reproducir.title": "Play in the panel (use Open with VLC for special formats)",
+      "tarjeta.extraer_mp3": "Extract MP3",
+      "tarjeta.extraer_mp3.haciendo": "Extracting…",
+      "tarjeta.extraer_mp3.ok": "✓ MP3 extracted",
       "tarjeta.abrir": "Open folder",
       "tarjeta.quitar": "Remove",
       "tarjeta.quitar.title": "Remove from list",
+      "tarjeta.reintento.en": "Auto-retry in {s}s (attempt {n}/{max})",
+      "tarjeta.reintento.ahora": "Auto-retrying… ({n}/{max})",
       "tarjeta.peers": "Searching for peers…",
       "eta.restante1": "left",
       "eta.restanteN": "left",
@@ -2829,6 +2914,21 @@
       for (const k in vars) s = s.split("{" + k + "}").join(String(vars[k]));
     }
     return s;
+  }
+
+  // Texto del banner de reintento automático: "Reintento en 42s (2/5)" o
+  // "Reintentando…" cuando el backoff ya venció y el scheduler lo relanza.
+  function fmtReintento(dato) {
+    if (!dato || dato.estado !== "error") return "";
+    const n = dato.reintentos_auto || 0;
+    const max = dato.reintentos_max || 5;
+    if (n >= max) return "";   // sin reintentos pendientes
+    const prox = dato.proximo_reintento || 0;
+    const falta = Math.ceil((prox - Date.now() / 1000));
+    if (falta > 0) {
+      return t("tarjeta.reintento.en", { s: falta, n: n + 1, max });
+    }
+    return t("tarjeta.reintento.ahora", { n: n + 1, max });
   }
 
   // SVG Helper icons for cards
@@ -2910,7 +3010,8 @@
     return [dato.id, dato.estado, dato.descargado, dato.total, dato.velocidad,
             dato.error, dato.aviso || "", dato.nombre, dato.calidad,
             dato.calidad_real, dato.descompresion,
-            dato.descompresion_msg || ""].join("|");
+            dato.descompresion_msg || "",
+            dato.reintentos_auto || 0, dato.proximo_reintento || 0].join("|");
   }
 
   function tarjeta(dato) {
@@ -2983,6 +3084,15 @@
         </div>
       ` : ""}
 
+      ${fmtReintento(dato) ? `
+        <div class="retry-banner">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+          <span>${escapeHtml(fmtReintento(dato))}</span>
+        </div>
+      ` : ""}
+
       ${dato.aviso && (dato.estado === "descargando" || dato.estado === "esperando" || dato.estado === "uniendo") ? `
         <div class="aviso-banner">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -3018,6 +3128,11 @@
             ${ICONS.play} <span>${t("tarjeta.reproducir")}</span>
           </button>
         ` : ""}
+        ${dato.estado === "completa" && dato.tipo === "yt-dlp" && dato.categoria === "Videos" ? `
+          <button class="btn btn-secondary btn-sm" data-acc="extraer-audio" title="${t("tarjeta.extraer_mp3")}">
+            ${ICONS.audio} <span>${t("tarjeta.extraer_mp3")}</span>
+          </button>
+        ` : ""}
         ${["completa", "error", "cancelada", "pausada"].includes(dato.estado) ? `
           <button class="btn btn-secondary btn-sm" data-acc="abrir">
             ${ICONS.folder} <span>${t("tarjeta.abrir")}</span>
@@ -3034,6 +3149,35 @@
         const acc = b.dataset.acc;
         if (acc === "reproducir") {
           abrirReproductor(dato);
+          return;
+        }
+        // "extraer-audio": convierte el video descargado a MP3 (yt-dlp -x).
+        // Puede tardar (archivos grandes): timeout largo + estado del botón.
+        if (acc === "extraer-audio") {
+          const etiqueta = b.querySelector("span");
+          b.disabled = true;
+          if (etiqueta) etiqueta.textContent = t("tarjeta.extraer_mp3.haciendo");
+          fetchConTimeout("/api/extraer-audio", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: dato.id })
+          }, 900000).then(r => r.json().then(d => ({ ok: r.ok, d })))
+            .then(({ ok, d }) => {
+              if (ok) {
+                const nombre = d.ruta ? String(d.ruta).split(/[\\\/]/).pop() : "";
+                mostrarAvisoCalidad(t("tarjeta.extraer_mp3.ok") + (nombre ? ": " + nombre : ""), false);
+              } else {
+                mostrarAvisoCalidad(d.error || t("accion.error"), true);
+              }
+            })
+            .catch(() => {
+              fallosServidor++;
+              mostrarServidorCaido(t("aviso.servidor"));
+            })
+            .finally(() => {
+              b.disabled = false;
+              if (etiqueta) etiqueta.textContent = t("tarjeta.extraer_mp3");
+            });
           return;
         }
         // "borrar" quita la tarjeta AL INSTANTE (feedback inmediato) y
@@ -3843,7 +3987,8 @@
             url,
             segmentos: seg,
             carpeta: carpetaSeleccionada(),
-            formato
+            formato,
+            limite_kbps: parseInt($("#limite-tarea").value || "0", 10) || 0
           })
         });
         const d = await r.json();
@@ -3855,7 +4000,8 @@
           body: JSON.stringify({
             urls,
             segmentos: seg,
-            carpeta: carpetaSeleccionada()
+            carpeta: carpetaSeleccionada(),
+            limite_kbps: parseInt($("#limite-tarea").value || "0", 10) || 0
           })
         });
         const d = await r.json();
@@ -4178,8 +4324,18 @@
       $("#simultaneas").value = d.max_simultaneas || 3;
       $("#descomprimir").checked = !!d.descompresion_auto;
       $("#password-descompresion").value = d.password_descompresion || "";
+      if (d.limite_kbps != null) $("#config-limite").value = String(d.limite_kbps);
     } catch (e) {}
   }
+
+  $("#config-limite").onchange = async () => {
+    const v = Math.max(0, parseInt($("#config-limite").value) || 0);
+    await fetch("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ limite_kbps: v })
+    });
+  };
 
   $("#organizar").onchange = async () => {
     await fetch("/api/config", {

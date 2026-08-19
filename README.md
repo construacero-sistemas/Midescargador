@@ -43,6 +43,16 @@ carpeta.
 - **Pausa / Reanudar / Cancelar** por descarga desde el panel.
 - **Reintentos con backoff**: si un pedazo falla, espera y vuelve a intentarlo
   (hasta 6 veces por segmento).
+- **Scheduler de reintentos automáticos (estilo IDM)**: si la descarga entera
+  falla por un error transitorio (red caída, servidor ocupado, timeout), el
+  servidor la vuelve a lanzar sola con **backoff exponencial** (30 s → 60 s →
+  120 s → 240 s → 480 s, tope 10 min, máximo 5 reintentos). El contador se
+  persiste en `cola.json`, así que el ciclo sobrevive al reinicio del servidor.
+  El panel muestra un aviso azul con la cuenta regresiva
+  ("Reintento automático en Xs (intento N/5)"). Los errores **permanentes**
+  (404, formato inexistente, sesión vencida…) **no** se reintentan: reintentar
+  solo repetiría el mismo fallo, y el botón Reintentar del panel sigue
+  disponible siempre.
 - Si el servidor **no** soporta rangos (o responde 200 ignorando el Range),
   cae automáticamente a una sola conexión con reanudación.
 - URLs de **YouTube, TikTok, MediaFire, Instagram, Twitter/X, Twitch, Vimeo,

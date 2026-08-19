@@ -24,6 +24,8 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
 CHUNK = 256 * 1024          # 256 KB por lectura
 MAX_INTENTOS = 6            # reintentos por segmento con backoff
+LIMITE_GLOBAL_BPS = 0        # límite GLOBAL de velocidad en bytes/s (0 = sin límite);
+                             # lo setea el servidor al cargar la config (aplica en vivo)
 TIMEOUT = 30
 
 _CTX = ssl.create_default_context()
@@ -192,7 +194,7 @@ class Descarga:
     """
 
     def __init__(self, url, carpeta, segmentos=8, nombre=None, total=None,
-                 post=None, cookies=None, unico=None):
+                 post=None, cookies=None, unico=None, limite_bps=0):
         self.url = url
         self.carpeta = os.path.abspath(carpeta)
         self.segmentos_max = max(1, min(int(segmentos), 32))
@@ -216,6 +218,11 @@ class Descarga:
         self.estado = "esperando"
         self.error = None
         self.segmentos = []        # [{i, inicio, fin, hecho}]
+        # límite de velocidad de ESTA descarga (bytes/s; 0 = usar el global)
+        self.limite_bps = max(0, int(limite_bps or 0))
+        self._throttle_lock = threading.Lock()
+        self._t0 = None            # arranque del contador del throttle
+        self._acum = 0.0           # bytes contados para el throttle
         # los fragmentos van a la carpeta TEMPORAL del sistema (no a la de
         # descargas): se limpian solos con el tiempo y no ensucian la carpeta
         import tempfile
@@ -463,6 +470,7 @@ class Descarga:
                             f.write(bloque)
                             inicio += len(bloque)
                             self._sumar(len(bloque))
+                            self._limitar(len(bloque))
                 self._marcar_completada()
                 return
             except (urllib.error.URLError, urllib.error.HTTPError,
@@ -512,6 +520,34 @@ class Descarga:
             return
         self._unir()
 
+    def _limitar(self, n):
+        """Limita la velocidad TOTAL de la descarga (suma de todos los
+        segmentos) a límite_bps o al límite global. Se llama por cada bloque
+        escrito; los segmentos comparten un mismo presupuesto con un lock,
+        así la suma nunca supera el límite."""
+        lim = self.limite_bps if self.limite_bps else LIMITE_GLOBAL_BPS
+        if not lim or lim <= 0:
+            return
+        with self._throttle_lock:
+            ahora = time.time()
+            if self._t0 is None:
+                self._t0 = ahora
+                self._acum = 0.0
+            self._acum += n
+            esperado = self._acum / lim
+            restante = esperado - (ahora - self._t0)
+            if restante <= 0:
+                return
+            fin = time.time() + restante
+            while True:
+                # pausa/cancelación responsivas: el sueño se corta en trozos
+                if self._cancelar.is_set() or self._pausa.is_set():
+                    return
+                falta = fin - time.time()
+                if falta <= 0:
+                    return
+                time.sleep(min(falta, 0.2))
+
     def _segmento(self, seg):
         i, ini, fin = seg["i"], seg["inicio"], seg["fin"]
         part = self._ruta_part(i)
@@ -545,6 +581,7 @@ class Descarga:
                                 f.write(bloque)
                                 seg["hecho"] += len(bloque)
                                 self._sumar(len(bloque))
+                                self._limitar(len(bloque))
                     elif r.status == 200:
                         # el servidor ignoró el Range: toda la descarga en uno
                         with self._lock:
@@ -584,6 +621,7 @@ class Descarga:
                         break
                     f.write(bloque)
                     self._sumar(len(bloque))
+                    self._limitar(len(bloque))
             self.segmentos = [{"i": i, "inicio": 0, "fin": 0, "hecho": 1}]
             with self._lock:
                 self.total = os.path.getsize(part)

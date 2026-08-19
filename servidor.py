@@ -94,6 +94,28 @@ LOG_SERVIDOR = os.path.join(_dir_datos(), "servidor.log")
 LOG_MAX = 400          # máximo de líneas que se guardan
 _RUTA_COLA = os.path.join(_dir_datos(), "cola.json")   # cola persistida
 
+# --- reintentos automáticos (scheduler estilo IDM) -------------------------
+# Cuando una descarga falla con un error transitorio (red, servidor ocupado,
+# timeout), el hilo _hilo_reintentos la vuelve a lanzar sola con backoff
+# exponencial en vez de dejar la tarjeta en error para siempre.
+REINTENTOS_MAX = 5            # reintentos automáticos por tarea
+REINTENTOS_BASE = 30          # 30 s → 60 s → 120 s → 240 s → 480 s
+REINTENTOS_MAX_ESPERA = 600   # tope: 10 minutos
+
+
+def _es_reintentable(error):
+    """True si el error parece transitorio (vale la pena reintentar solo).
+    Los errores permanentes (404, formato inexistente, sesión vencida…) NO
+    se reintentan: reintentar solo repetiría el mismo fallo."""
+    e = (error or "").lower()
+    # 404/410 y avisos explícitos de recurso inexistente = permanente
+    if any(p in e for p in ("404", "410", "not found", "no existe",
+                            "requested format is not available",
+                            "no longer valid", "expir", "sesión vencida",
+                            "no se encontró", "no encontrado")):
+        return False
+    return True
+
 
 def _log_servidor(msg):
     """Anota arranque/parada/fallos del servidor en servidor.log, para que
@@ -101,6 +123,23 @@ def _log_servidor(msg):
     try:
         with open(LOG_SERVIDOR, "a", encoding="utf-8") as f:
             f.write("[%s] %s\n" % (time.strftime("%Y-%m-%d %H:%M:%S"), msg))
+    except Exception:
+        pass
+
+
+def _init_reintentos(t, reinientos=0, proximo=None):
+    """Campos del scheduler de reintentos en cualquier tipo de tarea.
+    _reintentos_auto: cuántos reintentos automáticos ya se hicieron.
+    _proximo_reintento: timestamp del próximo intento (0 = pendiente ya)."""
+    t._reintentos_auto = reinientos
+    t._proximo_reintento = proximo if proximo is not None else 0
+
+
+def _reset_reintentos(t):
+    """Vuelve a cero el contador de reintentos (al completar o al reintentar
+    a mano desde el panel)."""
+    try:
+        _init_reintentos(t)
     except Exception:
         pass
 
@@ -309,13 +348,25 @@ CATEGORIAS = [
 ORGANIZAR_POR_TIPO = True   # se puede cambiar desde el panel
 DESCOMPRESION_AUTO = False  # descomprimir automáticamente al terminar
 PASSWORD_DESCOMPRESION = ""  # contraseña para comprimidos protegidosCONFIG_RUTA = os.path.join(_dir_datos(), "config.json")
+LIMITE_VELOCIDAD_KBPS = 0  # límite GLOBAL de velocidad en KB/s (0 = sin límite)
+
+
+def _aplicar_limite_global():
+    """Propaga el límite global al motor segmentado y a Mega (aplica en vivo
+    a las descargas en curso; las de yt-dlp toman el límite al arrancar)."""
+    try:
+        motor.LIMITE_GLOBAL_BPS = LIMITE_VELOCIDAD_KBPS * 1024
+        mega.LIMITE_GLOBAL_BPS = LIMITE_VELOCIDAD_KBPS * 1024
+    except Exception:
+        pass
 
 
 def _cargar_config():
     """Carga la configuración persistida (organizar, simultáneas,
-    descompresión y contraseña) desde config.json si existe."""
+    descompresión, contraseña y límite de velocidad) desde config.json."""
     global ORGANIZAR_POR_TIPO, MAX_SIMULTANEAS
     global DESCOMPRESION_AUTO, PASSWORD_DESCOMPRESION
+    global LIMITE_VELOCIDAD_KBPS
     try:
         with open(CONFIG_RUTA, encoding="utf-8") as f:
             c = json.load(f)
@@ -326,8 +377,14 @@ def _cargar_config():
             "descompresion_auto", DESCOMPRESION_AUTO))
         PASSWORD_DESCOMPRESION = str(c.get(
             "password_descompresion", "") or "")
+        try:
+            LIMITE_VELOCIDAD_KBPS = max(0, int(c.get(
+                "limite_kbps", LIMITE_VELOCIDAD_KBPS)))
+        except (TypeError, ValueError):
+            pass
     except Exception:
         pass
+    _aplicar_limite_global()
 
 
 def _guardar_config():
@@ -339,6 +396,7 @@ def _guardar_config():
                 "max_simultaneas": MAX_SIMULTANEAS,
                 "descompresion_auto": DESCOMPRESION_AUTO,
                 "password_descompresion": PASSWORD_DESCOMPRESION,
+                "limite_kbps": LIMITE_VELOCIDAD_KBPS,
             }, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
@@ -417,6 +475,71 @@ def _al_error(trabajo):
         pass
     _procesar_cola()   # un fallo libera hueco: entra la siguiente
     _guardar_cola()    # el estado cambió: persistir
+
+
+# -------------------------------------------------- scheduler de reintentos
+# Estilo IDM: cuando una descarga falla con un error transitorio, se vuelve
+# a lanzar sola con backoff exponencial (30s, 60s, 120s, …). El contador se
+# persiste en cola.json, así que el ciclo sobrevive al reinicio del servidor.
+
+def _espera_reintento(n):
+    """Backoff exponencial para el reintento n (0 = primer reintento)."""
+    return min(REINTENTOS_BASE * (2 ** n), REINTENTOS_MAX_ESPERA)
+
+
+def _tick_reintentos():
+    """Una pasada del scheduler (testeable): mira si hay tareas en error que
+    deban reintentarse solas (error transitorio, dentro del tope y con el
+    backoff ya cumplido). Devuelve los ids reintentados en esta pasada."""
+    ahora = time.time()
+    candidatas = []
+    with GESTOR._lock:
+        for t in list(GESTOR.trabajos.values()):
+            if t.estado != "error":
+                continue
+            if not _es_reintentable(getattr(t, "error", "")):
+                continue
+            n = getattr(t, "_reintentos_auto", 0)
+            if n >= REINTENTOS_MAX:
+                continue
+            prox = getattr(t, "_proximo_reintento", 0) or 0
+            if prox and prox > ahora:
+                continue   # todavía en el backoff
+            candidatas.append((t, n))
+    reintentados = []
+    for t, n in candidatas:
+        try:
+            if t.estado != "error":
+                continue   # pudo cambiar (cancelada/manual) mientras tanto
+            prox = getattr(t, "_proximo_reintento", 0) or 0
+            if prox == 0:
+                # primer fallo (o restaurado sin programar): arranca el
+                # backoff desde el primer intento, sin reintentar ya
+                t._proximo_reintento = ahora + _espera_reintento(n)
+                _guardar_cola()
+                continue
+            espera = _espera_reintento(n)
+            t._reintentos_auto = n + 1
+            t._proximo_reintento = ahora + espera
+            _log_servidor("reintento %d/%d de %s en %ds"
+                          % (n + 1, REINTENTOS_MAX,
+                             getattr(t, "id", "?"), espera))
+            t.reintentar()
+            _guardar_cola()
+            reintentados.append(t.id)
+        except Exception:
+            pass
+    return reintentados
+
+
+def _hilo_reintentos():
+    """Bucle del scheduler: cada 10 s corre _tick_reintentos()."""
+    while True:
+        time.sleep(10)
+        try:
+            _tick_reintentos()
+        except Exception:
+            pass
 
 
 def _cookies_sesion_activas():
@@ -1009,12 +1132,14 @@ def _verificar_enlaces(urls):
 class _TrabajoYtdlp:
     """Descarga vía yt-dlp (videos, MediaFire, etc.) con progreso por líneas."""
 
-    def __init__(self, url, carpeta, formato=None, conexiones=None):
+    def __init__(self, url, carpeta, formato=None, conexiones=None,
+                 limite_kbps=0):
         self.id = uuid.uuid4().hex[:8]
         self.url = url
         self.carpeta = carpeta
         self.formato = formato or "mejor"
         self.conexiones = conexiones or 8
+        self.limite_kbps = max(0, int(limite_kbps or 0))
         self.nombre = urllib.parse.urlparse(url).path.rsplit("/", 1)[-1] or "video"
         self.total = None
         self.descargado = 0
@@ -1259,6 +1384,13 @@ class _TrabajoYtdlp:
         _deno = _ruta_deno()
         if _deno:
             cmd += ["--js-runtimes", "deno:" + _deno]
+        # límite de velocidad: por tarea o el global (KB/s)
+        _lim = self.limite_kbps if self.limite_kbps else LIMITE_VELOCIDAD_KBPS
+        if _lim:
+            if _lim >= 1024:
+                cmd += ["--limit-rate", "%.1fM" % (_lim / 1024.0)]
+            else:
+                cmd += ["--limit-rate", "%dK" % max(1, _lim)]
         if self.formato == "audio":
             cmd += ["-f", "ba/b", "-x", "--audio-format", "mp3"]
         elif self.formato == "mejor":
@@ -1678,8 +1810,11 @@ class Gestor:
         self._lock = threading.Lock()
 
     def agregar(self, url, segmentos=8, carpeta=None, formato=None,
-                iniciar_auto=True, origen=None):
+                iniciar_auto=True, origen=None, limite_kbps=None):
         carpeta = carpeta or CARPETA_DEFECTO
+        # límite de ESTA descarga (KB/s; 0 = usa el límite global)
+        kbps = max(0, int(limite_kbps or 0))
+        bps = kbps * 1024
         # Anti-duplicados: si esta misma URL ya tiene un trabajo vivo
         # (descargando, esperando, en cola o pausada), devolvemos ese id en
         # lugar de crear otro. Evita que pulsar varias veces 'Descargar'
@@ -1717,7 +1852,8 @@ class Gestor:
                 _procesar_cola()  # arranca los que quepan en MAX_SIMULTANEAS
             return tids[0] if tids else None
         if resuelto and resuelto.get("error"):
-            t = motor.Descarga(url, carpeta, segmentos=segmentos)
+            t = motor.Descarga(url, carpeta, segmentos=segmentos,
+                               limite_bps=bps)
             t.nombre = "⚠ " + resuelto["error"]
             t.error = resuelto["error"]
             t.estado = "error"
@@ -1728,7 +1864,8 @@ class Gestor:
                                total=resuelto.get("tamano"),
                                post=resuelto.get("post"),
                                cookies=resuelto.get("cookies"),
-                               unico=resuelto.get("unico"))
+                               unico=resuelto.get("unico"),
+                               limite_bps=bps)
             t.nombre = resuelto.get("nombre") or t.nombre
             t.pagina = resuelto.get("pagina") or url
         elif _es_mega(url):
@@ -1736,14 +1873,16 @@ class Gestor:
             try:
                 info = mega.resolver(url)
             except Exception as e:
-                t = motor.Descarga(url, carpeta, segmentos=segmentos)
+                t = motor.Descarga(url, carpeta, segmentos=segmentos,
+                                   limite_bps=bps)
                 t.nombre = "⚠ " + str(e)[:80]
                 t.error = str(e)
                 t.estado = "error"
                 _registrar_error(t)
                 info = None
             if info is not None:
-                t = mega.Descarga(info, carpeta, segmentos=segmentos)
+                t = mega.Descarga(info, carpeta, segmentos=segmentos,
+                                  limite_bps=bps)
                 t.pagina = url
         elif torrents.es_torrent(url):
             # magnet / .torrent / zetrrent.com -> BitTorrent con aria2c
@@ -1751,11 +1890,18 @@ class Gestor:
             t.pagina = url
         elif _usar_ytdlp(url) and not _es_cdn_directo(url) and _ytdlp_disponible():
             t = _TrabajoYtdlp(url, carpeta, formato=formato,
-                              conexiones=segmentos)
+                              conexiones=segmentos, limite_kbps=kbps)
         else:
-            t = motor.Descarga(url, carpeta, segmentos=segmentos)
+            t = motor.Descarga(url, carpeta, segmentos=segmentos,
+                               limite_bps=bps)
+        # límite por tarea uniforme (para persistencia en la cola)
+        try:
+            t.limite_kbps = kbps
+        except Exception:
+            pass
         t.id = uuid.uuid4().hex[:8]
         t.origen = origen or ""   # "zonaleros"/"pivigames": contraseña automática
+        _init_reintentos(t)
         with self._lock:
             self.trabajos[t.id] = t
         if iniciar_auto:
@@ -1781,6 +1927,11 @@ class Gestor:
                     p["descompresion"] = t.descompresion_estado
                     p["descompresion_msg"] = getattr(
                         t, "descompresion_msg", "") or ""
+                # scheduler de reintentos: lo que le falta al panel para
+                # mostrar "reintento automático en Xs"
+                p["reintentos_auto"] = getattr(t, "_reintentos_auto", 0)
+                p["proximo_reintento"] = getattr(t, "_proximo_reintento", 0)
+                p["reintentos_max"] = REINTENTOS_MAX
                 lista.append(p)
             return lista
 
@@ -1790,6 +1941,8 @@ class Gestor:
         if not t:
             return False
         getattr(t, accion)()
+        if accion == "reintentar":
+            _reset_reintentos(t)   # manual: el usuario toma el control
         _guardar_cola()
         return True
 
@@ -1849,6 +2002,87 @@ class Gestor:
         except Exception as e:
             return False, "no se pudo abrir el archivo: %s" % e
 
+    def extraer_audio(self, tid):
+        """Extrae el audio de un video descargado a MP3 (yt-dlp -x).
+        Devuelve (ok, ruta_del_mp3 | mensaje_de_error)."""
+        with self._lock:
+            t = self.trabajos.get(tid)
+        if not t:
+            return False, "descarga no encontrada"
+        ruta = _archivo_real(t)
+        if not ruta or not os.path.isfile(ruta):
+            return False, "el archivo no existe en disco"
+        ext = os.path.splitext(ruta)[1].lower()
+        if ext in (".mp3", ".m4a", ".aac", ".flac", ".wav", ".ogg", ".opus"):
+            return False, "el archivo ya es audio (%s)" % ext.lstrip(".")
+        base = getattr(t, "carpeta", None) or os.path.dirname(ruta)
+        if ORGANIZAR_POR_TIPO:
+            destino = os.path.join(base, "Musica")
+            os.makedirs(destino, exist_ok=True)
+        else:
+            destino = base
+        # yt-dlp no acepta rutas Windows con letra de unidad: se pasa la ruta
+        # como file:/// (codificada) y se habilita con --enable-file-urls
+        ff = _ruta_ffmpeg()
+        url_local = "file:///" + urllib.parse.quote(
+            ruta.replace("\\", "/"), safe="/:")
+        # extraer en un temp y mover el mp3 al final: si la extracción falla,
+        # no quedan copias del video en la carpeta Musica
+        import shutil
+        tmpdir = os.path.join(tempfile.gettempdir(),
+                              "midesc-mp3-%s" % tid)
+        try:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            os.makedirs(tmpdir, exist_ok=True)
+        except Exception:
+            pass
+        cmd = _cmd_ytdlp() + [
+            "--enable-file-urls",
+            "-x", "--audio-format", "mp3", "--audio-quality", "0",
+            "--no-playlist", "--no-warnings",
+            "-o", os.path.join(tmpdir, "%(title).120s.%(ext)s"),
+        ]
+        if ff:
+            cmd += ["--ffmpeg-location", os.path.dirname(ff)]
+        cmd += [url_local]
+        try:
+            r = subprocess.run(
+                cmd, capture_output=True, text=True, encoding="utf-8",
+                errors="replace", timeout=1800,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except subprocess.TimeoutExpired:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            return False, "la extracción tardó demasiado (archivo muy grande)"
+        except Exception as e:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            return False, "no se pudo ejecutar yt-dlp: %s" % e
+        if r.returncode != 0:
+            detalle = (r.stderr or r.stdout or "").strip()
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            return False, ((detalle.splitlines()[-1] if detalle
+                            else "error de yt-dlp")[:200])
+        # mover el mp3 generado al destino y limpiar el temp
+        try:
+            candidatos = [os.path.join(tmpdir, f) for f in os.listdir(tmpdir)
+                          if f.lower().endswith(".mp3")]
+            mp3 = max(candidatos, key=os.path.getmtime) if candidatos else None
+        except Exception:
+            mp3 = None
+        if not mp3 or not os.path.isfile(mp3):
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            return False, "no se encontró el mp3 generado"
+        destino_mp3 = os.path.join(destino, os.path.basename(mp3))
+        try:
+            if os.path.abspath(mp3) != os.path.abspath(destino_mp3):
+                os.replace(mp3, destino_mp3)
+        except OSError as e:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            return False, "no se pudo mover el mp3: %s" % e
+        shutil.rmtree(tmpdir, ignore_errors=True)
+        _log_servidor("extraer audio: %s -> %s"
+                      % (os.path.basename(ruta), os.path.basename(destino_mp3)))
+        return True, destino_mp3
+
     def ruta_archivo(self, tid):
         """Ruta del archivo final de una descarga, o None si no existe.
         (La usa el endpoint /api/media/<id> del reproductor integrado.)"""
@@ -1889,6 +2123,9 @@ def _guardar_cola():
                     "servidor": p.get("servidor"),
                     "calidad": p.get("calidad"),
                     "calidad_real": p.get("calidad_real"),
+                    "limite_kbps": getattr(t, "limite_kbps", 0) or 0,
+                    "reintentos_auto": getattr(t, "_reintentos_auto", 0),
+                    "proximo_reintento": getattr(t, "_proximo_reintento", 0),
                 }
                 # estado interno necesario para REANUDAR tras el reinicio
                 if isinstance(t, motor.Descarga):
@@ -1939,6 +2176,7 @@ def _restaurar_cola():
             tipo = d.get("tipo")
             carpeta = d.get("carpeta") or CARPETA_DEFECTO
             url = d.get("url") or ""
+            lim_kbps = d.get("limite_kbps") or 0
             if tipo == "directa":
                 t = motor.Descarga(d.get("url_directa") or url, carpeta,
                                    segmentos=d.get("segmentos") or 8,
@@ -1946,22 +2184,31 @@ def _restaurar_cola():
                                    total=d.get("total"),
                                    post=d.get("post"),
                                    cookies=d.get("cookies"),
-                                   unico=d.get("unico"))
+                                   unico=d.get("unico"),
+                                   limite_bps=lim_kbps * 1024)
             elif tipo == "mega":
                 t = mega.Descarga(d.get("info") or {}, carpeta,
-                                  segmentos=d.get("segmentos") or 8)
+                                  segmentos=d.get("segmentos") or 8,
+                                  limite_bps=lim_kbps * 1024)
             elif tipo == "torrent":
                 t = torrents.TrabajoTorrent(url, carpeta)
             elif tipo == "yt-dlp":
                 t = _TrabajoYtdlp(url, carpeta, formato=d.get("formato"),
-                                  conexiones=d.get("conexiones"))
+                                  conexiones=d.get("conexiones"),
+                                  limite_kbps=lim_kbps)
             else:
                 continue
             t.id = d.get("id") or uuid.uuid4().hex[:8]
             t.pagina = d.get("pagina") or None
             t.origen = d.get("origen") or ""
+            try:
+                t.limite_kbps = lim_kbps
+            except Exception:
+                pass
             if t.nombre is None:
                 t.nombre = d.get("nombre")
+            _init_reintentos(t, d.get("reintentos_auto") or 0,
+                             d.get("proximo_reintento") or 0)
             estado = d.get("estado")
             if estado == "completa":
                 t.estado = "completa"
@@ -2029,13 +2276,13 @@ def _procesar_cola():
             con += 1
 
 
-def _encolar_lote(urls, segmentos, origen=None):
+def _encolar_lote(urls, segmentos, origen=None, limite_kbps=0):
     """Cada URL se convierte en una tarjeta visible con estado "en cola".
     Si hay hueco en el máximo de simultáneas, arrancan ya; si no, esperan
     su turno. Devuelve el número de URLs aceptadas."""
     for url in urls:
         GESTOR.agregar(url, segmentos=segmentos, iniciar_auto=False,
-                       origen=origen)
+                       origen=origen, limite_kbps=limite_kbps)
     _procesar_cola()
     return len(urls)
 
@@ -2159,6 +2406,7 @@ def _reintentar_descompresiones():
 
 
 def _al_completar(trabajo):
+    _reset_reintentos(trabajo)   # terminó bien: el contador vuelve a cero
     try:
         _organizar(trabajo)
     except Exception:
@@ -2245,7 +2493,8 @@ class Manejador(BaseHTTPRequestHandler):
             self._json({"organizar": ORGANIZAR_POR_TIPO,
                         "max_simultaneas": MAX_SIMULTANEAS,
                         "descompresion_auto": DESCOMPRESION_AUTO,
-                        "password_descompresion": PASSWORD_DESCOMPRESION})
+                        "password_descompresion": PASSWORD_DESCOMPRESION,
+                        "limite_kbps": LIMITE_VELOCIDAD_KBPS})
         elif ruta == "/api/hosters":
             self._json({"hosters": hosters.hosters_soportados()})
         elif ruta == "/api/lote":
@@ -2303,9 +2552,14 @@ class Manejador(BaseHTTPRequestHandler):
                 seg = int(datos.get("segmentos") or 8)
             except (TypeError, ValueError):
                 seg = 8
+            try:
+                lim = max(0, int(datos.get("limite_kbps") or 0))
+            except (TypeError, ValueError):
+                lim = 0
             tid = GESTOR.agregar(url, seg, datos.get("carpeta"),
                                  datos.get("formato"),
-                                 origen=datos.get("origen"))
+                                 origen=datos.get("origen"),
+                                 limite_kbps=lim)
             self._json({"id": tid})
         elif ruta == "/api/formatos":
             url = (datos.get("url") or "").strip()
@@ -2353,7 +2607,12 @@ class Manejador(BaseHTTPRequestHandler):
                 seg = int(datos.get("segmentos") or 8)
             except (TypeError, ValueError):
                 seg = 8
-            n = _encolar_lote(urls, seg, origen=datos.get("origen"))
+            try:
+                lim_lote = max(0, int(datos.get("limite_kbps") or 0))
+            except (TypeError, ValueError):
+                lim_lote = 0
+            n = _encolar_lote(urls, seg, origen=datos.get("origen"),
+                              limite_kbps=lim_lote)
             self._json({"ok": True, "encolados": n,
                         "pendientes": len(_en_cola()),
                         "descargando": _hay_activa()})
@@ -2375,6 +2634,12 @@ class Manejador(BaseHTTPRequestHandler):
                 self._json({"ok": True})
             else:
                 self._json({"ok": False, "error": err}, 404)
+        elif ruta == "/api/extraer-audio":
+            ok, res = GESTOR.extraer_audio(datos.get("id"))
+            if ok:
+                self._json({"ok": True, "ruta": res})
+            else:
+                self._json({"ok": False, "error": res}, 404)
         elif ruta == "/api/sesion/iniciar":
             # corre en segundo plano: la ventana de Chrome queda esperando
             # a que el usuario inicie sesión; el panel consulta /api/sesion
@@ -2422,6 +2687,7 @@ class Manejador(BaseHTTPRequestHandler):
         elif ruta == "/api/config":
             global ORGANIZAR_POR_TIPO, MAX_SIMULTANEAS
             global DESCOMPRESION_AUTO, PASSWORD_DESCOMPRESION
+            global LIMITE_VELOCIDAD_KBPS
             if "organizar" in datos:
                 ORGANIZAR_POR_TIPO = bool(datos["organizar"])
             if "max_simultaneas" in datos:
@@ -2434,11 +2700,18 @@ class Manejador(BaseHTTPRequestHandler):
                 DESCOMPRESION_AUTO = bool(datos["descompresion_auto"])
             if "password_descompresion" in datos:
                 PASSWORD_DESCOMPRESION = str(datos["password_descompresion"] or "")
+            if "limite_kbps" in datos:
+                try:
+                    LIMITE_VELOCIDAD_KBPS = max(0, int(datos["limite_kbps"]))
+                    _aplicar_limite_global()   # aplica en vivo al motor/Mega
+                except (TypeError, ValueError):
+                    pass
             _guardar_config()
             self._json({"ok": True, "organizar": ORGANIZAR_POR_TIPO,
                         "max_simultaneas": MAX_SIMULTANEAS,
                         "descompresion_auto": DESCOMPRESION_AUTO,
-                        "password_descompresion": PASSWORD_DESCOMPRESION})
+                        "password_descompresion": PASSWORD_DESCOMPRESION,
+                        "limite_kbps": LIMITE_VELOCIDAD_KBPS})
         else:
             self._json({"error": "no encontrado"}, 404)
 
@@ -2563,6 +2836,7 @@ def main():
 
     _cargar_config()   # restaura toggle/contraseña guardados en config.json
     _restaurar_cola()  # recarga la cola persistida (reanuda lo vivo)
+    threading.Thread(target=_hilo_reintentos, daemon=True).start()
 
     try:
         srv = ThreadingHTTPServer(("127.0.0.1", PUERTO), Manejador)

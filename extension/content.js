@@ -95,6 +95,27 @@
       max-width: 240px;
     }
     .mdm-svg { flex-shrink: 0; display: inline-flex; }
+    .mdm-chip {
+      position: fixed;
+      z-index: 2147483647;
+      top: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: none;
+      align-items: center;
+      gap: 8px;
+      background: rgba(16, 22, 38, 0.95);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      color: #f2f5fa;
+      border: 1px solid rgba(77, 141, 255, 0.55);
+      border-radius: 999px;
+      padding: 8px 16px;
+      font: 600 13px "Segoe UI", system-ui, sans-serif;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+      pointer-events: none;
+      white-space: nowrap;
+    }
   `;
   const estilo = document.createElement("style");
   estilo.textContent = CSS;
@@ -505,4 +526,111 @@
   const mo = new MutationObserver(() => procesar());
   mo.observe(document.documentElement, { childList: true, subtree: true });
   setInterval(() => procesar(), 1500);
+
+  // ================== captura de enlaces (estilo IDM) ==================
+  // - Clic en enlace de archivo (o host conocido): takeover automático hacia
+  //   el servidor local, salvo que la URL esté en la lista de exclusiones.
+  // - Tecla Insert: arma el modo "forzar takeover" (4 s o hasta el clic): el
+  //   próximo clic en cualquier enlace/video se envía, aunque esté excluido.
+  // - ALT + clic: bypass explícito (descarga normal del navegador).
+  const EXT_DESCARGA = /\.(zip|rar|7z|tar|gz|bz2|xz|iso|exe|msi|apk|pdf|docx?|xlsx?|pptx?|epub|mp4|mkv|webm|avi|mov|mp3|flac|wav|m4a|aac|ogg|opus|torrent|dmg|deb|rpm|pkg)(\?|#|$)/i;
+  // hosts que el servidor maneja aunque la URL no tenga extensión de archivo
+  const HOSTS_DESCARGA = /(mediafire\.com\/file\/|mega\.nz\/file\/|mega\.co\.nz\/file\/|drive\.google\.com\/(file\/d\/|open\?id=|uc\?)|1fichier\.com)/i;
+
+  function esEnlaceDescarga(url) {
+    return EXT_DESCARGA.test(url) || HOSTS_DESCARGA.test(url);
+  }
+
+  let fuerzaActiva = false;
+  let fuerzaTimer = null;
+  let chip = null;
+
+  function mostrarChip(texto) {
+    if (!chip) {
+      chip = document.createElement("div");
+      chip.className = "mdm-chip";
+      (document.body || document.documentElement).appendChild(chip);
+    }
+    chip.textContent = texto;
+    chip.style.display = "flex";
+  }
+  function ocultarChip() {
+    if (chip) chip.style.display = "none";
+  }
+  function desarmarFuerza() {
+    fuerzaActiva = false;
+    clearTimeout(fuerzaTimer);
+    ocultarChip();
+  }
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Insert") {
+      fuerzaActiva = true;
+      mostrarChip("Descargar con MiDescargador — haz clic en el enlace (Esc cancela)");
+      clearTimeout(fuerzaTimer);
+      fuerzaTimer = setTimeout(desarmarFuerza, 4000);
+    } else if (e.key === "Escape") {
+      desarmarFuerza();
+    }
+  });
+
+  function enviarCaptura(url, origen) {
+    desarmarFuerza();
+    chrome.runtime.sendMessage({ tipo: "capturar", url, origen }, (r) => {
+      if (chrome.runtime.lastError) {
+        mostrarChip("No se pudo contactar a MiDescargador");
+        setTimeout(ocultarChip, 2500);
+        return;
+      }
+      if (r && r.error) {
+        mostrarChip("MiDescargador: " + recortarLocal(r.error, 60));
+        setTimeout(ocultarChip, 3000);
+      } else if (r && r.ok) {
+        mostrarChip("✓ Enviado a MiDescargador");
+        setTimeout(ocultarChip, 1800);
+      }
+    });
+  }
+  function recortarLocal(s, n) {
+    s = String(s || "");
+    return s.length > n ? s.slice(0, n - 1) + "…" : s;
+  }
+
+  document.addEventListener("click", (e) => {
+    if (e.altKey) return; // bypass explícito: descarga normal del navegador
+    const a = e.target.closest ? e.target.closest("a[href]") : null;
+    const objetivo = a && a.href ? a.href : null;
+    if (objetivo && objetivo !== location.href) {
+      if (fuerzaActiva) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        enviarCaptura(objetivo, "fuerza");
+        return;
+      }
+      // takeover automático: solo enlaces de archivo/hosts, fuera de las
+      // exclusiones y sin pisar los sitios de video (usan el overlay de
+      // calidades)
+      if (!SITIOS_PAGINA.test(objetivo)
+          && esEnlaceDescarga(objetivo)
+          && !mdmUrlExcluida(objetivo)) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        enviarCaptura(objetivo, "auto");
+      }
+      return;
+    }
+    // video/audio directo de la página (solo con fuerza explícita)
+    if (fuerzaActiva) {
+      const m = e.target.closest ? e.target.closest("video,audio") : null;
+      const src = m && (m.currentSrc || m.src);
+      if (src) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        enviarCaptura(src, "fuerza");
+      }
+    }
+  }, true);
 })();
