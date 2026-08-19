@@ -2454,6 +2454,23 @@
           <span data-i18n="info.ext.boton">Abrir carpeta de la extensión</span>
         </button>
       </div>
+
+      <div class="config-section-title" data-i18n="info.dona.titulo">Apoyar el proyecto</div>
+      <div class="config-nota" data-i18n-html="info.dona.nota">
+        MiDescargador es <strong>gratis, sin anuncios y sin telemetría</strong>. Si te es útil y
+        querés que siga mejorando, podés invitarme un café con una donación voluntaria
+        por PayPal. ¡Gracias por apoyar el desarrollo!
+      </div>
+      <div class="config-nota" style="margin-top:8px;">
+        <button class="btn btn-secondary btn-sm" id="btn-donar">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          <span data-i18n="info.dona.boton">Donar con PayPal</span>
+        </button>
+      </div>
     </div>
   </div>
 </div>
@@ -2713,6 +2730,9 @@
       "info.ext.nota": "Con la extensión instalada, al pasar el mouse por un <strong>video de YouTube</strong> (u otros sitios) aparece un <strong>botón de descarga</strong> sobre el video y, al hacer clic, MiDescargador lo baja solo. Para instalarla una sola vez:<br>1. Abre Chrome y entra a <code>chrome://extensions</code>.<br>2. Activa el <strong>Modo de desarrollador</strong> (arriba a la derecha).<br>3. Pulsa <strong>«Cargar descomprimida»</strong> y elige esta carpeta (pulsa el botón de abajo para abrirla).<br>Listo: la extensión queda instalada para siempre. Si Chrome la desactiva sola, vuelve a pulsar «Cargar descomprimida».",
       "info.ext.boton": "Abrir carpeta de la extensión",
       "info.ext.error": "No se pudo abrir la carpeta de la extensión.",
+      "info.dona.titulo": "Apoyar el proyecto",
+      "info.dona.nota": "MiDescargador es <strong>gratis, sin anuncios y sin telemetría</strong>. Si te es útil y querés que siga mejorando, podés invitarme un café con una donación voluntaria por PayPal. ¡Gracias por apoyar el desarrollo!",
+      "info.dona.boton": "Donar con PayPal",
       "update.titulo": "Actualización de MiDescargador",
       "update.nueva": "Nueva",
       "update.version": "Versión {v}",
@@ -2949,6 +2969,9 @@
       "info.ext.nota": "With the extension installed, hovering over a <strong>YouTube video</strong> (or other sites) shows a <strong>download button</strong> on the video; click it and MiDescargador downloads it for you. To install it once:<br>1. Open Chrome and go to <code>chrome://extensions</code>.<br>2. Enable <strong>Developer mode</strong> (top right).<br>3. Click <strong>“Load unpacked”</strong> and choose this folder (click the button below to open it).<br>Done: the extension stays installed. If Chrome disables it on its own, click “Load unpacked” again.",
       "info.ext.boton": "Open the extension folder",
       "info.ext.error": "Could not open the extension folder.",
+      "info.dona.titulo": "Support the project",
+      "info.dona.nota": "MiDescargador is <strong>free, with no ads and no telemetry</strong>. If you find it useful and want it to keep improving, you can buy me a coffee with a voluntary PayPal donation. Thanks for supporting development!",
+      "info.dona.boton": "Donate with PayPal",
       "update.titulo": "MiDescargador Update",
       "update.nueva": "New",
       "update.version": "Version {v}",
@@ -4467,6 +4490,16 @@
       }).catch(() => {
         mostrarAvisoCalidad(t("info.ext.error"), true);
       });
+    };
+  }
+
+  // donaciones: enlace de PayPal centralizado (cambiar acá cuando el realme
+  // esté listo, p. ej. https://www.paypal.me/luiggiberaldi)
+  const URL_DONACION = "https://www.paypal.com/paypalme/my/profile";
+  const btnDonar = $("#btn-donar");
+  if (btnDonar) {
+    btnDonar.onclick = () => {
+      window.open(URL_DONACION, "_blank");
     };
   }
   $("#sesion-login-youtube").onclick = () => iniciarSesionPlataforma("youtube");
