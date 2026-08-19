@@ -27,5 +27,8 @@ bin/
 # Token de la API local (se genera al primer arranque)
 /token.txt
 
+# Config local (se regenera sola al arrancar; no versionar preferencias)
+/config.json
+
 # Interno de la herramienta de edición
 .freebuff/
