@@ -111,13 +111,20 @@ let reintentosDescarga = 0;
 // un porcentaje para siempre. Este watchdog detecta la descarga congelada
 // (>75s sin avanzar), la cancela y la reintenta (hasta 3 veces); si agota,
 // avisa con un error en vez de quedarse colgado.
+// Intervalos configurables (para pruebas aceleradas; en producción son los
+// defaults: chequear cada 15 s, congelada si no avanza en 75 s, 3 s de
+// pausa entre reintentos).
+const WD_CHECK_MS = Number(process.env.MIDESC_WD_CHECK_MS || 15000);
+const WD_SIN_AVANCE_MS = Number(process.env.MIDESC_WD_SIN_AVANCE_MS || 75000);
+const WD_PAUSA_MS = Number(process.env.MIDESC_WD_PAUSA_MS || 3000);
+
 function iniciarWatchdog() {
   pararWatchdog();
   ultimoProgreso = { t: Date.now(), bytes: 0 };
   watchdog = setInterval(() => {
     const ahora = Date.now();
     const sinAvance = ahora - ultimoProgreso.t;
-    if (sinAvance > 75000 && tokenDescarga) {
+    if (sinAvance > WD_SIN_AVANCE_MS && tokenDescarga) {
       log("descarga congelada " + Math.round(sinAvance / 1000) + "s sin progreso — reintentando");
       reintentosDescarga++;
       if (reintentosDescarga > 3) {
@@ -142,9 +149,9 @@ function iniciarWatchdog() {
           autoUpdater.downloadUpdate(tokenDescarga).catch(() => {});
           ultimoProgreso = { t: Date.now(), bytes: 0 };
         }
-      }, 3000);
+      }, WD_PAUSA_MS);
     }
-  }, 15000);
+  }, WD_CHECK_MS);
 }
 
 function pararWatchdog() {

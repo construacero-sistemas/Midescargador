@@ -17,6 +17,9 @@
   // se usa la URL de la PÁGINA, que es la que yt-dlp sabe resolver con
   // todas las calidades.
   const SITIOS_PAGINA = /youtube\.com|youtu\.be|tiktok\.com|instagram\.com|instagr\.am|facebook\.com|fb\.watch|twitter\.com|x\.com|reddit\.com|pinterest\.com|threads\.net|vk\.com|rumble\.com|kick\.com|twitch\.tv|vimeo\.com|dailymotion\.com|soundcloud\.com|bilibili\.com|t\.co/i;
+  // la captura de enlaces (takeover de clics, tecla Insert) solo aporta en
+  // el frame principal: los iframes (ads, widgets) no la necesitan
+  const esFrameTop = window.self === window.top;
 
   const ovs = new Map(); // video -> overlay
   let avisoActual = null;
@@ -131,11 +134,17 @@
   function avisar(texto, ok) {
     if (avisoActual) avisoActual.remove();
     avisoActual = document.createElement("div");
-    avisoActual.innerHTML = `
-      <div style="display:flex; align-items:center; gap:8px; color:#f8fafc;">
-        <span style="color:${ok ? '#10b981' : '#ef4444'}; font-weight:800;">${ok ? '✓' : '✕'}</span>
-        <span>${texto}</span>
-      </div>`;
+    const fila = document.createElement("div");
+    fila.style.cssText = "display:flex; align-items:center; gap:8px; color:#f8fafc;";
+    const icono = document.createElement("span");
+    icono.style.color = ok ? "#10b981" : "#ef4444";
+    icono.style.fontWeight = "800";
+    icono.textContent = ok ? "✓" : "✕";
+    const msj = document.createElement("span");
+    msj.textContent = texto;
+    fila.appendChild(icono);
+    fila.appendChild(msj);
+    avisoActual.appendChild(fila);
     Object.assign(avisoActual.style, {
       position: "fixed", top: "18px", right: "18px", zIndex: "2147483647",
       background: "rgba(15, 21, 35, 0.95)", backdropFilter: "blur(12px)",
@@ -224,6 +233,10 @@
   function prefetchCalidades(v) {
     const url = urlParaEnviar(v);
     if (!url || prefetched.has(url)) return;
+    // prefetch solo donde yt-dlp agrega valor (misma regla que
+    // prefetchPrincipal): en un .mp4 directo no hay calidades que listar y
+    // la consulta sería gasto inútil; el clic igual consulta bajo demanda.
+    if (!SITIOS_PAGINA.test(location.href)) return;
     // debounce 350 ms: si el cursor solo pasa rozando el video (scroll por
     // feeds), no disparamos yt-dlp; solo se consulta si el usuario se
     // detiene sobre él.
@@ -289,11 +302,6 @@
     });
   }
 
-  document.addEventListener("mousemove", (e) => {
-    alMover(e.clientX, e.clientY);
-  }, { passive: true });
-  document.addEventListener("mouseleave", ocultarTodos);
-
   // --- menú y descarga ----------------------------------------------------
 
   // Consultar formatos: primero vía background service worker (evita Chrome PNA),
@@ -342,12 +350,35 @@
     }
   }
 
+  // Fila de opción del menú construida SIN innerHTML para el texto: la
+  // etiqueta puede venir del título del video (el servidor la interpola en
+  // /api/formatos) y podría contener HTML. El SVG es una cadena estática
+  // segura; todo texto dinámico va con textContent.
+  function crearFilaOpcion(texto, tamano) {
+    const opc = document.createElement("div");
+    opc.className = "mdm-opc";
+    opc.insertAdjacentHTML("afterbegin", SVG("#7dd3fc"));
+    const et = document.createElement("span");
+    et.textContent = texto;
+    opc.appendChild(et);
+    if (tamano) {
+      const t = document.createElement("span");
+      t.className = "mdm-tam";
+      t.textContent = tamano;
+      opc.appendChild(t);
+    }
+    return opc;
+  }
+
   function construirMenu(ov, video, url) {
     const menu = document.createElement("div");
     menu.className = "mdm-menu";
     const cab = document.createElement("div");
     cab.className = "mdm-cab";
-    cab.innerHTML = `${SVG("#5b8cff")} <span>Calidad de descarga</span>`;
+    cab.insertAdjacentHTML("afterbegin", SVG("#5b8cff"));
+    const cabTexto = document.createElement("span");
+    cabTexto.textContent = "Calidad de descarga";
+    cab.appendChild(cabTexto);
     menu.appendChild(cab);
     const spinner = document.createElement("div");
     spinner.className = "mdm-opc";
@@ -374,18 +405,13 @@
         })),
       ];
       if (!lista.length) {
-        const opc = document.createElement("div");
-        opc.className = "mdm-opc";
-        opc.innerHTML = `${SVG("#7dd3fc")} <span>Descargar video</span>`;
+        const opc = crearFilaOpcion("Descargar video");
         opc.onclick = () => enviarDescarga(url, null, ov);
         menu.appendChild(opc);
         return;
       }
       opciones.forEach(o => {
-        const opc = document.createElement("div");
-        opc.className = "mdm-opc";
-        opc.innerHTML = `${SVG("#7dd3fc")} <span>${o.etiqueta}</span>` +
-          (o.tamano ? `<span class="mdm-tam">${fmtTam(o.tamano)}</span>` : "");
+        const opc = crearFilaOpcion(o.etiqueta, o.tamano ? fmtTam(o.tamano) : "");
         opc.onclick = () => enviarDescarga(url, o.formato, ov);
         menu.appendChild(opc);
       });
@@ -397,9 +423,7 @@
         (SITIOS_PAGINA.test(location.href) ? "" : " Se descargará el video directo.");
       menu.appendChild(e);
       // descarga directa como respaldo (el servidor decide con yt-dlp)
-      const opc = document.createElement("div");
-      opc.className = "mdm-opc";
-      opc.innerHTML = `${SVG("#7dd3fc")} <span>Descargar de todos modos</span>`;
+      const opc = crearFilaOpcion("Descargar de todos modos");
       opc.onclick = () => enviarDescarga(url, null, ov);
       menu.appendChild(opc);
     });
@@ -407,6 +431,10 @@
 
   async function enviarDescarga(url, formato, ov) {
     ov.style.display = "none";
+    // la pestaña se ocultó pero el ratón puede seguir sobre el video: si no
+    // se limpia videoActivo, el próximo mousemove la ve "activa" y nunca
+    // reaparece (hay que sacar y volver a meter el ratón).
+    videoActivo = null;
     // 1) Intentar a través del service worker (evita Chrome PNA)
     try {
       const resp = await new Promise((resolve, reject) => {
@@ -526,12 +554,41 @@
     prefetchPrincipal();
   }
 
-  procesar();
-  const mo = new MutationObserver(() => procesar());
-  mo.observe(document.documentElement, { childList: true, subtree: true });
-  setInterval(() => procesar(), 1500);
+  // ================== arranque perezoso de overlays ==================
+  // La maquinaria de overlays (listeners de ratón, MutationObserver y
+  // sondeo) solo se activa cuando el frame tiene un <video>: en frames sin
+  // video (ads, widgets, páginas de texto) no se crea ningún overlay ni se
+  // escucha nada. Si el video aparece después (reproductor que carga tarde,
+  // SPA), un chequeo barato la enciende sobre la marcha.
+  let overlaysActivos = false;
+  function arrancarOverlays() {
+    if (overlaysActivos) return;
+    overlaysActivos = true;
+    document.addEventListener("mousemove", (e) => {
+      alMover(e.clientX, e.clientY);
+    }, { passive: true });
+    document.addEventListener("mouseleave", ocultarTodos);
+    procesar();
+    const mo = new MutationObserver(() => procesar());
+    mo.observe(document.documentElement, { childList: true, subtree: true });
+    setInterval(() => procesar(), 1500);
+  }
+  function vigilarVideo() {
+    if (document.querySelector("video")) { arrancarOverlays(); return; }
+    const t = setInterval(() => {
+      if (document.querySelector("video")) {
+        clearInterval(t);
+        arrancarOverlays();
+      }
+    }, 2000);
+  }
+  vigilarVideo();
 
   // ================== captura de enlaces (estilo IDM) ==================
+  // Solo en el frame principal: los iframes no interceptan clics ni arman
+  // el modo fuerza (Insert). Los overlays de video sí corren en iframes con
+  // <video> (reproductores embebidos como el de YouTube).
+  if (esFrameTop) {
   // - Clic en enlace de archivo (o host conocido): takeover automático hacia
   //   el servidor local, salvo que la URL esté en la lista de exclusiones.
   // - Tecla Insert: arma el modo "forzar takeover" (4 s o hasta el clic): el
@@ -637,4 +694,5 @@
       }
     }
   }, true);
+  } // fin: captura de enlaces (solo frame principal)
 })();

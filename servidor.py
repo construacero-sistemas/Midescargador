@@ -952,8 +952,8 @@ def _calcular_formatos(url):
                               "('Sign in to confirm you're not a bot'). "
                               "Pulsa el botón 🔑 Sesión y entra con tu "
                               "cuenta de Google, o abre el video en Chrome "
-                              "e inicia sesión; luego reintenta.")}
-        return []
+                              "e inicia sesión; luego reintenta.")}, None
+        return [], None
     lista = []
     for h in sorted(mejores, reverse=True):
         ext, tam = mejores[h]
@@ -1023,7 +1023,7 @@ def _calcular_formatos(url):
     lista.insert(0, {"altura": None, "etiqueta": "Mejor calidad (recomendada)",
                      "ext": "", "tamano": mejor_tam,
                      "formato": None, "mejor": True})
-    return lista
+    return lista, titulo
 
 
 def _formatos(url):
@@ -1053,10 +1053,13 @@ def _formatos(url):
                 return _FORMATOS_CACHE[clave][1]
         return []
     try:
-        resultado = _calcular_formatos(url)
+        resultado, titulo = _calcular_formatos(url)
         if isinstance(resultado, list):
+            # guarda también el TÍTULO real: así una tarea nueva que se
+            # descarga justo después de consultar calidades nace con el
+            # nombre correcto (sin "watch") leyendo la caché
             with _FORMATOS_LOCK:
-                _FORMATOS_CACHE[clave] = (time.time(), resultado, None)
+                _FORMATOS_CACHE[clave] = (time.time(), resultado, titulo)
             _guardar_formatos_cache()
         return resultado
     finally:
@@ -1270,6 +1273,19 @@ class _TrabajoYtdlp:
         self.conexiones = conexiones or 8
         self.limite_kbps = max(0, int(limite_kbps or 0))
         self.nombre = urllib.parse.urlparse(url).path.rsplit("/", 1)[-1] or "video"
+        # si el video ya se consultó (calidades en caché), el título real está
+        # disponible al instante: la tarjeta nace con el nombre correcto y no
+        # muestra "watch" ni un instante (el hilo lo resolvería igual, pero
+        # tarda unos segundos en arrancar)
+        try:
+            with _FORMATOS_LOCK:
+                _clave_c = _clave_video(url)
+                if _clave_c in _FORMATOS_CACHE:
+                    _ts_c, _lst_c, _tit_c = _FORMATOS_CACHE[_clave_c]
+                    if _tit_c:
+                        self.nombre = _tit_c[:120]
+        except Exception:
+            pass
         self.total = None
         self.descargado = 0
         self.velocidad = 0.0
@@ -1443,6 +1459,24 @@ class _TrabajoYtdlp:
         o None si pidió 'mejor'/'audio'/otro selector."""
         m = re.search(r"bv\[height=(\d+)\]", self.formato or "")
         return int(m.group(1)) if m else None
+
+    def _nombre_generico(self):
+        """True si el nombre es el placeholder inicial de la URL (p. ej.
+        'watch' de YouTube) y no el título real del video."""
+        n = (self.nombre or "").strip().lower()
+        if not n:
+            return True
+        # basename de la URL sin extensión (watch, video, download, ...) o
+        # placeholder corto genérico: NO es un título real
+        if n in ("watch", "video", "download", "descarga", "shorts",
+                 "embed", "playlist", "v"):
+            return True
+        # nombre que parece un basename de URL (sin extensión ni espacios,
+        # corto): p. ej. 'watch' cae arriba; 'archivo123' también es genérico
+        if (len(n) < 12 and "." not in n and " " not in n
+                and not any(c.isdigit() for c in n)):
+            return True
+        return False
 
     def _variantes(self):
         """Estrategias de descarga en cadena, de la más completa a la más simple.
@@ -1862,6 +1896,25 @@ class _TrabajoYtdlp:
             m = re.search(r"height(?:<=|=)(\d+)", self.formato or "")
             if m:
                 calidad = m.group(1) + "p"
+        # tareas completas con nombre genérico ("watch", "video"): el título
+        # real no se pudo fijar al iniciar (yt-dlp falló o se restauró la cola
+        # con el nombre inicial). Lo recuperamos de la caché de formatos o de
+        # la consulta rápida a yt-dlp, para que la tarjeta muestre el título
+        # verdadero en vez de "watch".
+        if (self.estado == "completa" and self._nombre_generico()
+                and not getattr(self, "_titulo_intentado", False)):
+            self._titulo_intentado = True   # solo un intento por tarea
+            try:
+                titulo = self._obtener_titulo()
+                if titulo:
+                    self.nombre = titulo
+                    # Marca que el nombre cambió para que estado() persista
+                    # la cola FUERA del lock (progreso() corre bajo
+                    # GESTOR._lock y _guardar_cola() toma ese mismo lock ->
+                    # deadlock si se llama acá).
+                    self._nombre_corregido = True
+            except Exception:
+                pass
         # si el archivo ya se guardó, la categoría real está en self.categoria
         categoria = getattr(self, "categoria", None) or _categoria(self.nombre)
         total = self.total
@@ -2152,7 +2205,17 @@ class Gestor:
                 p["proximo_reintento"] = getattr(t, "_proximo_reintento", 0)
                 p["reintentos_max"] = REINTENTOS_MAX
                 lista.append(p)
-            return lista
+        # persiste nombres corregidos FUERA del lock: progreso() marcó
+        # _nombre_corregido en tareas completadas con nombre genérico
+        try:
+            if any(getattr(t, "_nombre_corregido", False)
+                   for t in self.trabajos.values()):
+                for t in self.trabajos.values():
+                    t._nombre_corregido = False
+                _guardar_cola()
+        except Exception:
+            pass
+        return lista
 
     def accion(self, tid, accion):
         with self._lock:
