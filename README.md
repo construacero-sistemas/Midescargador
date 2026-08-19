@@ -85,7 +85,24 @@ El **portable** no puede auto-actualizarse (se auto-extrae a una carpeta
 temporal y no puede reemplazarse a sí mismo); descarga la versión nueva
 manualmente cuando haya.
 
-Para publicar una versión nueva (requiere `gh` autenticado):
+Para publicar una versión nueva (requiere `gh` autenticado), hay dos vías:
+
+**Automática (recomendada)** — un solo comando hace todo: bump de
+`electron/package.json` + `extension/manifest.json`, reconstruye el backend
+(PyInstaller), el instalador (electron-builder), verifica los artefactos,
+commitea, pushea y publica el release:
+
+```
+node build_mei/release.js [--patch | --minor | --major | X.Y.Z] [--notes "..."]
+```
+
+- `--patch`/`--minor`/`--major` incrementan desde la versión actual (por
+defecto `--patch`); también se puede pasar una versión exacta `X.Y.Z`.
+- `--dry-run` imprime el plan sin ejecutar nada.
+- El bump solo toca las dos líneas de versión (el resto del árbol queda
+  intacto); los commits de código van aparte, como siempre.
+
+**Manual** (el flujo histórico):
 
 ```
 cd electron

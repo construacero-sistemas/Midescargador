@@ -2418,6 +2418,27 @@
         • Si algo se ve lento, revisa que el archivo no esté en pausa y que la carpeta de
         destino tenga espacio.
       </div>
+
+      <div class="config-section-title" data-i18n="info.ext.titulo">Extensión de Chrome (para descargar videos desde la página)</div>
+      <div class="config-nota" data-i18n-html="info.ext.nota">
+        Con la extensión instalada, al pasar el mouse por un <strong>video de YouTube</strong> (u
+        otros sitios) aparece un <strong>botón de descarga</strong> sobre el video y, al hacer clic,
+        MiDescargador lo baja solo. Para instalarla una sola vez:<br>
+        1. Abre Chrome y entra a <code>chrome://extensions</code>.<br>
+        2. Activa el <strong>Modo de desarrollador</strong> (arriba a la derecha).<br>
+        3. Pulsa <strong>«Cargar descomprimida»</strong> y elige esta carpeta (pulsa el botón de
+        abajo para abrirla).<br>
+        Listo: la extensión queda instalada para siempre. Si Chrome la desactiva sola,
+        vuelve a pulsar «Cargar descomprimida».
+      </div>
+      <div class="config-nota" style="margin-top:8px;">
+        <button class="btn btn-secondary btn-sm" id="btn-carpeta-extension">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+          </svg>
+          <span data-i18n="info.ext.boton">Abrir carpeta de la extensión</span>
+        </button>
+      </div>
     </div>
   </div>
 </div>
@@ -2664,6 +2685,10 @@
       "info.descomp.nota": "Si el archivo baja comprimido (.rar, .zip, .7z), el programa <strong>lo descomprime solo</strong> al terminar y te deja la carpeta lista. Puedes apagar esto y poner tu propia contraseña en Configuración.",
       "info.consejos.titulo": "Consejos rápidos",
       "info.consejos.nota": "• Puedes pegar <strong>varias direcciones a la vez</strong> (una por línea) y se bajarán una tras otra.<br>• «Conexiones» es la velocidad: 8 viene bien para casi todo; súbela a 16 en conexiones rápidas y bájala a 2 si un sitio se queja.<br>• Si pulsas Descargar dos veces sin querer, no se duplica nada: el programa lo detecta.<br>• Los archivos van a <code>Descargas\\MiDescargador</code>; puedes cambiarlo en Configuración.<br>• Si algo se ve lento, revisa que el archivo no esté en pausa y que la carpeta de destino tenga espacio.",
+      "info.ext.titulo": "Extensión de Chrome (para descargar videos desde la página)",
+      "info.ext.nota": "Con la extensión instalada, al pasar el mouse por un <strong>video de YouTube</strong> (u otros sitios) aparece un <strong>botón de descarga</strong> sobre el video y, al hacer clic, MiDescargador lo baja solo. Para instalarla una sola vez:<br>1. Abre Chrome y entra a <code>chrome://extensions</code>.<br>2. Activa el <strong>Modo de desarrollador</strong> (arriba a la derecha).<br>3. Pulsa <strong>«Cargar descomprimida»</strong> y elige esta carpeta (pulsa el botón de abajo para abrirla).<br>Listo: la extensión queda instalada para siempre. Si Chrome la desactiva sola, vuelve a pulsar «Cargar descomprimida».",
+      "info.ext.boton": "Abrir carpeta de la extensión",
+      "info.ext.error": "No se pudo abrir la carpeta de la extensión.",
       "update.titulo": "Actualización de MiDescargador",
       "update.nueva": "Nueva",
       "update.version": "Versión {v}",
@@ -2887,6 +2912,10 @@
       "info.descomp.nota": "If the file downloads compressed (.rar, .zip, .7z), the program <strong>extracts it by itself</strong> when it finishes and leaves the folder ready. You can turn this off and set your own password in Settings.",
       "info.consejos.titulo": "Quick tips",
       "info.consejos.nota": "• You can paste <strong>several addresses at once</strong> (one per line) and they will download one after another.<br>• “Connections” is the speed: 8 works well for almost everything; raise it to 16 on fast connections and lower it to 2 if a site complains.<br>• If you press Download twice by accident, nothing is duplicated: the program detects it.<br>• Files go to <code>Downloads\\MiDescargador</code>; you can change it in Settings.<br>• If something looks slow, check that the file is not paused and that the destination folder has space.",
+      "info.ext.titulo": "Chrome extension (to download videos from the page)",
+      "info.ext.nota": "With the extension installed, hovering over a <strong>YouTube video</strong> (or other sites) shows a <strong>download button</strong> on the video; click it and MiDescargador downloads it for you. To install it once:<br>1. Open Chrome and go to <code>chrome://extensions</code>.<br>2. Enable <strong>Developer mode</strong> (top right).<br>3. Click <strong>“Load unpacked”</strong> and choose this folder (click the button below to open it).<br>Done: the extension stays installed. If Chrome disables it on its own, click “Load unpacked” again.",
+      "info.ext.boton": "Open the extension folder",
+      "info.ext.error": "Could not open the extension folder.",
       "update.titulo": "MiDescargador Update",
       "update.nueva": "New",
       "update.version": "Version {v}",
@@ -4385,6 +4414,24 @@
   $("#info-panel").onclick = e => {
     if (e.target === $("#info-panel")) $("#info-panel").style.display = "none";
   };
+
+  // abre la carpeta de la extensión de Chrome en el explorador (para
+  // «Cargar descomprimida» en chrome://extensions)
+  const btnCarpetaExt = $("#btn-carpeta-extension");
+  if (btnCarpetaExt) {
+    btnCarpetaExt.onclick = () => {
+      fetchConTimeout("/api/carpeta-extension", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" }
+      }).then(r => r.json().then(d => ({ ok: r.ok, d }))).then(({ ok, d }) => {
+        if (!ok) {
+          mostrarAvisoCalidad((d && d.error) || t("info.ext.error"), true);
+        }
+      }).catch(() => {
+        mostrarAvisoCalidad(t("info.ext.error"), true);
+      });
+    };
+  }
   $("#sesion-login-youtube").onclick = () => iniciarSesionPlataforma("youtube");
   $("#sesion-login-tiktok").onclick = () => iniciarSesionPlataforma("tiktok");
   $("#sesion-borrar-youtube").onclick = () => borrarSesionPlataforma("youtube");

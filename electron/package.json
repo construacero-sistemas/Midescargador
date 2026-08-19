@@ -35,6 +35,10 @@
       {
         "from": "../backend/servidor",
         "to": "backend/servidor"
+      },
+      {
+        "from": "../extension",
+        "to": "extension"
       }
     ],
     "win": {

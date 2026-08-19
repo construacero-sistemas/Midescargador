@@ -2183,6 +2183,27 @@ def _ruta_vlc():
     return shutil.which("vlc")
 
 
+def _dir_extension():
+    """Carpeta fuente de la extensión de Chrome (la que contiene manifest.json).
+    En el empaquetado vive en <app>/resources/extension (extraResources); en dev
+    es <repo>/extension (servidor.py vive en la raíz del repo). Devuelve None si
+    no está disponible."""
+    candidatos = []
+    if getattr(sys, "_MEIPASS", None):
+        # onedir: sys.executable = <app>/resources/backend/servidor/servidor.exe
+        base = os.path.dirname(sys.executable)
+        candidatos.append(os.path.normpath(os.path.join(base, "..", "..", "extension")))
+        candidatos.append(os.path.normpath(os.path.join(sys._MEIPASS, "..", "..", "..", "extension")))
+    # dev: BASE_DIR = <repo> (servidor.py está en la raíz del repo)
+    candidatos.append(os.path.normpath(os.path.join(BASE_DIR, "extension")))
+    # dev con layout antiguo (servidor.py en backend/servidor/)
+    candidatos.append(os.path.normpath(os.path.join(BASE_DIR, "..", "extension")))
+    for c in candidatos:
+        if os.path.isfile(os.path.join(c, "manifest.json")):
+            return c
+    return None
+
+
 def _abrir_carpeta(ruta):
     """Abre una carpeta en el explorador de archivos del sistema.
     Windows usa os.startfile; macOS y Linux caen a open/xdg-open.
@@ -3070,6 +3091,19 @@ class Manejador(BaseHTTPRequestHandler):
             ok, err = _abrir_carpeta(CARPETA_DEFECTO)
             if ok:
                 self._json({"ok": True, "ruta": CARPETA_DEFECTO})
+            else:
+                self._json({"ok": False, "error": err}, 404)
+        elif ruta == "/api/carpeta-extension":
+            # abre la carpeta de la extensión de Chrome (para cargarla con
+            # «Cargar descomprimida» en chrome://extensions)
+            dir_ext = _dir_extension()
+            if not dir_ext:
+                self._json({"ok": False,
+                            "error": "La carpeta de la extensión no está disponible en esta instalación."}, 404)
+                return
+            ok, err = _abrir_carpeta(dir_ext)
+            if ok:
+                self._json({"ok": True, "ruta": dir_ext})
             else:
                 self._json({"ok": False, "error": err}, 404)
         elif ruta == "/api/reproducir":
