@@ -4,7 +4,7 @@
 // para esquivar Chrome Private Network Access (PNA) que bloquea fetch directo
 // desde páginas públicas a 127.0.0.1.
 
-importScripts("exclusiones.js");
+importScripts("exclusiones.js", "token.js");
 
 const SERVIDOR = "http://127.0.0.1:17890";
 const ID_MENU = "midesc-descargar";
@@ -125,7 +125,7 @@ async function fetchFormatos(url) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 35000);
   try {
-    const r = await fetch(SERVIDOR + "/api/formatos", {
+    const r = await mdmFetch(SERVIDOR + "/api/formatos", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url }),
@@ -148,7 +148,7 @@ async function fetchDescargar(url, formato, segmentos, carpeta) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 10000);
   try {
-    const r = await fetch(SERVIDOR + "/api/descargar", {
+    const r = await mdmFetch(SERVIDOR + "/api/descargar", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ url, formato, segmentos: segmentos || 8, carpeta }),

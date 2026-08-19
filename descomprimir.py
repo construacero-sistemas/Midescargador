@@ -103,6 +103,26 @@ def es_parte_secundaria(nombre):
     return False
 
 
+def _zip_tiene_escape(ruta_zip):
+    """True si el .zip contiene entradas que escapan de la carpeta destino
+    (../, rutas absolutas o drives de Windows). Se rechaza el archivo ENTERO
+    antes de delegar en cualquier herramienta: ni Python ni WinRAR/7-Zip
+    deben extraerlo (sus protecciones varían según la versión)."""
+    try:
+        with zipfile.ZipFile(ruta_zip) as z:
+            for info in z.infolist():
+                nombre = (info.filename or "").replace("\\", "/")
+                if not nombre:
+                    continue
+                if nombre.startswith("/") or re.match(r"^[A-Za-z]:", nombre):
+                    return True
+                if ".." in nombre.split("/"):
+                    return True
+    except Exception:
+        return False
+    return False
+
+
 def es_multiparte(nombre):
     """True si el archivo forma parte de un conjunto multiparte."""
     n = (nombre or "").lower()
@@ -179,6 +199,24 @@ def _extraer_zip_python(archivo, destino, password):
         with zipfile.ZipFile(archivo) as z:
             if z.testzip() is not None:
                 return False, "el .zip está dañado"
+            # anti zip-slip: las entradas no pueden escapar de la carpeta
+            # destino (../, rutas absolutas o drives de Windows); un .zip
+            # malicioso escribiría archivos en cualquier carpeta del usuario
+            raiz = os.path.abspath(destino)
+            for info in z.infolist():
+                nombre = (info.filename or "").replace("\\", "/")
+                if not nombre:
+                    continue
+                if nombre.startswith("/") or re.match(r"^[A-Za-z]:", nombre):
+                    return False, ("el .zip contiene rutas absolutas "
+                                   "(se cancela la extracción)")
+                if ".." in nombre.split("/"):
+                    return False, ("el .zip contiene rutas fuera de la "
+                                   "carpeta (se cancela la extracción)")
+                salida = os.path.abspath(os.path.join(destino, nombre))
+                if salida != raiz and not salida.startswith(raiz + os.sep):
+                    return False, ("el .zip contiene rutas fuera de la "
+                                   "carpeta (se cancela la extracción)")
             os.makedirs(destino, exist_ok=True)
             z.extractall(destino)
         return True, ""
@@ -198,6 +236,11 @@ def descomprimir(archivo, password=None):
         return False, "el archivo ya no existe"
     nombre = os.path.basename(archivo).lower()
     destino = _destino(archivo)
+    # anti zip-slip: un .zip malicioso se rechaza aquí, ANTES de delegar en
+    # cualquier herramienta de extracción (ni Python ni WinRAR/7-Zip lo tocan)
+    if nombre.endswith(".zip") and _zip_tiene_escape(archivo):
+        return False, ("el .zip contiene rutas fuera de la carpeta "
+                       "(se cancela la extracción)")
     os.makedirs(destino, exist_ok=True)
 
     # .zip sin herramienta externa: lo hace Python directamente

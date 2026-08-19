@@ -17,5 +17,15 @@ bin/
 # Logs
 *.log
 
+# Artefactos de prueba/diagnóstico sueltos (se regeneran en cada test)
+/cola.json
+/fmt_e2e.json
+/formatos_tamanos_cache.json
+/_test_dpapi.py
+/electron/_test_watchdog.js
+
+# Token de la API local (se genera al primer arranque)
+/token.txt
+
 # Interno de la herramienta de edición
 .freebuff/

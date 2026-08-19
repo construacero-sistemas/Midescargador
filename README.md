@@ -189,6 +189,8 @@ POST /api/reanudar    {"id"}
 POST /api/cancelar    {"id"}
 POST /api/borrar      {"id"}
 POST /api/abrir       {"id"}       (abre la carpeta en el explorador)
+POST /api/carpeta                  (abre la carpeta de descargas en el
+                                   explorador de archivos del sistema)
 GET  /api/media/<id>                (sirve el archivo con soporte de Range:
                                     el reproductor integrado del panel)
 ```

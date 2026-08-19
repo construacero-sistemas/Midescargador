@@ -32,7 +32,7 @@
       display: none;
       flex-direction: column;
       min-width: 198px;
-      font: 500 13px "Segoe UI", system-ui, sans-serif;
+      font: 500 13px "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif;
       user-select: none;
       pointer-events: auto;
     }
@@ -41,28 +41,26 @@
       display: inline-flex;
       align-items: center;
       gap: 8px;
-      background: rgba(16, 22, 38, 0.92);
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
-      color: #f2f5fa;
-      border: 1px solid rgba(77, 141, 255, 0.55);
-      border-radius: 9px;
+      background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+      color: #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 11px;
       padding: 8px 16px;
-      font: 600 13px "Segoe UI", system-ui, sans-serif;
+      font: 600 13px "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif;
       cursor: pointer;
-      box-shadow: 0 6px 18px rgba(0,0,0,0.45);
-      transition: background 0.15s, transform 0.15s;
+      box-shadow: 0 4px 16px rgba(59, 130, 246, 0.35), 0 6px 18px rgba(0, 0, 0, 0.45);
+      transition: filter 0.15s, transform 0.15s;
       white-space: nowrap;
     }
-    .mdm-btn:hover { background: rgba(26, 36, 62, 0.95); transform: translateY(-1px); }
-    .mdm-btn:disabled { opacity: 0.6; cursor: wait; }
+    .mdm-btn:hover { filter: brightness(1.09); transform: translateY(-1px); }
+    .mdm-btn:disabled { opacity: 0.6; cursor: wait; filter: saturate(0.7); }
     .mdm-menu {
       margin-top: 5px;
-      background: rgba(16, 22, 38, 0.97);
+      background: rgba(18, 24, 38, 0.97);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-      border: 1px solid rgba(77, 141, 255, 0.4);
-      border-radius: 10px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 11px;
       box-shadow: 0 12px 32px rgba(0,0,0,0.55);
       overflow: hidden;
       max-height: 320px;
@@ -73,26 +71,26 @@
       align-items: center;
       gap: 8px;
       padding: 9px 14px;
-      color: #e8edf6;
+      color: #f8fafc;
       cursor: pointer;
       white-space: nowrap;
       border-bottom: 1px solid rgba(255,255,255,0.06);
     }
     .mdm-opc:last-child { border-bottom: none; }
-    .mdm-opc:hover { background: rgba(77, 141, 255, 0.18); }
-    .mdm-opc .mdm-tam { margin-left: auto; color: #8fa3c8; font-size: 12px; }
+    .mdm-opc:hover { background: rgba(59, 130, 246, 0.14); }
+    .mdm-opc .mdm-tam { margin-left: auto; color: #93a4bd; font-size: 12px; }
     .mdm-cab {
       display: flex;
       align-items: center;
       gap: 8px;
       padding: 9px 14px;
-      color: #93a8cc;
+      color: #64748b;
       font-size: 12px;
       background: rgba(255,255,255,0.04);
     }
     .mdm-err {
       padding: 10px 12px;
-      color: #ff8f8f;
+      color: #fca5a5;
       font-size: 11.5px;
       line-height: 1.4;
       max-width: 240px;
@@ -107,14 +105,14 @@
       display: none;
       align-items: center;
       gap: 8px;
-      background: rgba(16, 22, 38, 0.95);
+      background: rgba(14, 20, 32, 0.95);
       backdrop-filter: blur(10px);
       -webkit-backdrop-filter: blur(10px);
-      color: #f2f5fa;
-      border: 1px solid rgba(77, 141, 255, 0.55);
+      color: #f8fafc;
+      border: 1px solid rgba(255, 255, 255, 0.14);
       border-radius: 999px;
       padding: 8px 16px;
-      font: 600 13px "Segoe UI", system-ui, sans-serif;
+      font: 600 13px "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif;
       box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
       pointer-events: none;
       white-space: nowrap;
@@ -147,10 +145,10 @@
     avisoActual.appendChild(fila);
     Object.assign(avisoActual.style, {
       position: "fixed", top: "18px", right: "18px", zIndex: "2147483647",
-      background: "rgba(15, 21, 35, 0.95)", backdropFilter: "blur(12px)",
+      background: "rgba(14, 20, 32, 0.97)", backdropFilter: "blur(12px)",
       border: ok ? "1px solid rgba(16,185,129,0.35)" : "1px solid rgba(239,68,68,0.35)",
-      borderRadius: "10px", padding: "11px 16px",
-      font: "600 13px 'Segoe UI', sans-serif",
+      borderRadius: "11px", padding: "11px 16px",
+      font: "600 13px 'Plus Jakarta Sans', 'Segoe UI', sans-serif",
       boxShadow: "0 12px 32px rgba(0,0,0,0.5)", maxWidth: "380px",
     });
     document.documentElement.appendChild(avisoActual);
@@ -327,7 +325,7 @@
       try {
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), 30000);
-        const r = await fetch(SERVIDOR + "/api/formatos", {
+        const r = await mdmFetch(SERVIDOR + "/api/formatos", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ url }),
@@ -357,7 +355,7 @@
   function crearFilaOpcion(texto, tamano) {
     const opc = document.createElement("div");
     opc.className = "mdm-opc";
-    opc.insertAdjacentHTML("afterbegin", SVG("#7dd3fc"));
+    opc.insertAdjacentHTML("afterbegin", SVG("#7cb0ff"));
     const et = document.createElement("span");
     et.textContent = texto;
     opc.appendChild(et);
@@ -375,7 +373,7 @@
     menu.className = "mdm-menu";
     const cab = document.createElement("div");
     cab.className = "mdm-cab";
-    cab.insertAdjacentHTML("afterbegin", SVG("#5b8cff"));
+    cab.insertAdjacentHTML("afterbegin", SVG("#7cb0ff"));
     const cabTexto = document.createElement("span");
     cabTexto.textContent = "Calidad de descarga";
     cab.appendChild(cabTexto);
@@ -455,7 +453,7 @@
     } catch (e1) {
       // 2) Fallback: fetch directo
       try {
-        const r = await fetch(SERVIDOR + "/api/descargar", {
+        const r = await mdmFetch(SERVIDOR + "/api/descargar", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ url, segmentos: 8, carpeta: null, formato }),
@@ -484,7 +482,7 @@
     const btn = document.createElement("button");
     btn.type = "button";
     btn.className = "mdm-btn";
-    btn.innerHTML = `${SVG("#5b8cff")} <span>Descargar</span>`;
+    btn.innerHTML = `${SVG("#ffffff")} <span>Descargar</span>`;
 
     btn.onclick = (e) => {
       e.preventDefault();

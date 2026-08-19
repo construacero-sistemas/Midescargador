@@ -45,6 +45,17 @@ SOPORTADOS = ("mega.nz", "mega.co.nz", "mega.io")
 
 # ------------------------------------------------------------ utilidades
 
+def _sanitizar(nombre):
+    """Sanea el nombre del archivo (viene del atributo 'at' de Mega, que el
+    creador del enlace controla: puede cifrar el JSON que quiera). Sin
+    separadores de ruta ni caracteres inválidos de Windows — un nombre con
+    '../' escribiría fuera de la carpeta de descargas. Espejo de
+    motor._sanitizar."""
+    nombre = re.sub(r'[\\/:*?"<>|\r\n]', "_",
+                    str(nombre or "")).strip().strip(".")
+    return nombre or "descarga"
+
+
 def _b64d(s):
     s = s.strip().replace("-", "+").replace("_", "/")
     s += "=" * (-len(s) % 4)
@@ -179,7 +190,7 @@ def resolver(url):
         nombre = "mega_" + fid
     return {
         "url": d["g"],
-        "nombre": nombre,
+        "nombre": _sanitizar(nombre),
         "tamano": d.get("s"),
         "clave": k,          # 4 ints de 32 bits
         "iv": iv,            # (iv0, iv1, 0, 0)
@@ -199,7 +210,7 @@ class Descarga:
         self.info = info or {}
         self.url = self.info.get("url") or ""
         self.carpeta = os.path.abspath(carpeta)
-        self.nombre = self.info.get("nombre") or "descarga"
+        self.nombre = _sanitizar(self.info.get("nombre"))
         self.total = self.info.get("tamano")
         self.descargado = 0
         self.velocidad = 0.0

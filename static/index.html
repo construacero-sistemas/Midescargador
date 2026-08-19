@@ -2442,6 +2442,22 @@
      LOGIC & CONTROLLERS (JAVASCRIPT)
      ========================================================================== -->
 <script>
+  // Token de la API local: lo inyecta el servidor al servir este HTML
+  // (mismo origen); todas las peticiones /api lo llevan como cabecera.
+  window.__MDM_API_TOKEN__ = "__MDM_TOKEN_PLACEHOLDER__";
+  (function () {
+    const _t = window.__MDM_API_TOKEN__;
+    if (!_t || _t.indexOf("PLACEHOLDER") !== -1) return;
+    const _orig = window.fetch;
+    window.fetch = function (url, opts) {
+      opts = opts || {};
+      const headers = new Headers(opts.headers || {});
+      if (!headers.has("X-MiDescargador-Token")) {
+        headers.set("X-MiDescargador-Token", _t);
+      }
+      return _orig(url, Object.assign({}, opts, { headers }));
+    };
+  })();
   const $ = selector => document.querySelector(selector);
   const $$ = selector => document.querySelectorAll(selector);
   const LISTA = $("#lista");

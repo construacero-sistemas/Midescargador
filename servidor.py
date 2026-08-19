@@ -12,13 +12,17 @@ API:
   POST /api/cancelar    {"id"}
   POST /api/borrar      {"id"}        (quita de la lista)
   POST /api/abrir       {"id"}        (abre la carpeta en el explorador)
+  POST /api/carpeta                  (abre la carpeta de descargas en el
+                                      explorador de archivos del sistema)
   GET  /api/media/<id>               (sirve el archivo con soporte de Range,
                                       para el reproductor integrado del panel)
 """
 
+import hmac
 import json
 import os
 import re
+import secrets
 import sys
 import time
 import uuid
@@ -87,6 +91,38 @@ def _dir_datos():
             pass
         return d
     return BASE_DIR
+
+
+# --- token de la API local ------------------------------------------------
+# El puerto es accesible desde cualquier proceso local; el token distingue a
+# los clientes de confianza (panel, extensión) del resto. Se genera una vez
+# y se persiste para que no cambie en cada reinicio. La API lo exige salvo
+# en /api/token (bootstrap de la extensión, con verificación de Host) y en
+# /api/media (el <video> del reproductor no puede mandar cabeceras y el
+# endpoint solo sirve archivos ya descargados, sin efectos secundarios).
+def _ruta_token():
+    return os.path.join(_dir_datos(), "token.txt")
+
+
+def _cargar_o_crear_token():
+    ruta = _ruta_token()
+    try:
+        with open(ruta, encoding="utf-8") as f:
+            t = f.read().strip()
+        if t and len(t) >= 16:
+            return t
+    except OSError:
+        pass
+    t = secrets.token_urlsafe(32)
+    try:
+        with open(ruta, "w", encoding="utf-8") as f:
+            f.write(t)
+    except OSError:
+        pass
+    return t
+
+
+TOKEN_API = _cargar_o_crear_token()
 
 
 LOG_RUTA = os.path.join(_dir_datos(), "errores.log")
@@ -809,6 +845,28 @@ def _variante_con_cookies(extra):
     return any(a.startswith("--cookies") for a in (extra or []))
 
 
+def _variante_chrome(extra):
+    """True si la variante lee las cookies del PERFIL de Chrome
+    (--cookies-from-browser = el junction)."""
+    return any(str(a).startswith("--cookies-from-browser")
+               for a in (extra or []))
+
+
+def _quitar_variantes_chrome(variantes):
+    """Quita de la cadena las variantes --cookies-from-browser chrome."""
+    return [v for v in variantes if not _variante_chrome(v)]
+
+
+def _es_error_dpapi(detalle):
+    """True si yt-dlp no pudo descifrar las cookies de Chrome (v20/App-Bound,
+    Chrome 2025+; yt-dlp #10927). Cuando pasa, la variante que lee el perfil
+    (junction) está muerta y solo agrega ruido al error."""
+    d = (detalle or "").lower()
+    return ("failed to decrypt with dpapi" in d
+            or "app-bound" in d or "app bound" in d
+            or "10927" in d)
+
+
 def _formato_sin_marca(selector):
     """Preferir formatos SIN marca de agua (TikTok marca el suyo con
     format_note='watermarked'): aplica el filtro a cada alternativa del
@@ -887,6 +945,13 @@ def _calcular_formatos(url):
         ["--cookies-from-browser", "chrome",
          "--extractor-args", "youtube:player_client=default,android"],
     ]
+    # sesión 🔑 activa: la sesión exportada por la extensión es la fuente de
+    # confianza; las cookies del perfil de Chrome (junction) son redundantes
+    # y con Chrome 2025+ fallan con DPAPI (App-Bound) — se omiten (sin
+    # sesión quedan como último recurso y el DPAPI se detecta en pleno
+    # intento y se quitan solas)
+    if cuenta._sesion_activa("youtube"):
+        variantes = _quitar_variantes_chrome(variantes)
     # si hay sesión de Google iniciada (botón 🔑), pruébala ANTES que los
     # clientes sin sesión — pasa los videos bloqueados por el anti-bot y
     # expone las alturas que los clientes anónimos ocultan (p. ej. videos
@@ -1357,7 +1422,8 @@ class _TrabajoYtdlp:
             errores_resume = [f"reanudar: {detalle or codigo}"]
             # intento fresco desde cero si el reanudado no funcionó
             variantes = self._variantes()
-            for intento in range(len(variantes)):
+            intento = 0
+            while intento < len(variantes):
                 if self._cancelar.is_set() or self._pausado:
                     return
                 extra = variantes[intento]
@@ -1368,6 +1434,11 @@ class _TrabajoYtdlp:
                     return
                 if codigo == -2:
                     return
+                # cookies de Chrome sin descifrar: omitir las restantes
+                if _es_error_dpapi(detalle):
+                    restantes = variantes[intento + 1:]
+                    if any(_variante_chrome(v) for v in restantes):
+                        variantes[intento + 1:] = _quitar_variantes_chrome(restantes)
                 # misma priorización de cookies que en el flujo principal
                 if (self._altura_pedida()
                         and detalle
@@ -1379,6 +1450,7 @@ class _TrabajoYtdlp:
                         [v for v in restantes if _variante_con_cookies(v)]
                         + [v for v in restantes if not _variante_con_cookies(v)])
                 errores_resume.append(f"intento {intento + 1}: {detalle or codigo}")
+                intento += 1
             self.estado = "error"
             self._aviso = None   # el banner de error explica el fallo final
             self.error = "yt-dlp falló: " + " // ".join(errores_resume[-3:])
@@ -1393,7 +1465,8 @@ class _TrabajoYtdlp:
 
         errores = []
         variantes = self._variantes()
-        for intento in range(len(variantes)):
+        intento = 0
+        while intento < len(variantes):
             if self._cancelar.is_set():
                 return
             if self._pausado:
@@ -1417,6 +1490,18 @@ class _TrabajoYtdlp:
                     return  # pausado por el usuario
                 if reintento < 2:
                     time.sleep(5)   # respiro antes de retomar el .part
+            # cookies de Chrome sin descifrar (v20/App-Bound): las variantes
+            # --cookies-from-browser restantes están muertas — quitarlas ya
+            # para no gastar intentos ni ensuciar el error con DPAPI
+            if _es_error_dpapi(detalle):
+                restantes = variantes[intento + 1:]
+                if any(_variante_chrome(v) for v in restantes):
+                    variantes[intento + 1:] = _quitar_variantes_chrome(restantes)
+                    _log_servidor(
+                        "cookies de Chrome no descifrables (DPAPI/App-Bound, "
+                        "yt-dlp #10927): se omiten las variantes del perfil "
+                        "de Chrome; exportá la sesión con 'Exportar sesión "
+                        "🔑' de la extensión para descargar autenticado")
             # Pedido de altura concreta y el cliente no la expone
             # ("Requested format is not available"): en vez de seguir con
             # clientes anónimos que van a fallar igual, priorizamos los
@@ -1432,16 +1517,30 @@ class _TrabajoYtdlp:
                 _log_servidor("calidad concreta: el cliente no tiene la altura, "
                               "se priorizan las cookies para reintentar")
             errores.append(f"intento {intento + 1}: {detalle or 'código ' + str(codigo)}")
+            intento += 1
         # todos los intentos fallaron
         self.estado = "error"
         self._aviso = None   # el banner de error explica el fallo final
         resumen = " // ".join(errores[-3:])
         altura = self._altura_pedida()
+        # Cookies de Chrome ilegibles (App-Bound/DPAPI): aunque el resto de
+        # la cadena haya fallado, el mensaje debe explicar CÓMO destrabar
+        # (exportar la sesión con la extensión), no solo mostrar el ruido.
+        if (_es_error_dpapi(resumen)
+                and not cuenta._sesion_activa("youtube")):
+            self.error = (
+                "Chrome no deja leer sus cookies (cifrado App-Bound de "
+                "2025+): yt-dlp no puede descifrarlas con DPAPI. Abrí la "
+                "extensión y pulsa 'Exportar sesión 🔑' con tu cuenta de "
+                "YouTube para descargar autenticado y sin este error. "
+                "Detalle: " + resumen)
         # Video DRM/restringido: YouTube corta los streams altos con 403 y
         # los clientes anónimos solo llegan a baja calidad (o a nada). En vez
         # de un error genérico, decimos qué pasó y qué desbloquearía la altura.
-        if (altura and ("403" in resumen or "DRM" in resumen
-                        or "Requested format is not available" in resumen)):
+        # (elif: si ya se explicó el DPAPI arriba, no lo pisamos — el fix de
+        # cookies es el mensaje accionable y el DRM solo suma ruido.)
+        elif (altura and ("403" in resumen or "DRM" in resumen
+                          or "Requested format is not available" in resumen)):
             self.error = (
                 f"YouTube no permite descargar {altura}p de este video sin "
                 "sesión iniciada (DRM): cortó la descarga con error 403 en "
@@ -1496,6 +1595,14 @@ class _TrabajoYtdlp:
              "--extractor-args", "youtube:player_client=default,android"],
             [],
         ]
+        # sesión 🔑 activa: la sesión exportada por la extensión es la fuente
+        # de confianza (sesión PRIMERO, junction solo como último recurso y
+        # sin sesión). Con Chrome 2025+ el junction falla con DPAPI
+        # (App-Bound, yt-dlp #10927): se omite para no gastar intentos ni
+        # ensuciar el error; si no hay sesión queda y el DPAPI se detecta y
+        # se quita en pleno intento
+        if cuenta._sesion_activa("youtube"):
+            variantes = _quitar_variantes_chrome(variantes)
         if cuenta._sesion_activa("youtube"):
             # web_embedded (ver _calcular_formatos): el cliente por defecto
             # para logueados (tv_downgraded) falla con 'The page needs to be
@@ -2074,6 +2181,24 @@ def _ruta_vlc():
             return p
     import shutil
     return shutil.which("vlc")
+
+
+def _abrir_carpeta(ruta):
+    """Abre una carpeta en el explorador de archivos del sistema.
+    Windows usa os.startfile; macOS y Linux caen a open/xdg-open.
+    Devuelve (ok, error|None)."""
+    if not ruta or not os.path.isdir(ruta):
+        return False, "la carpeta no existe: %s" % ruta
+    try:
+        if os.name == "nt":
+            os.startfile(ruta)
+        elif sys.platform == "darwin":
+            subprocess.Popen(["open", ruta])
+        else:
+            subprocess.Popen(["xdg-open", ruta])
+        return True, None
+    except Exception as e:
+        return False, "no se pudo abrir la carpeta: %s" % e
 
 
 class Gestor:
@@ -2711,15 +2836,20 @@ torrents.on_error = _al_error
 
 
 class Manejador(BaseHTTPRequestHandler):
+    def _token_ok(self):
+        t = self.headers.get("X-MiDescargador-Token") or ""
+        return bool(t) and hmac.compare_digest(t, TOKEN_API)
+
+    def _host_local(self):
+        h = (self.headers.get("Host") or "").lower()
+        return h.split(":", 1)[0].strip().strip("[]") in (
+            "127.0.0.1", "localhost", "::1")
+
     def _json(self, datos, codigo=200):
         cuerpo = json.dumps(datos, ensure_ascii=False).encode("utf-8")
         self.send_response(codigo)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(cuerpo)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Access-Control-Allow-Private-Network", "true")
         self.end_headers()
         self.wfile.write(cuerpo)
 
@@ -2733,24 +2863,42 @@ class Manejador(BaseHTTPRequestHandler):
             return {}
 
     def do_OPTIONS(self):
+        # sin CORS: un preflight de una web remota no recibe cabeceras de
+        # permiso y el navegador bloquea la petición real
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Access-Control-Allow-Private-Network", "true")
         self.end_headers()
 
     def do_GET(self):
         ruta = urllib.parse.urlparse(self.path).path
+        # API protegida por token. /api/token es el bootstrap de la extensión
+        # y solo responde a hosts locales (bloquea DNS rebinding: una web que
+        # re-resuelva su dominio a 127.0.0.1 llega con Host propio).
+        if ruta.startswith("/api/"):
+            if ruta == "/api/token":
+                if not self._host_local():
+                    self._json({"error": "no autorizado"}, 401)
+                else:
+                    self._json({"token": TOKEN_API})
+                return
+            if not ruta.startswith("/api/media/") and not self._token_ok():
+                self._json({"error": "no autorizado"}, 401)
+                return
         if ruta in ("/", "/index.html"):
             self._servir_ui()
         elif ruta.startswith("/static/") or ruta in ("/logo.svg", "/favicon.ico", "/favicon.svg"):
-            nombre = os.path.basename(ruta)
-            if ruta.startswith("/static/"):
-                nombre = ruta[len("/static/"):]
             base = _base_dir()
-            fpath = os.path.join(base, "static", nombre)
-            if os.path.isfile(fpath):
+            if ruta.startswith("/static/"):
+                fpath = os.path.abspath(
+                    os.path.join(base, "static", ruta[len("/static/"):]))
+                # anti path traversal: el archivo debe quedar DENTRO de
+                # static/ — un /static/../config.json no debe servirse
+                raiz = os.path.abspath(os.path.join(base, "static"))
+                if fpath != raiz and not fpath.startswith(raiz + os.sep):
+                    fpath = None
+            else:
+                fpath = os.path.join(base, "static",
+                                     os.path.basename(ruta))
+            if fpath and os.path.isfile(fpath):
                 ctype = "image/svg+xml" if fpath.endswith(".svg") else "image/x-icon" if fpath.endswith(".ico") else "application/octet-stream"
                 try:
                     with open(fpath, "rb") as f:
@@ -2814,6 +2962,9 @@ class Manejador(BaseHTTPRequestHandler):
 
     def do_POST(self):
         ruta = urllib.parse.urlparse(self.path).path
+        if not self._token_ok():
+            self._json({"error": "no autorizado"}, 401)
+            return
         try:
             self._do_post_inner(ruta)
         except Exception as e:
@@ -2909,6 +3060,18 @@ class Manejador(BaseHTTPRequestHandler):
             self._json({"ok": GESTOR.borrar(datos.get("id"))})
         elif ruta == "/api/abrir":
             self._json({"ok": GESTOR.abrir(datos.get("id"))})
+        elif ruta == "/api/carpeta":
+            # acceso rápido desde el popup de la extensión: abre la carpeta
+            # de descargas por defecto en el explorador de archivos
+            try:
+                os.makedirs(CARPETA_DEFECTO, exist_ok=True)
+            except OSError:
+                pass
+            ok, err = _abrir_carpeta(CARPETA_DEFECTO)
+            if ok:
+                self._json({"ok": True, "ruta": CARPETA_DEFECTO})
+            else:
+                self._json({"ok": False, "error": err}, 404)
         elif ruta == "/api/reproducir":
             ok, err = GESTOR.reproducir(datos.get("id"))
             if ok:
@@ -3005,6 +3168,9 @@ class Manejador(BaseHTTPRequestHandler):
         except OSError:
             self._json({"error": "interfaz no encontrada"}, 404)
             return
+        # inyecta el token en el panel (mismo origen): el JS de index.html lo
+        # adjunta a sus peticiones /api sin exponerlo a webs remotas
+        cuerpo = cuerpo.replace(b"__MDM_TOKEN_PLACEHOLDER__", TOKEN_API.encode())
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(cuerpo)))
