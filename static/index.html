@@ -8,6 +8,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <!-- SDK de PayPal para el botón de donación (Hosted Button) -->
+  <script src="https://www.paypal.com/sdk/js?client-id=BAApEI3GY3EXDLv6zZyI3K5vP3agotWdxu-yJ4KztXDRBgIfwScuAq_vEhn36YyB1rvsNfzh0DhffSTqG0&components=hosted-buttons&disable-funding=venmo&currency=USD"></script>
   <style>
     /* ==========================================================================
        VARIABLES & DESIGN SYSTEM (UI/UX 2.0)
@@ -2462,14 +2464,53 @@
         por PayPal. ¡Gracias por apoyar el desarrollo!
       </div>
       <div class="config-nota" style="margin-top:8px;">
-        <button class="btn btn-secondary btn-sm" id="btn-donar">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-            <polyline points="7 10 12 15 17 10"></polyline>
-            <line x1="12" y1="15" x2="12" y2="3"></line>
-          </svg>
-          <span data-i18n="info.dona.boton">Donar con PayPal</span>
-        </button>
+        <div id="paypal-container-MA97UAYFK7JSC" style="max-width:280px;"></div>
+        <div id="paypal-fallback" style="display:none;">
+          <a class="btn btn-secondary btn-sm" href="https://www.paypal.com/donate/?hosted_button_id=MA97UAYFK7JSC" target="_blank" rel="noopener">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="7 10 12 15 17 10"></polyline>
+              <line x1="12" y1="15" x2="12" y2="3"></line>
+            </svg>
+            <span data-i18n="info.dona.boton">Donar con PayPal</span>
+          </a>
+        </div>
+        <noscript>Activa JavaScript para ver el botón de donación.</noscript>
+        <script>
+          (function () {
+            var cont = document.getElementById("paypal-container-MA97UAYFK7JSC");
+            var fb = document.getElementById("paypal-fallback");
+            function mostrarFallback() {
+              if (cont) cont.style.display = "none";
+              if (fb) fb.style.display = "block";
+            }
+            function intentar() {
+              if (typeof window.paypal !== "undefined" && window.paypal.HostedButtons) {
+                try {
+                  window.paypal.HostedButtons({ hostedButtonId: "MA97UAYFK7JSC" })
+                    .render("#paypal-container-MA97UAYFK7JSC");
+                  return;
+                } catch (e) { /* sigue al fallback */ }
+              }
+              mostrarFallback();
+            }
+            // el SDK puede tardar en cargar; reintenta unos segundos
+            if (typeof window.paypal !== "undefined") { intentar(); }
+            else {
+              var veces = 0;
+              var t = setInterval(function () {
+                veces++;
+                if (typeof window.paypal !== "undefined") {
+                  clearInterval(t);
+                  intentar();
+                } else if (veces > 20) {
+                  clearInterval(t);
+                  mostrarFallback();
+                }
+              }, 500);
+            }
+          })();
+        </script>
       </div>
     </div>
   </div>
@@ -4490,16 +4531,6 @@
       }).catch(() => {
         mostrarAvisoCalidad(t("info.ext.error"), true);
       });
-    };
-  }
-
-  // donaciones: enlace de PayPal centralizado (cambiar acá cuando el realme
-  // esté listo, p. ej. https://www.paypal.me/luiggiberaldi)
-  const URL_DONACION = "https://www.paypal.com/paypalme/my/profile";
-  const btnDonar = $("#btn-donar");
-  if (btnDonar) {
-    btnDonar.onclick = () => {
-      window.open(URL_DONACION, "_blank");
     };
   }
   $("#sesion-login-youtube").onclick = () => iniciarSesionPlataforma("youtube");

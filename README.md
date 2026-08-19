@@ -66,10 +66,9 @@ El **portable** no puede auto-actualizarse; baja la versión nueva a mano.
 
 MiDescargador es gratis, sin anuncios y sin telemetría. Si te es útil y querés
 que siga mejorando, podés invitarme un café con una donación voluntaria por
-PayPal (botón **Donar con PayPal** en la app, Información → Apoyar el
-proyecto):
+PayPal (botón de donación en la app, Información → Apoyar el proyecto):
 
-[![Donar con PayPal](https://img.shields.io/badge/Donar-PayPal-00457C?logo=paypal&logoColor=white)](https://www.paypal.com/paypalme/my/profile)
+[![Donar con PayPal](https://img.shields.io/badge/Donar-PayPal-00457C?logo=paypal&logoColor=white)](https://www.paypal.com/donate/?hosted_button_id=MA97UAYFK7JSC)
 
 ### Reportar un problema
 
