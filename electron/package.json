@@ -27,7 +27,9 @@
     "files": [
       "main.js",
       "preload.js",
-      "package.json"
+      "package.json",
+      "icon.ico",
+      "icon.png"
     ],
     "extraResources": [
       {

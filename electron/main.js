@@ -1,9 +1,12 @@
 // MiDescargador - escritorio (Electron)
 // Lanza el backend (servidor.exe empaquetado), espera a que responda en el
-// puerto 17890 y abre el panel en su propia ventana. Al cerrar la app,
-// detiene el servidor. Incluye auto-actualización vía electron-updater
-// (solo en la versión instalada; el portable no puede auto-actualizarse).
-const { app, BrowserWindow, dialog, shell, Menu, ipcMain } = require("electron");
+// puerto 17890 y abre el panel en su propia ventana. Modo bandeja: la X puede
+// ocultar la ventana y la app sigue corriendo en el tray; «Salir» detiene el
+// servidor y su árbol de descargas. Autostart: arranca con Windows (--hidden,
+// sin ventana) para que las descargas continúen al encender la PC. Incluye
+// auto-actualización vía electron-updater (solo en la versión instalada; el
+// portable no puede auto-actualizarse).
+const { app, BrowserWindow, dialog, shell, Menu, ipcMain, Tray, nativeImage, Notification } = require("electron");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -50,6 +53,151 @@ function log(msg) {
   } catch (e) { /* sin consola en empaquetado */ }
 }
 
+// ---- preferencias de la app (modo bandeja) ----
+// Se persisten en %LOCALAPPDATA%\MiDescargador\preferencias.json para que
+// sobrevivan reinicios. minimizarAlCerrar viene APAGADO por defecto (cerrar
+// la ventana apaga la app, como siempre); se activa SOLO desde el menú del
+// tray: al pulsar la X la ventana se oculta y la app sigue en la bandeja con
+// el backend y las descargas corriendo. avisoBandejaVisto = aviso único.
+function rutaPreferencias() {
+  return path.join(
+    process.env.LOCALAPPDATA || app.getPath("appData"),
+    "MiDescargador", "preferencias.json");
+}
+
+let minimizarAlCerrar = false;
+let avisoBandejaVisto = false;
+
+function cargarPreferencias() {
+  try {
+    const d = JSON.parse(fs.readFileSync(rutaPreferencias(), "utf8"));
+    if (typeof d.minimizarAlCerrar === "boolean") minimizarAlCerrar = d.minimizarAlCerrar;
+    if (typeof d.avisoBandejaVisto === "boolean") avisoBandejaVisto = d.avisoBandejaVisto;
+  } catch (e) { /* primera ejecución: defaults */ }
+}
+
+function guardarPreferencias() {
+  try {
+    fs.mkdirSync(path.dirname(rutaPreferencias()), { recursive: true });
+    fs.writeFileSync(rutaPreferencias(), JSON.stringify({
+      minimizarAlCerrar: minimizarAlCerrar,
+      avisoBandejaVisto: avisoBandejaVisto
+    }));
+  } catch (e) { log("no se pudo guardar preferencias: " + (e && e.message)); }
+}
+
+// ---- iniciar con Windows (autostart) ----
+// Se registra en el registro de Windows (HKCU\...\Run) vía setLoginItemSettings:
+// al encender la PC la app arranca sola con --hidden (sin ventana, directo al
+// tray) para que el backend retome las descargas. El estado lo guarda Windows
+// mismo; solo se ofrece en la app instalada (en dev registraría electron.exe,
+// que no es la app).
+let iniciarConWindows = false;
+
+function leerAutostart() {
+  try {
+    if (app.isPackaged) {
+      iniciarConWindows = app.getLoginItemSettings().openAtLogin === true;
+    }
+  } catch (e) { log("no se pudo leer autostart: " + (e && e.message)); }
+}
+
+function aplicarAutostart(activar) {
+  try {
+    if (!app.isPackaged) return;   // en dev no registrar electron.exe
+    if (activar) {
+      app.setLoginItemSettings({
+        openAtLogin: true,
+        path: process.execPath,
+        args: ["--hidden"],   // arranque silencioso: la ventana queda en el tray
+      });
+    } else {
+      app.setLoginItemSettings({ openAtLogin: false });
+    }
+    iniciarConWindows = !!activar;
+  } catch (e) { log("no se pudo configurar autostart: " + (e && e.message)); }
+}
+
+// ---- modo bandeja (tray) ----
+// saliendo = quit real (Salir del tray, actualización, cierre de sesión de
+// Windows): en ese caso NO se intercepta el cierre de la ventana.
+let saliendo = false;
+let tray = null;
+let arranqueOculto = false;   // lanzado por autostart con --hidden
+
+function ventanaPrincipal() {
+  return BrowserWindow.getAllWindows()[0];
+}
+
+function mostrarVentana() {
+  const win = ventanaPrincipal();
+  if (!win) { crearVentana(); return; }
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+}
+
+// clic izquierdo del tray: muestra/oculta la ventana
+function alternarVentana() {
+  const win = ventanaPrincipal();
+  if (!win) { crearVentana(); return; }
+  if (win.isVisible() && win.isFocused()) {
+    win.hide();
+  } else {
+    mostrarVentana();
+  }
+}
+
+// aviso único la primera vez que se oculta a la bandeja, para que nadie
+// piense que la app se cerró sola
+function avisarBandeja() {
+  try {
+    const titulo = "MiDescargador";
+    const cuerpo = "Sigue en segundo plano: su icono quedó en la barra de tareas (junto al reloj). Las descargas continúan. Para apagarla, usa «Salir» en ese icono.";
+    if (tray && typeof tray.displayBalloon === "function") {
+      tray.displayBalloon({ title: titulo, content: cuerpo });
+    } else {
+      new Notification({ title: titulo, body: cuerpo }).show();
+    }
+  } catch (e) { /* sin notificaciones: no es crítico */ }
+}
+
+function crearTray() {
+  try {
+    tray = new Tray(nativeImage.createFromPath(path.join(__dirname, "icon.ico")));
+    tray.setToolTip("MiDescargador");
+    actualizarMenuTray();
+    tray.on("click", alternarVentana);
+  } catch (e) {
+    log("no se pudo crear el tray: " + (e && e.message));
+  }
+}
+
+function actualizarMenuTray() {
+  if (!tray) return;
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: "Abrir MiDescargador", click: mostrarVentana },
+    { type: "separator" },
+    {
+      label: "Minimizar al cerrar a la bandeja",
+      type: "checkbox",
+      checked: minimizarAlCerrar,
+      click: (item) => {
+        minimizarAlCerrar = item.checked;
+        guardarPreferencias();
+      }
+    },
+    ...(app.isPackaged ? [{
+      label: "Iniciar con Windows",
+      type: "checkbox",
+      checked: iniciarConWindows,
+      click: (item) => aplicarAutostart(item.checked)
+    }] : []),
+    { type: "separator" },
+    { label: "Salir", click: () => app.quit() }
+  ]));
+}
+
 // Al relanzar tras una actualización, la app hereda el stdout del instalador;
 // cuando ese pipe se cierra, cualquier console.* lanza EPIPE y Electron muestra
 // el diálogo "A JavaScript error occurred in the main process". Lo evitamos:
@@ -81,6 +229,7 @@ if (!app.requestSingleInstanceLock()) {
     const win = BrowserWindow.getAllWindows()[0];
     if (win) {
       if (win.isMinimized()) win.restore();
+      win.show();   // la ventana puede estar oculta en la bandeja
       win.focus();
     }
   });
@@ -427,6 +576,7 @@ function crearVentana() {
     },
   });
   win.loadURL(URL_PANEL);
+  if (arranqueOculto) win.hide();   // autostart: arranca sin ventana (tray)
   // que la ventana no navegue fuera del panel local
   win.webContents.on("will-navigate", (e, url) => {
     if (!url.startsWith("http://127.0.0.1:" + PUERTO)) e.preventDefault();
@@ -435,13 +585,34 @@ function crearVentana() {
     if (/^https?:/i.test(url)) shell.openExternal(url);
     return { action: "deny" };
   });
+  // cerrar (X) con el modo bandeja activo: la ventana se oculta y la app
+  // sigue corriendo en el tray. Solo «Salir» (o una actualización) la cierra
+  // de verdad; saliendo lo marca before-quit.
+  win.on("close", (e) => {
+    if (!saliendo && minimizarAlCerrar) {
+      e.preventDefault();
+      win.hide();
+      if (!avisoBandejaVisto) {
+        avisoBandejaVisto = true;
+        guardarPreferencias();
+        avisarBandeja();
+      }
+    }
+  });
   return win;
 }
 
 app.whenReady().then(async () => {
+  // AppUserModelID para que las notificaciones de Windows salgan con el
+  // nombre/icono de MiDescargador (no el de Electron).
+  try { app.setAppUserModelId("com.midescargador.desktop"); } catch (e) {}
+  arranqueOculto = process.argv.includes("--hidden");   // autostart silencioso
+  cargarPreferencias();   // antes de crearVentana: el close handler la lee
+  leerAutostart();        // estado del registro de Windows para el menú del tray
   escribirVersionBackend();
   await asegurarServidor();
   crearVentana();
+  crearTray();
   configurarAutoUpdate();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) crearVentana();
@@ -452,7 +623,15 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
+// Cierre de sesión de Windows / apagado: dejar pasar el cierre (no ocultar a
+// la bandeja ni bloquear el apagado) y terminar limpio.
+app.on("session-end", () => {
+  saliendo = true;
+  app.quit();
+});
+
 app.on("before-quit", () => {
+  saliendo = true;   // cierre real: dejar pasar el close de la ventana
   if (servidorProc && servidorProc.exitCode === null) {
     // Mata el backend y su árbol de hijos (aria2c, yt-dlp): si solo se
     // mataba el backend, sus descargas seguían corriendo huérfanas.

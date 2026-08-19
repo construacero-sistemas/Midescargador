@@ -54,6 +54,35 @@ jobs:
           fi
           echo "✓ latest.yml sincronizado con package.json"
 
+      - name: icono del instalador (build.win.icon + electron/icon.ico)
+        # Sin icono, electron-builder embebe el de Electron por defecto en el
+        # .exe y el acceso directo del instalador sale con el átomo gris.
+        # El build es local (build_mei/ está en .gitignore), pero esta
+        # comprobación garantiza que ninguna release futura regrese al icono
+        # por defecto: el .ico debe estar commiteado y bien formado.
+        run: |
+          ICON=$(node -p "const b=require('./electron/package.json').build||{}; (b.win&&b.win.icon)||''")
+          echo "build.win.icon=$ICON"
+          if [ "$ICON" != "icon.ico" ]; then
+            echo "::error::electron/package.json no define build.win.icon (actual: '$ICON'). Sin él el instalador usa el icono por defecto de Electron."
+            exit 1
+          fi
+          if [ ! -f "electron/$ICON" ]; then
+            echo "::error::falta electron/$ICON en el repo (¿se commiteó junto con el fix del icono?)"
+            exit 1
+          fi
+          node -e '
+            const fs = require("fs");
+            const buf = fs.readFileSync("electron/" + process.argv[1]);
+            const res = buf.readUInt16LE(0), tipo = buf.readUInt16LE(2), n = buf.readUInt16LE(4);
+            if (res !== 0 || tipo !== 1 || n < 4) throw new Error("cabecera ICO inválida (n=" + n + ")");
+            const tams = [];
+            for (let i = 0; i < n; i++) tams.push([buf[6 + i * 16], buf[6 + i * 16 + 1]]);
+            console.log("tamaños en el .ico:", JSON.stringify(tams));
+            if (!tams.some(([w, h]) => w === 0 && h === 0)) throw new Error("el .ico no incluye 256px (w=h=0), que Windows usa para alta densidad/taskbar");
+            console.log("✓ electron/icon.ico válido, con 256px");
+          ' "$ICON"
+
       - name: tag vX.Y.Z ↔ versión del código
         if: startsWith(github.ref, 'refs/tags/v')
         run: |
