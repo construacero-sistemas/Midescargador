@@ -2252,6 +2252,21 @@
         </div>
       </div>
 
+      <div class="config-section-title" data-i18n="config.update.titulo">Actualizaciones</div>
+      <div class="config-nota" data-i18n="config.update.nota">
+        La aplicación busca actualizaciones automáticamente al abrir y cada 4 horas. También puedes comprobarlas ahora.
+      </div>
+      <div class="config-nota" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:18px;">
+        <button class="btn btn-secondary btn-sm" id="btn-buscar-actualizaciones">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"></polyline>
+            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+          </svg>
+          <span data-i18n="config.update.buscar">Buscar actualizaciones</span>
+        </button>
+        <span id="txt-estado-update" style="flex:1; min-width:180px; font-size:13px; color:var(--text-secondary);"></span>
+      </div>
+
       <div class="config-section-title" id="config-seccion-sesiones" data-i18n="config.sesiones">Sesiones de descarga</div>
       <div class="config-nota" data-i18n="config.sesiones.nota">
         Iniciar sesión permite descargar videos que exigen cuenta (anti-bot de YouTube,
@@ -2645,6 +2660,15 @@
       "config.lang.aviso": "Elige el idioma de la interfaz (se guarda en tu navegador).",
       "config.sesiones": "Sesiones de descarga",
       "config.sesiones.nota": "Iniciar sesión permite descargar videos que exigen cuenta (anti-bot de YouTube, mayor calidad y menos bloqueos en TikTok). Al pulsar «Iniciar sesión» se abre Chrome: completa el login en la ventana y la sesión se guarda automáticamente (las cookies no salen de tu equipo). Requiere Chrome cerrado.",
+      "config.update.titulo": "Actualizaciones",
+      "config.update.nota": "La aplicación busca actualizaciones automáticamente al abrir y cada 4 horas. También puedes comprobarlas ahora.",
+      "config.update.buscar": "Buscar actualizaciones",
+      "config.update.buscando": "Buscando actualizaciones…",
+      "config.update.al_dia": "Estás al día (v{v}).",
+      "config.update.disponible": "Nueva versión v{v} disponible.",
+      "config.update.lista": "Actualización v{v} lista para instalar.",
+      "config.update.error": "No se pudo buscar actualizaciones.",
+      "config.update.solo_app": "Solo disponible en la aplicación de escritorio.",
       "sesion.youtube": "YouTube (Google)",
       "sesion.tiktok": "TikTok",
       "sesion.comprobando": "Comprobando…",
@@ -2872,6 +2896,15 @@
       "config.lang.aviso": "Choose the interface language (saved in your browser).",
       "config.sesiones": "Download sessions",
       "config.sesiones.nota": "Signing in lets you download videos that require an account (YouTube anti-bot, higher quality and fewer blocks on TikTok). When you press “Sign in”, Chrome opens: complete the login in the window and the session is saved automatically (cookies never leave your computer). Requires Chrome to be closed.",
+      "config.update.titulo": "Updates",
+      "config.update.nota": "The app checks for updates automatically on launch and every 4 hours. You can also check now.",
+      "config.update.buscar": "Check for updates",
+      "config.update.buscando": "Checking for updates…",
+      "config.update.al_dia": "You're up to date (v{v}).",
+      "config.update.disponible": "New version v{v} available.",
+      "config.update.lista": "Update v{v} ready to install.",
+      "config.update.error": "Could not check for updates.",
+      "config.update.solo_app": "Only available in the desktop app.",
       "sesion.youtube": "YouTube (Google)",
       "sesion.tiktok": "TikTok",
       "sesion.comprobando": "Checking…",
@@ -4374,6 +4407,10 @@
   function abrirConfig() {
     $("#config-panel").style.display = "flex";
     cargarSesiones();
+    // reflejar el estado actual del actualizador en el texto del botón
+    if (estadoActualizacionActual && $("#txt-estado-update")) {
+      actualizarUIActualizacion(estadoActualizacionActual);
+    }
   }
 
   // "Sign In" abre la configuración directamente en la sección de sesiones
@@ -4784,6 +4821,22 @@
     const progSection = $("#update-progress-section");
     const progBar = $("#update-progress-bar");
     const progPct = $("#update-progress-pct");
+    const txtEstadoUpdate = $("#txt-estado-update");
+
+    // texto de estado del botón «Buscar actualizaciones» (Configuración)
+    if (txtEstadoUpdate) {
+      if (data.estado === "comprobando") {
+        txtEstadoUpdate.textContent = t("config.update.buscando");
+      } else if (data.estado === "al-dia") {
+        txtEstadoUpdate.textContent = t("config.update.al_dia", { v: data.version || "" });
+      } else if (data.estado === "disponible") {
+        txtEstadoUpdate.textContent = t("config.update.disponible", { v: data.version || "" });
+      } else if (data.estado === "lista") {
+        txtEstadoUpdate.textContent = t("config.update.lista", { v: data.version || "" });
+      } else if (data.estado === "error") {
+        txtEstadoUpdate.textContent = t("config.update.error");
+      }
+    }
 
     if (data.estado === "disponible") {
       if (pill) {
@@ -4875,6 +4928,19 @@
   if (updatePanel) {
     updatePanel.onclick = (e) => {
       if (e.target === updatePanel) updatePanel.style.display = "none";
+    };
+  }
+
+  const btnBuscarAct = $("#btn-buscar-actualizaciones");
+  if (btnBuscarAct) {
+    btnBuscarAct.onclick = () => {
+      const txt = $("#txt-estado-update");
+      if (window.electronAPI && typeof window.electronAPI.comprobarActualizaciones === "function") {
+        if (txt) txt.textContent = t("config.update.buscando");
+        window.electronAPI.comprobarActualizaciones();
+      } else {
+        if (txt) txt.textContent = t("config.update.solo_app");
+      }
     };
   }
 
