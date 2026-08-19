@@ -71,7 +71,7 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "luiggiberaldi",
+        "owner": "luigiberaldi-code",
         "repo": "Midescargador"
       }
     ]

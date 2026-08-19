@@ -150,7 +150,7 @@ gh release create vX.Y.Z \
   dist/MiDescargador-Setup-X.Y.Z.exe.blockmap \
   dist/MiDescargador-X.Y.Z-portable.exe \
   dist/latest.yml \
-  --repo luiggiberaldi/Midescargador --title "MiDescargador X.Y.Z"
+  --repo luigiberaldi-code/Midescargador --title "MiDescargador X.Y.Z"
 ```
 
 Para reconstruir el backend desde el código:
