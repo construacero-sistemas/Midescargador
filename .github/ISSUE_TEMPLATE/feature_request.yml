@@ -1,0 +1,51 @@
+name: 💡 Solicitud de funcionalidad
+description: Una idea para mejorar MiDescargador
+title: "[Idea] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ¡Gracias por proponer una mejora! Antes de escribir, mirá si ya existe
+        una solicitud similar abierta (usá el buscador de Issues). Si hay una,
+        sumate con un comentario en vez de crear otra.
+
+  - type: textarea
+    id: idea
+    attributes:
+      label: ¿Qué te gustaría poder hacer?
+      description: Describí la funcionalidad o mejora con tus palabras.
+      placeholder: "Que se pueda pausar todo de una vez con un solo botón."
+    validations:
+      required: true
+
+  - type: textarea
+    id: problema
+    attributes:
+      label: ¿Qué problema te resuelve?
+      description: Contá la situación en la que la necesitás.
+      placeholder: >-
+        Cuando bajo 10 archivos a la vez quiero poder frenarlos todos sin
+        hacer clic en cada uno.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternativa
+    attributes:
+      label: ¿Cómo lo harías vos? (opcional)
+      description: >-
+        Si tenés una idea de cómo debería verse o funcionar (botón, opción en
+        Configuración, atajo…), contala.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Antes de enviar
+      options:
+        - label: Busqué en los Issues si ya fue pedido
+        - label: Es una idea concreta, no solo "mejorar todo"
+    validations:
+      required: true

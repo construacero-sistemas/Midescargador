@@ -1,0 +1,103 @@
+name: 🐛 Reporte de bug
+description: Algo no funciona como debería — reportalo para poder arreglarlo
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Gracias por tomarte el tiempo de reportar un problema. Cuanta más
+        información pongas, más rápido lo podemos reproducir y arreglar.
+
+  - type: input
+    id: version
+    attributes:
+      label: Versión de MiDescargador
+      description: >-
+        Se ve en la app: Configuración → Actualizaciones (o en la ventana
+        principal, junto al logo). Ej.: 2.3.13
+      placeholder: "2.3.13"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: tipo
+    attributes:
+      label: ¿Cómo la estás usando?
+      options:
+        - App de escritorio (instalada con el .exe)
+        - App de escritorio (portable)
+        - Desde el código (Iniciar.bat)
+        - Extensión de Chrome (solo)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: windows
+    attributes:
+      label: Versión de Windows
+      options:
+        - Windows 11
+        - Windows 10
+        - Windows 8 / 8.1
+        - Windows 7
+        - Otra
+    validations:
+      required: true
+
+  - type: textarea
+    id: que-hiciste
+    attributes:
+      label: ¿Qué hiciste?
+      description: Los pasos exactos para llegar al problema (1, 2, 3…).
+      placeholder: |
+        1. Abrí la app y pegué un enlace de MediaFire
+        2. Pulsé Descargar con 8 conexiones
+        3. A mitad de descarga…
+    validations:
+      required: true
+
+  - type: textarea
+    id: que-esperabas
+    attributes:
+      label: ¿Qué esperabas que pasara?
+      placeholder: "Que la descarga terminara y apareciera en la carpeta de descargas."
+    validations:
+      required: true
+
+  - type: textarea
+    id: que-paso
+    attributes:
+      label: ¿Qué pasó en su lugar?
+      description: >-
+        El texto del error, el estado que muestra el panel (ej. "Error 404",
+        "Sesión vencida"), si se quedó colgada, etc.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs (opcional, pero muy útil)
+      description: >-
+        La app guarda un registro en `errores.log` dentro de su carpeta de
+        datos (se abre con Información → Abrir carpeta de datos). Pegá aquí
+        las últimas líneas, o un fragmento.
+      render: text
+
+  - type: textarea
+    id: contexto
+    attributes:
+      label: Contexto extra (opcional)
+      description: >-
+        ¿Es una URL de un hoster o servidor específico?
+        ¿Comenzó a pasar después de actualizar? Cualquier detalle ayuda.
+      placeholder: "Pasa a pasar desde la versión 2.3.12, con enlaces de Mega."
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        > 💡 Recordá: esto es una beta. No borres los logs antes de reportar:
+        sin ellos el bug es mucho más difícil de cazar.

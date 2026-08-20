@@ -15,7 +15,7 @@ ningún sitio, sin publicidad.
 
 ### Descargar e instalar (Windows)
 
-1. Ve a la pestaña **Releases** de este repositorio y baja el archivo
+1. Ve a la pestaña **[Releases](https://github.com/luigiberaldi-code/Midescargador/releases)** de este repositorio y baja el archivo
    `MiDescargador-Setup-X.Y.Z.exe` (el instalador).
 2. **Doble clic** en el instalador y sigue los pasos (elige la carpeta donde
    quieras instalarlo).
@@ -44,14 +44,13 @@ ningún sitio, sin publicidad.
 
 ### Qué puedes descargar
 
-- **Archivos directos** (cualquier enlace a un archivo).
-- **Videos**: YouTube, TikTok, Instagram, Facebook, Twitter/X, Twitch, Vimeo,
-  SoundCloud… (se fusionan video + audio en un solo archivo).
-- **Hosters**: MediaFire, Mega, Rootz, 1Fichier, MegaUp, FuckingFast, GoFile.
-- **Torrents**: enlaces `magnet:`, archivos `.torrent` y los enlaces TORRENT
-  de ZonaLeros.
-- **ZonaLeros y PiviGames**: pega la página del juego/película y pulsa
-  «Extraer enlaces de descarga» — la app saca todos los servidores.
+- **Archivos directos**: cualquier enlace HTTP/HTTPS a un archivo.
+- **Videos y audio**: YouTube, TikTok, Instagram, Facebook, Twitter/X, Twitch, Vimeo,
+  SoundCloud… (se fusionan video + audio en un solo archivo mediante yt-dlp y ffmpeg).
+- **Servidores y hosters**: MediaFire, Mega, Rootz, 1Fichier, MegaUp, GoFile y más.
+- **Torrents**: enlaces `magnet:` y archivos `.torrent` (descarga BitTorrent mediante aria2c).
+- **Extracción de enlaces**: pega la URL de páginas con múltiples mirrors o servidores y pulsa
+  «Extraer enlaces de descarga» para obtenerlos todos automáticamente.
 
 ### Auto-actualización
 
@@ -72,9 +71,13 @@ PayPal (botón de donación en la app, Información → Apoyar el proyecto):
 
 ### Reportar un problema
 
-Abre un **Issue** en este repositorio indicando: la **versión** que usas (se
-ve en Configuración → Actualizaciones), **qué hiciste**, **qué esperabas** y
+Abre un **Issue** en este repositorio usando la plantilla de reporte
+(aparece sola al pulsar *New issue*): la **versión** que usas (se ve en
+Configuración → Actualizaciones), **qué hiciste**, **qué esperabas** y
 **qué pasó** (con el texto del error, si aparece).
+
+Para saber cómo reportar bien o cómo colaborar con código, leé
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ---
 
@@ -113,10 +116,9 @@ carpeta.
 - URLs de **YouTube, TikTok, MediaFire, Instagram, Twitter/X, Twitch, Vimeo,
   SoundCloud**… se enrutan a **yt-dlp** y se fusionan con **ffmpeg** (video +
   audio en un solo archivo).
-- **Torrents (magnet, .torrent y los enlaces TORRENT de zona-leros)**: el
-  enlace de zetrrent.com se resuelve solo (cookies + token CSRF -> URL directa
-  del `.torrent`) y el contenido se baja por BitTorrent con **aria2c**. Al
-  terminar, los comprimidos se extraen solos con la contraseña automática.
+- **Torrents (magnet y .torrent)**: descarga BitTorrent integrada con
+  **aria2c** y soporte de extracción automática de archivos comprimidos al
+  finalizar.
 
 ### Versión de escritorio (Electron)
 
@@ -198,7 +200,7 @@ committear/pushear y repite el `gh release create` con el tag correcto.
 MiDescargador/
 ├── Iniciar.bat          ← doble clic para arrancar (panel en el navegador)
 ├── motor.py             ← motor de descargas segmentadas (solo stdlib)
-├── torrents.py          ← torrents: resolver zetrrent + motor aria2c
+├── torrents.py          ← torrents: motor BitTorrent vía aria2c
 ├── servidor.py          ← servidor local + API REST
 ├── static/index.html    ← interfaz web (panel)
 ├── extension/           ← extensión de Chrome (MV3)
@@ -230,7 +232,7 @@ POST /api/abrir       {"id"}       (abre la carpeta en el explorador)
 POST /api/carpeta                  (abre la carpeta de descargas en el
                                    explorador de archivos del sistema)
 GET  /api/media/<id>                (sirve el archivo con soporte de Range:
-                                    el reproductor integrado del panel)
+                                     el reproductor integrado del panel)
 ```
 
 ### ¿Qué tiene que IDM no tiene? (las mejoras)
@@ -239,10 +241,10 @@ GET  /api/media/<id>                (sirve el archivo con soporte de Range:
 |---|---|---|
 | **Precio** | Gratis, para siempre | ~$25 (prueba de 30 días) |
 | **Anuncios / adware** | Cero | El instalador histórico arrastra basura |
-| **Límite de prueba / "serial"** | No existe el concepto | El motivo de la carpeta pirata 😉 |
+| **Límite de prueba / "serial"** | No existe (100% libre) | Exige serial o licencias periódicas |
 | **Código** | Abierto (MIT) | Cerrado |
 | **Videos (YouTube, TikTok…)** | yt-dlp (miles de sitios, actualizado) | Solo los que IDM soporta |
-| **Torrents (magnet / .torrent)** | aria2c integrado, con los enlaces TORRENT de ZonaLeros resueltos automáticamente | No |
+| **Torrents (magnet / .torrent)** | aria2c integrado para descargas BitTorrent y enlaces magnet | No |
 | **Fusión video+audio** | ffmpeg automático | Parcial |
 | **Reanudación** | Por segmento (`.part`) | Sí, pero propietaria |
 | **Reintentos** | 6 intentos con backoff por segmento | Opaco |
