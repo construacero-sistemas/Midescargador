@@ -493,7 +493,8 @@ class _Cdp:
         i = self._id
         self._ws.send(json.dumps({
             "id": i, "method": "Runtime.evaluate",
-            "params": {"expression": expr, "returnByValue": True}}))
+            "params": {"expression": expr, "returnByValue": True,
+                            "awaitPromise": True}}))
         while True:
             r = json.loads(self._ws.recv())
             if r.get("id") == i:

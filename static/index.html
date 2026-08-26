@@ -1420,6 +1420,36 @@
       gap: 8px;
     }
 
+    /* Catalogo ZonaLeros */
+    .catalogo-stats {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px;
+    }
+    .catalogo-stat {
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 10px 12px;
+    }
+    .catalogo-stat .k {
+      font-size: 11px;
+      color: var(--text-secondary);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+    .catalogo-stat .v {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-primary);
+      margin-top: 2px;
+    }
+    .catalogo-ultimo {
+      margin-top: 8px;
+      font-size: 11.5px;
+      color: var(--text-secondary);
+    }
+
     .retry-banner {
       margin-top: 10px;
       padding: 8px 12px;
@@ -2119,6 +2149,28 @@
 
   <!-- Extracted Links Panel -->
   <div class="links-panel" id="panel-enlaces" style="display:none;"></div>
+  <!-- Catalogo ZonaLeros -->
+  <section class="card" id="seccion-catalogo">
+    <div class="card-header">
+      <div class="card-title">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"></path></svg>
+        <span data-i18n="catalogo.titulo">Catálogo ZonaLeros</span>
+      </div>
+    </div>
+    <div class="card-subtitle" data-i18n="catalogo.subtitulo">Descarga automáticamente portada, descripción y enlaces de todo el sitio (juegos, películas y series), cada ítem en su carpeta. Reanuda solo lo pendiente si se corta.</div>
+    <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; margin-top:14px;">
+      <button class="btn btn-secondary btn-sm" id="btn-catalogo-iniciar">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+        <span data-i18n="catalogo.iniciar">Iniciar descarga del catálogo</span>
+      </button>
+      <button class="btn btn-ghost btn-sm" id="btn-catalogo-pausar" style="display:none;">
+        <span data-i18n="catalogo.pausar">Pausar</span>
+      </button>
+      <span id="catalogo-estado-txt" style="color:var(--text-secondary); font-size:12.5px;"></span>
+    </div>
+    <div id="panel-catalogo" style="margin-top:12px;"></div>
+  </section>
+
 
   <!-- ==========================================================================
        DOWNLOADS LIST
@@ -4254,6 +4306,96 @@
   }
 
   $("#btn-enlaces").onclick = verEnlaces;
+
+  // Catalogo ZonaLeros
+  function estadoCatalogoTexto(d) {
+    const map = {
+      "inactivo": t("catalogo.est.inactivo"),
+      "enumerando": t("catalogo.est.enumerando"),
+      "procesando": t("catalogo.est.procesando"),
+      "pausado": t("catalogo.est.pausado"),
+      "terminado": t("catalogo.est.terminado"),
+      "error": t("catalogo.est.error")
+    };
+    return map[d.estado] || d.estado || "";
+  }
+
+  function pintarCatalogo(d) {
+    const panel = $("#panel-catalogo");
+    if (!panel) return;
+    const est = d.estado || "inactivo";
+    const activo = est === "enumerando" || est === "procesando";
+    const btnIni = $("#btn-catalogo-iniciar");
+    const btnPau = $("#btn-catalogo-pausar");
+    btnIni.disabled = activo;
+    btnIni.style.display = activo ? "none" : "inline-flex";
+    btnPau.style.display = activo ? "inline-flex" : "none";
+    $("#catalogo-estado-txt").textContent = estadoCatalogoTexto(d);
+    const j = d.juegos || {};
+    const p = d.peliculas || {};
+    const s = d.series || {};
+    const ep = s.episodios || {};
+    panel.innerHTML = `
+      <div class="catalogo-stats">
+        <div class="catalogo-stat"><div class="k">${t("catalogo.juegos")}</div><div class="v">${j.hecho || 0} / ${j.total || 0}</div></div>
+        <div class="catalogo-stat"><div class="k">${t("catalogo.peliculas")}</div><div class="v">${p.hecho || 0} / ${p.total || 0}</div></div>
+        <div class="catalogo-stat"><div class="k">${t("catalogo.series")}</div><div class="v">${s.hecho || 0} / ${s.total || 0}</div></div>
+        <div class="catalogo-stat"><div class="k">${t("catalogo.episodios")}</div><div class="v">${ep.hecho || 0} / ${ep.total || 0}</div></div>
+        <div class="catalogo-stat"><div class="k">${t("catalogo.pendientes")}</div><div class="v">${d.pendientes || 0}</div></div>
+      </div>
+      ${d.ultimo_item ? `<div class="catalogo-ultimo">${t("catalogo.ultimo")}: ${escapeHtml(d.ultimo_item)}</div>` : ""}
+      ${d.ruta ? `<div class="catalogo-ultimo" style="word-break:break-all;">${t("catalogo.ruta")}: ${escapeHtml(d.ruta)}</div>` : ""}
+    `;
+  }
+
+  async function catalogoPoll() {
+    try {
+      const r = await fetch("/api/catalogo");
+      if (!r.ok) return;
+      const d = await r.json();
+      pintarCatalogo(d);
+    } catch (_) {}
+  }
+
+  async function catalogoIniciar() {
+    const btn = $("#btn-catalogo-iniciar");
+    btn.disabled = true;
+    try {
+      const r = await fetch("/api/catalogo/iniciar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}"
+      });
+      const d = await r.json();
+      if (!r.ok) { alert(t("error.generico", { msg: d.error || "" })); return; }
+      pintarCatalogo(d);
+    } catch (e) {
+      alert(t("error.generico", { msg: (e && e.message) || "" }));
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function catalogoPausar() {
+    try {
+      const r = await fetch("/api/catalogo/pausar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}"
+      });
+      const d = await r.json();
+      if (!r.ok) { alert(t("error.generico", { msg: d.error || "" })); return; }
+      pintarCatalogo(d);
+    } catch (e) {
+      alert(t("error.generico", { msg: (e && e.message) || "" }));
+    }
+  }
+
+  $("#btn-catalogo-iniciar").onclick = catalogoIniciar;
+  $("#btn-catalogo-pausar").onclick = catalogoPausar;
+  catalogoPoll();
+  setInterval(catalogoPoll, 3000);
+
 
   function urlsDelCampo() {
     return $("#url").value.split(/\r?\n/).map(s => s.trim()).filter(u => /^https?:\/\//.test(u));

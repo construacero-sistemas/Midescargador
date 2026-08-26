@@ -38,6 +38,7 @@ import motor
 import hosters
 import mega
 import zonaleros_copia as zonaleros   # variante copia de perfil (Chrome abierto, sin taskkill destructivo)
+import catalogo as catalogo_mod
 import pivigames
 import cuenta
 import descomprimir
@@ -1254,6 +1255,20 @@ def _estado_enlaces_tarea(tid):
         if time.time() - v["ts"] > 3600:
             _ENLACES_TAREAS.pop(k, None)
     return {"estado": "listo", "resultado": t["resultado"]}, 200
+
+
+# ---------------- Catálogo ZonaLeros ----------------
+_CATALOGO_RUTA = os.path.join(CARPETA_DEFECTO, "Catálogo ZonaLeros")
+_CATALOGO = None
+_CATALOGO_LOCK = threading.Lock()
+
+
+def _catalogo():
+    global _CATALOGO
+    with _CATALOGO_LOCK:
+        if _CATALOGO is None:
+            _CATALOGO = catalogo_mod.Catalogo(_CATALOGO_RUTA)
+        return _CATALOGO
 
 
 _UA_VERIF = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -2984,6 +2999,8 @@ class Manejador(BaseHTTPRequestHandler):
             tid = (qs.get("tarea") or [""])[0]
             datos, codigo = _estado_enlaces_tarea(tid)
             self._json(datos, codigo)
+        elif ruta == "/api/catalogo":
+            self._json(_catalogo().estado_publico())
         elif ruta.startswith("/api/media/"):
             tid = urllib.parse.unquote(ruta[len("/api/media/"):])
             self._servir_media(tid)
@@ -3058,6 +3075,12 @@ class Manejador(BaseHTTPRequestHandler):
                 self._json({"error": "falta url"}, 400)
                 return
             self._json(_enlaces_lanzar(url))
+        elif ruta == "/api/catalogo/iniciar":
+            _catalogo().iniciar(revisar=bool(datos.get("revisar")))
+            self._json(_catalogo().estado_publico())
+        elif ruta == "/api/catalogo/pausar":
+            _catalogo().pausar()
+            self._json(_catalogo().estado_publico())
         elif ruta == "/api/verificar-enlaces":
             urls = datos.get("urls") or []
             if isinstance(urls, str):
