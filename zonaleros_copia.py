@@ -31,6 +31,7 @@ except ImportError:
     _ws = None
 
 _PUERTO_CDP = 9223
+_PARALELO_SERIE = 5   # pestañas de Chrome que resuelven episodios a la vez
 _RUTA_CHROME = None
 
 _PERFIL_ACTIVO = None   # user-data-dir en uso (junction real o copia temporal)
@@ -450,21 +451,28 @@ class _Cdp:
     reconexión automática si Chrome reinicia un proceso (pasa a veces:
     el renderer se cae y el navegador lo relanza)."""
 
-    def __init__(self, ws_url):
+    def __init__(self, ws_url, target_id=None):
         self._ws_url = ws_url
+        self._target_id = target_id   # pestaña concreta (para el paralelo)
         self._ws = _ws.create_connection(ws_url, timeout=30)
         self._id = 0
 
     def _reconectar(self):
         try:
+            nueva = None
             with urllib.request.urlopen(
                     "http://127.0.0.1:%d/json/list" % _PUERTO_CDP,
                     timeout=3) as r:
                 for t in json.loads(r.read().decode("utf-8", "replace")):
-                    if t.get("type") == "page":
-                        self._ws_url = t["webSocketDebuggerUrl"]
+                    if t.get("type") == "page" and (
+                            self._target_id is None
+                            or t.get("id") == self._target_id):
+                        nueva = t["webSocketDebuggerUrl"]
                         break
-            self._ws = _ws.create_connection(self._ws_url, timeout=30)
+            if not nueva:
+                return False
+            self._ws_url = nueva
+            self._ws = _ws.create_connection(nueva, timeout=30)
             return True
         except Exception:
             return False
@@ -964,12 +972,140 @@ def _extraer_un_episodio(cdp, url, label, fin_global):
     return servidores, incompleto
 
 
+def _crear_pestanas(n):
+    """Abre n pestañas nuevas (about:blank) en la instancia de Chrome que
+    lanzamos, vía CDP del navegador (Target.createTarget, la vía estable
+    desde Chrome 111). Devuelve [(webSocketDebuggerUrl, target_id), ...]
+    o [] si no se pudo."""
+    if n <= 0:
+        return []
+    try:
+        with urllib.request.urlopen(
+                "http://127.0.0.1:%d/json/version" % _PUERTO_CDP,
+                timeout=3) as r:
+            ver = json.loads(r.read().decode("utf-8", "replace"))
+        ws_browser = ver.get("webSocketDebuggerUrl")
+        if not ws_browser:
+            return []
+        ws = _ws.create_connection(ws_browser, timeout=10)
+        ids = [1000 + i for i in range(n)]
+        for mid in ids:
+            ws.send(json.dumps({"id": mid, "method": "Target.createTarget",
+                                "params": {"url": "about:blank"}}))
+        creadas = set()
+        while len(creadas) < n:
+            r = json.loads(ws.recv())
+            if r.get("id") in ids:
+                t = (r.get("result") or {}).get("targetId")
+                if t:
+                    creadas.add(t)
+        ws.close()
+    except Exception:
+        return []
+    # las websockets de cada pestaña nueva, desde /json/list (con un pequeño
+    # reintento por si la lista aún no las refleja). Orden del par:
+    # (webSocketDebuggerUrl, target_id) — igual que _trabajo.
+    salida = []
+    for _ in range(5):
+        try:
+            with urllib.request.urlopen(
+                    "http://127.0.0.1:%d/json/list" % _PUERTO_CDP,
+                    timeout=3) as r:
+                paginas = [t for t in json.loads(
+                    r.read().decode("utf-8", "replace"))
+                    if t.get("type") == "page"]
+            salida = [(t["webSocketDebuggerUrl"], t["id"]) for t in paginas
+                      if t.get("id") in creadas
+                      and t.get("webSocketDebuggerUrl")]
+            if len(salida) >= n:
+                break
+        except Exception:
+            pass
+        time.sleep(0.5)
+    return salida
+
+
+def _extraer_serie_paralela(episodios, n_pestanas, ws_maestro,
+                            target_maestro):
+    """Resuelve los episodios de una serie EN PARALELO: n_pestanas pestañas
+    nuevas del mismo Chrome (cada una con su conexión CDP) más la pestaña
+    maestra (la que ya trae la lista de episodios). Devuelve
+    (servidores, incompleto) en el orden de la serie. Si no se pueden abrir
+    las pestañas, cae a secuencial con la pestaña maestra."""
+    import queue as _queue
+    import threading as _threading
+    pestañas = _crear_pestanas(n_pestanas)
+    conexiones = [(ws_maestro, target_maestro)] + pestañas
+    if not pestañas:
+        _log("[serie] no se pudieron abrir pestañas paralelas: "
+             "resolución secuencial (1 conexión)")
+    # presupuesto: el tiempo por episodio se reparte entre las conexiones
+    n_conex = max(len(conexiones), 1)
+    fin_global = time.time() + min(300 + 90 * len(episodios) // n_conex, 3600)
+    q = _queue.Queue()
+    for i, ep in enumerate(episodios):
+        q.put((i, ep))
+    resultados = []          # (indice, servidores, incompleto)
+    candado = _threading.Lock()
+
+    def _trabajo(ws_url, target_id):
+        cdp = None
+        try:
+            try:
+                cdp = _Cdp(ws_url, target_id=target_id)
+            except Exception:
+                # una pestaña que no conecta no hunde al resto: este
+                # trabajador se rinde y los demás siguen
+                _log("[serie] un trabajador no pudo conectar su pestaña")
+                return
+            while True:
+                if time.time() >= fin_global:
+                    break
+                try:
+                    i, ep = q.get_nowait()
+                except _queue.Empty:
+                    break
+                try:
+                    eps, inc = _extraer_un_episodio(
+                        cdp, ep["url"], ep["label"], fin_global)
+                except Exception as e:
+                    # un episodio que falla no hunde la serie completa
+                    eps = [{"servidor": (ep.get("label") or "?").strip()
+                            or "?", "enlaces": [], "es_multipartes": False,
+                            "error": "error extrayendo el episodio: %s" % e}]
+                    inc = False
+                with candado:
+                    resultados.append((i, eps, inc))
+        finally:
+            if cdp:
+                try:
+                    cdp.cerrar()
+                except Exception:
+                    pass
+
+    hilos = [_threading.Thread(target=_trabajo, args=(w, t), daemon=True)
+             for (w, t) in conexiones]
+    for h in hilos:
+        h.start()
+    for h in hilos:
+        h.join()
+    servidores = []
+    # si el presupuesto cortó antes de recorrerlos todos, va "incompleto"
+    incompleto = len(resultados) < len(episodios)
+    for i, eps, inc in sorted(resultados):
+        servidores.extend(eps)
+        incompleto = incompleto or inc
+    return servidores, incompleto
+
+
 def extraer(url):
     """Flujo completo: abre la página (juego, episodio o serie) con el perfil
     de Chrome, resuelve el reto y saca los enlaces de cada servidor / episodio.
     Devuelve {"servidores": [...], "titulo"} o {"error": ...}. Para series
-    el resultado puede traer "incompleto": True si se agotó el presupuesto
-    antes de recorrer todos los episodios (no se guarda en caché).
+    la resolución de episodios corre EN PARALELO (varias pestañas del mismo
+    Chrome, ~5-10 min en vez de ~35); el resultado puede traer "incompleto":
+    True si se agotó el presupuesto antes de recorrerlos todos (no se guarda
+    en caché).
     """
     ws_url, err = _lanzar(url)
     if err:
@@ -992,20 +1128,13 @@ def extraer(url):
             episodios = _extraer_episodios(cdp)
             if not episodios:
                 return {"error": "no se encontraron episodios en la página de la serie"}
-            # presupuesto ampliado para la serie: 5 min base + 90 s por
-            # episodio (cada uno resuelve varios retos), tope 60 min; corre
-            # en segundo plano y el panel va mostrando el avance
-            fin_global = time.time() + min(300 + 90 * len(episodios), 3600)
-            incompleto = False
-            servidores = []
-            for ep in episodios:
-                if time.time() >= fin_global:
-                    incompleto = True
-                    break
-                eps, inc = _extraer_un_episodio(cdp, ep["url"], ep["label"],
-                                               fin_global)
-                incompleto = incompleto or inc
-                servidores.extend(eps)
+            # resolución EN PARALELO: cada pestaña resuelve episodios a la
+            # vez (lo que antes era ~35 min pasa a ~5-10). El presupuesto se
+            # calcula dentro (90 s por episodio repartidos entre pestañas).
+            # La pestaña maestra (esta conexión) entra como un trabajador
+            # más; la lista de episodios ya está extraída, no se pierde.
+            servidores, incompleto = _extraer_serie_paralela(
+                episodios, _PARALELO_SERIE, ws_url, None)
             resultado = {"servidores": servidores, "titulo": titulo[:150]}
             if incompleto:
                 resultado["incompleto"] = True
