@@ -1,7 +1,7 @@
 blank_issues_enabled: false
 contact_links:
   - name: ❓ Dudas y soporte
-    url: https://github.com/luigiberaldi-code/Midescargador/discussions
+    url: https://github.com/construacero-sistemas/Midescargador/discussions
     about: >-
       Preguntas de uso, dudas de instalación o de la extensión de Chrome —
       mejor en Discussions que en Issues.

@@ -15,7 +15,7 @@ ningún sitio, sin publicidad.
 
 ### Descargar e instalar (Windows)
 
-1. Ve a la pestaña **[Releases](https://github.com/luigiberaldi-code/Midescargador/releases)** de este repositorio y baja el archivo
+1. Ve a la pestaña **[Releases](https://github.com/construacero-sistemas/Midescargador/releases)** de este repositorio y baja el archivo
    `MiDescargador-Setup-X.Y.Z.exe` (el instalador).
 2. **Doble clic** en el instalador y sigue los pasos (elige la carpeta donde
    quieras instalarlo).
@@ -152,7 +152,7 @@ gh release create vX.Y.Z \
   dist/MiDescargador-Setup-X.Y.Z.exe.blockmap \
   dist/MiDescargador-X.Y.Z-portable.exe \
   dist/latest.yml \
-  --repo luigiberaldi-code/Midescargador --title "MiDescargador X.Y.Z"
+  --repo construacero-sistemas/Midescargador --title "MiDescargador X.Y.Z"
 ```
 
 Para reconstruir el backend desde el código:

@@ -94,7 +94,7 @@ node build_mei/release.js --patch --notes "Resumen de cambios"
 
 Esto bumpea `electron/package.json` + `extension/manifest.json`, reconstruye
 el backend y el instalador, verifica artefactos, commitea, pushea y publica
-el release en `luigiberaldi-code/Midescargador`.
+el release en `construacero-sistemas/Midescargador`.
 
 ## 🙏 Gracias
 
