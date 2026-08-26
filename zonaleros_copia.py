@@ -188,15 +188,24 @@ def _lanzar(url, tiempo_max=50):
         # Chrome cerrado: junction al perfil REAL (cookies del usuario).
         # El perfil se puede tocar con un cierre forzado: respaldo previo.
         # Protección v20: el junction sobre un perfil con App-Bound lo
-        # destruye (Chrome no descifra v20 fuera de la ruta real).
+        # destruye (Chrome no descifra v20 fuera de la ruta real). Con
+        # cookies v20 se cae a la COPIA temporal en vez de bloquear: es
+        # segura (el perfil real nunca se toca) y el reto de Cloudflare se
+        # resuelve desde cero (las cookies v10 sí se descifran con la clave
+        # de Local State que se copia; las v20 de la copia simplemente se
+        # descartan, sin dañar el perfil real).
         if _perfil_usa_abe("Default"):
-            return None, _MENSAJE_ABE
+            _log("modo junction -> copia: perfil Default con cookies "
+                 "App-Bound (v20), el junction las destruiría")
+            modo = "copia"
+    if modo == "junction":
         perfil = _crear_junction()
         if not perfil:
             return None, "no se pudo preparar el perfil temporal de Chrome"
         _respaldar_cookies()
     else:
-        # Chrome abierto: copia mínima del perfil (el real no se toca).
+        # Chrome abierto (o perfil con cookies v20): copia mínima del
+        # perfil (el real no se toca).
         perfil = _crear_copia()
         if not perfil:
             return None, "no se pudo preparar la copia del perfil de Chrome"
