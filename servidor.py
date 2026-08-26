@@ -1177,9 +1177,11 @@ def _enlaces_extraer(url):
                 return r
         resultado = modulo.extraer(url)
         # solo se cachea si salió al menos un enlace (una extracción vacía
-        # no merece quedar guardada)
-        if (not resultado.get("error") and any(
-                s.get("enlaces") for s in resultado.get("servidores", []))):
+        # no merece quedar guardada) y el resultado no quedó incompleto
+        # (las series parciales se reintentan para completar episodios)
+        if (not resultado.get("error") and not resultado.get("incompleto")
+                and any(s.get("enlaces")
+                        for s in resultado.get("servidores", []))):
             _ENLACES_CACHE[url] = (time.time(), resultado)
         return resultado
 

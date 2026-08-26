@@ -768,21 +768,260 @@ _JS_CLICK_VERIFICAR = '''(() => {
 })()'''
 
 
+def _es_pagina_serie(url):
+    """True si la URL es la página de UNA SERIE de zona-leros (índice con la
+    lista de episodios), no un episodio suelto ni una página de juego."""
+    seg = [s for s in urllib.parse.urlparse(url).path.lower().split("/") if s]
+    return len(seg) >= 2 and seg[0] == "series" and seg[1] != "episode"
+
+
+def _es_pagina_episodio(url):
+    """True si la URL es la página de UN episodio (/series/episode/...)."""
+    seg = [s for s in urllib.parse.urlparse(url).path.lower().split("/") if s]
+    return len(seg) >= 2 and seg[0] == "series" and seg[1] == "episode"
+
+
+def _extraer_episodios(cdp):
+    """Episodios de la página de serie: [{label, url}] desde los anclas a
+    /series/episode/ (el texto suele ser '4x1 Ataque a los Titanes')."""
+    anclas = cdp.eval('''(() => {
+        const out = [];
+        for (const a of document.querySelectorAll('a[href*="/series/episode/"]')) {
+            const t = (a.innerText || a.title || '').trim().replace(/\\s+/g, ' ');
+            const h = (a.href || '').split('#')[0];
+            if (t && /^https?:\\/\\//.test(h)) out.push({t: t, h: h});
+        }
+        return out;
+    })()''') or []
+    vistos = set()
+    salida = []
+    for e in anclas:
+        u = e.get("h") or ""
+        if u in vistos:
+            continue
+        vistos.add(u)
+        salida.append({"label": (e.get("t") or "?").strip() or "?", "url": u})
+    return salida
+
+
+def _extraer_botones_episodio(cdp):
+    """Botones DESCARGAR de una página de episodio: anclas al acortador
+    anomizador. No llevan title en el HTML; se etiquetan por opción."""
+    return cdp.eval('''(() => {
+        const res = [];
+        for (const a of document.querySelectorAll('a[href*="anomizador"]')) {
+            const t = (a.innerText || a.title || '').trim();
+            const h = (a.href || '');
+            if (/^descargar$/i.test(t)) res.push({h: h, t: t});
+        }
+        return res;
+    })()''') or []
+
+
+def _resolver_zpaste_actual(cdp, fin_global):
+    """Estando ya en el paste (zpaste.net), resuelve los DOS retos
+    encadenados y devuelve los enlaces visibles:
+      1) el reto exterior de Cloudflare ('Un momento…'), que se resuelve
+         solo en unos segundos (a veces hasta ~60 s): hay que esperar a que
+         desaparezca y aparezca el contenido del paste (el botón VERIFICAR).
+      2) la verificación humana del paste: el botón 'Download File' dispara
+         Turnstile y rellena cf-turnstile-response; con el token presente,
+         'VERIFICAR & CONTINUAR' revela los enlaces. Pulsar VERIFICAR con
+         el token vacío mata el reto."""
+    enlaces = []
+    for intento in range(2):
+        if time.time() >= fin_global:
+            break
+        # 1) esperar a que se resuelva el reto exterior de Cloudflare
+        fin_reto = min(time.time() + 90, fin_global)
+        while time.time() < fin_reto:
+            titulo_reto = (cdp.eval("document.title") or "").lower()
+            hay_verif = cdp.eval(
+                "!![...document.querySelectorAll('button,a')]"
+                ".find(x => /VERIFICAR/i.test(x.innerText || x.value || ''))")
+            if "un momento" not in titulo_reto and hay_verif:
+                break
+            time.sleep(3)
+        # 2) 'Download File' arranca Turnstile; cuando el token está,
+        #    pulsar VERIFICAR revela los enlaces
+        fin = min(time.time() + 40, fin_global)
+        while time.time() < fin and not enlaces:
+            enlaces = _leer_enlaces_paste(cdp)
+            if enlaces:
+                break
+            token = (cdp.eval(
+                "(document.querySelector('input[name=\"cf-turnstile-response\"]') || {}).value || ''")
+                or "")
+            if not token:
+                # sin token: dispara Turnstile con 'Download File' y
+                # si el reto pide interacción (checkbox visible) dale
+                # un clic real en su iframe
+                cdp.eval(_JS_CLICK_DOWNLOAD)
+                cdp.clic_widget_turnstile()
+            else:
+                cdp.eval(_JS_CLICK_VERIFICAR)
+            time.sleep(3)
+        if enlaces or time.time() >= fin_global or intento == 1:
+            break
+        # reintenta: recarga el paste (nueva sesión de reto)
+        paste_url = cdp.eval("location.href")
+        if not paste_url:
+            break
+        if not cdp.navegar(
+                paste_url,
+                condicion="location.href.indexOf('zpaste.net') !== -1",
+                tiempo_max=35):
+            break
+    return enlaces
+
+
+def _resolver_un_boton(cdp, boton, fin_global):
+    """Juegos: acortador -> zpaste -> verificación -> enlaces de UN botón
+    de descarga. Devuelve el dict clasificado (sin 'servidor'; lo pone el
+    llamador) o None si se agotó el presupuesto."""
+    if time.time() >= fin_global:
+        return None
+    if not cdp.navegar(
+            boton["h"],
+            condicion="location.href.indexOf('zpaste.net') !== -1",
+            tiempo_max=35):
+        return {"enlaces": [], "es_multipartes": False,
+                "error": "no se pudo abrir el enlace"}
+    enlaces = _resolver_zpaste_actual(cdp, fin_global)
+    # clasifica: multipartes del mismo archivo vs archivos sueltos,
+    # y ordena por número de parte (la extracción exige el orden)
+    return _clasificar_enlaces([
+        {"url": e["url"], "texto": e.get("texto") or "",
+         "nombre": _nombre_de_url(e["url"])} for e in enlaces])
+
+
+def _resolver_enlace_episodio(cdp, boton, fin_global):
+    """Episodios: el acortador anomizador puede resolver DIRECTO al enlace
+    final (Mega, MediaFire…) o pasar por zpaste (multipartes con reto).
+    Espera a que el acortador termine de redirigir y, según dónde aterrice,
+    toma la URL final como enlace o entra al flujo del paste. Devuelve el
+    clasificado (sin 'servidor') o None si se agotó el presupuesto."""
+    if time.time() >= fin_global:
+        return None
+    cond = ("location.href.indexOf('anomizador') === -1"
+            " && !/un momento/i.test(document.title)"
+            " && !/just a moment/i.test(document.title)")
+    if not cdp.navegar(boton["h"], condicion=cond, tiempo_max=45):
+        return {"enlaces": [], "es_multipartes": False,
+                "error": "no se pudo abrir el enlace"}
+    time.sleep(2)   # margen por si el acortador encadena una redirección JS
+    destino = cdp.eval("location.href") or ""
+    if "zpaste.net" in destino:
+        # cayó en un paste: misma vía que los juegos (reto + verificación)
+        enlaces = _resolver_zpaste_actual(cdp, fin_global)
+        return _clasificar_enlaces([
+            {"url": e["url"], "texto": e.get("texto") or "",
+             "nombre": _nombre_de_url(e["url"])} for e in enlaces])
+    # enlace directo: la URL final ya es el enlace de descarga. Se descartan
+    # destinos inválidos (página de error de Chrome, página propia del sitio
+    # tipo 404, o el acortador sin resolver).
+    if (not re.match(r"^https?://", destino)
+            or "zona-leros" in destino or "anomizador" in destino):
+        return {"enlaces": [], "es_multipartes": False,
+                "error": "enlace expirado o caído"}
+    nombre = _nombre_de_url(destino)
+    return {"enlaces": [{"url": destino, "nombre": nombre, "parte": 0,
+                          "total": 0}],
+            "es_multipartes": False, "total_partes": 0,
+            "nombre_base": nombre or None}
+
+
+def _extraer_un_episodio(cdp, url, label, fin_global):
+    """Navega a la página de un episodio y resuelve sus botones DESCARGAR.
+    Devuelve (servidores, incompleto). La etiqueta de cada grupo es el
+    label del episodio + '· Opción N' cuando hay más de un botón."""
+    cond = ("document.querySelectorAll('a[href*=\"anomizador\"]').length > 0"
+            " || /un momento/i.test(document.title)")
+    if not cdp.navegar(url, condicion=cond, tiempo_max=45):
+        return ([{"servidor": label or "?", "enlaces": [],
+                  "es_multipartes": False, "error": "no se pudo abrir el episodio"}],
+                False)
+    while time.time() < fin_global and not cdp.eval(
+            "document.querySelectorAll('a[href*=\"anomizador\"]').length > 0"):
+        time.sleep(3)
+    if not label:
+        titulo = (cdp.eval("document.title") or "").strip()
+        label = re.sub(r"\s*\|\s*ZonaLeRoS\s*$", "", titulo, flags=re.I).strip() or "?"
+    botones = _extraer_botones_episodio(cdp)
+    if not botones:
+        return ([{"servidor": label, "enlaces": [], "es_multipartes": False,
+                  "error": "sin enlaces de descarga en el episodio"}], False)
+    servidores = []
+    incompleto = False
+    for i, b in enumerate(botones):
+        clasificado = _resolver_enlace_episodio(cdp, b, fin_global)
+        if clasificado is None:
+            incompleto = True
+            break
+        clasificado["servidor"] = (label + (" · Opción %d" % (i + 1)
+                                            if len(botones) > 1 else ""))
+        servidores.append(clasificado)
+    return servidores, incompleto
+
+
 def extraer(url):
-    """Flujo completo: abre la página del juego con el perfil real de Chrome,
-    resuelve el reto y saca los enlaces de cada servidor.
-    Devuelve {"servidores": [{"servidor", "enlaces" (con parte/total),
-    "es_multipartes", "nombre_base"}], "titulo"} o {"error": ...}.
+    """Flujo completo: abre la página (juego, episodio o serie) con el perfil
+    de Chrome, resuelve el reto y saca los enlaces de cada servidor / episodio.
+    Devuelve {"servidores": [...], "titulo"} o {"error": ...}. Para series
+    el resultado puede traer "incompleto": True si se agotó el presupuesto
+    antes de recorrer todos los episodios (no se guarda en caché).
     """
     ws_url, err = _lanzar(url)
     if err:
         return {"error": err}
     cdp = None
-    fin_global = time.time() + 300   # tope total: ~5 min como máximo
+    fin_global = time.time() + 300   # tope base: ~5 min (las series lo amplían)
     try:
         cdp = _Cdp(ws_url)
-        # 1) la página del juego: espera a que Cloudflare pase y aparezcan
-        #    los botones de descarga
+
+        # ---------- SERIE: lista de episodios, cada uno con sus enlaces
+        if _es_pagina_serie(url):
+            cond = ("document.querySelectorAll('a[href*=\"/series/episode/\"]').length > 0"
+                    " || /un momento/i.test(document.title)")
+            if not cdp.navegar(url, condicion=cond, tiempo_max=60):
+                return {"error": "Cloudflare no dejó pasar la página"}
+            while time.time() < fin_global and not cdp.eval(
+                    "document.querySelectorAll('a[href*=\"/series/episode/\"]').length > 0"):
+                time.sleep(3)
+            titulo = cdp.eval("document.title") or ""
+            episodios = _extraer_episodios(cdp)
+            if not episodios:
+                return {"error": "no se encontraron episodios en la página de la serie"}
+            # presupuesto ampliado para la serie: 5 min base + 90 s por
+            # episodio (cada uno resuelve varios retos), tope 60 min; corre
+            # en segundo plano y el panel va mostrando el avance
+            fin_global = time.time() + min(300 + 90 * len(episodios), 3600)
+            incompleto = False
+            servidores = []
+            for ep in episodios:
+                if time.time() >= fin_global:
+                    incompleto = True
+                    break
+                eps, inc = _extraer_un_episodio(cdp, ep["url"], ep["label"],
+                                               fin_global)
+                incompleto = incompleto or inc
+                servidores.extend(eps)
+            resultado = {"servidores": servidores, "titulo": titulo[:150]}
+            if incompleto:
+                resultado["incompleto"] = True
+            return resultado
+
+        # ---------- EPISODIO suelto: una sola página con botones DESCARGAR
+        if _es_pagina_episodio(url):
+            servidores, incompleto = _extraer_un_episodio(
+                cdp, url, None, fin_global)
+            titulo = cdp.eval("document.title") or ""
+            resultado = {"servidores": servidores, "titulo": titulo[:150]}
+            if incompleto:
+                resultado["incompleto"] = True
+            return resultado
+
+        # ---------- JUEGO: botones de descarga de la página
         cond = ("document.querySelectorAll('a[id=\"download-link\"]').length > 0"
                 " || /un momento/i.test(document.title)")
         if not cdp.navegar(url, condicion=cond, tiempo_max=60):
@@ -791,83 +1030,19 @@ def extraer(url):
         while time.time() < fin_global and not cdp.eval(
                 "document.querySelectorAll('a[id=\"download-link\"]').length > 0"):
             time.sleep(3)
-        titulo_juego = cdp.eval("document.title") or ""
+        titulo = cdp.eval("document.title") or ""
         botones = _extraer_botones(cdp)
         if not botones:
             return {"error": "no se encontraron botones de descarga en la página"}
-
-        # 2) cada botón: acortador -> zpaste -> verificación -> enlaces
         servidores = []
         for b in botones:
             servidor = (b.get("t") or "?").strip() or "?"
-            if time.time() >= fin_global:
+            clasificado = _resolver_un_boton(cdp, b, fin_global)
+            if clasificado is None:
                 break   # se acabó el presupuesto: entregamos lo extraído
-            if not cdp.navegar(
-                    b["h"],
-                    condicion="location.href.indexOf('zpaste.net') !== -1",
-                    tiempo_max=35):
-                servidores.append({"servidor": servidor, "enlaces": [],
-                                   "error": "no se pudo abrir el enlace"})
-                continue
-            # El paste llega tras DOS retos encadenados:
-            #  1) el reto exterior de Cloudflare ('Un momento…') en el propio
-            #     zpaste.net, que se resuelve solo en unos segundos (a veces
-            #     hasta ~60 s). Hay que esperar a que desaparezca y aparezca
-            #     el contenido del paste (el botón VERIFICAR).
-            #  2) la verificación humana del paste: el botón 'Download File'
-            #     es lo que dispara Turnstile y rellena cf-turnstile-response;
-            #     con el token presente, 'VERIFICAR & CONTINUAR' revela los
-            #     enlaces. Pulsar VERIFICAR con el token vacío mata el reto.
-            enlaces = []
-            for intento in range(2):
-                if time.time() >= fin_global:
-                    break
-                # 1) esperar a que se resuelva el reto exterior de Cloudflare
-                fin_reto = min(time.time() + 90, fin_global)
-                while time.time() < fin_reto:
-                    titulo_reto = (cdp.eval("document.title") or "").lower()
-                    hay_verif = cdp.eval(
-                        "!![...document.querySelectorAll('button,a')]"
-                        ".find(x => /VERIFICAR/i.test(x.innerText || x.value || ''))")
-                    if "un momento" not in titulo_reto and hay_verif:
-                        break
-                    time.sleep(3)
-                # 2) 'Download File' arranca Turnstile; cuando el token está,
-                #    pulsar VERIFICAR revela los enlaces
-                fin = min(time.time() + 40, fin_global)
-                while time.time() < fin and not enlaces:
-                    enlaces = _leer_enlaces_paste(cdp)
-                    if enlaces:
-                        break
-                    token = (cdp.eval(
-                        "(document.querySelector('input[name=\"cf-turnstile-response\"]') || {}).value || ''")
-                        or "")
-                    if not token:
-                        # sin token: dispara Turnstile con 'Download File' y
-                        # si el reto pide interacción (checkbox visible) dale
-                        # un clic real en su iframe
-                        cdp.eval(_JS_CLICK_DOWNLOAD)
-                        cdp.clic_widget_turnstile()
-                    else:
-                        cdp.eval(_JS_CLICK_VERIFICAR)
-                    time.sleep(3)
-                if enlaces or time.time() >= fin_global or intento == 1:
-                    break
-                # reintenta: recarga el paste (nueva sesión de reto)
-                paste_url = cdp.eval("location.href") or b["h"]
-                if not cdp.navegar(
-                        paste_url,
-                        condicion="location.href.indexOf('zpaste.net') !== -1",
-                        tiempo_max=35):
-                    break
-            # clasifica: multipartes del mismo archivo vs archivos sueltos,
-            # y ordena por número de parte (la extracción exige el orden)
-            clasificado = _clasificar_enlaces([
-                {"url": e["url"], "texto": e.get("texto") or "",
-                 "nombre": _nombre_de_url(e["url"])} for e in enlaces])
             clasificado["servidor"] = servidor
             servidores.append(clasificado)
-        return {"servidores": servidores, "titulo": titulo_juego[:150]}
+        return {"servidores": servidores, "titulo": titulo[:150]}
     except Exception as e:
         # si nuestra instancia de Chrome murió a mitad, dilo claro
         if not _nuestro_chrome_vivo():
