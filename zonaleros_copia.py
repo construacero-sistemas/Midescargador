@@ -1135,22 +1135,37 @@ def extraer(url, on_progreso=None):
 
         # ---------- SERIE: lista de episodios, cada uno con sus enlaces
         if _es_pagina_serie(url):
+            def _hay_episodios():
+                try:
+                    return cdp.eval(
+                        "document.querySelectorAll('a[href*=\"/series/episode/\"]').length > 0")
+                except Exception:
+                    return False
+
+            def _esperar_episodios(budget):
+                fin = time.time() + budget
+                while time.time() < fin and not _hay_episodios():
+                    time.sleep(3)
+                return _hay_episodios()
+
             cond = ("document.querySelectorAll('a[href*=\"/series/episode/\"]').length > 0"
                     " || /un momento/i.test(document.title)")
             if not cdp.navegar(url, condicion=cond, tiempo_max=60):
                 return {"error": "Cloudflare no dejó pasar la página"}
-            while time.time() < fin_global and not cdp.eval(
-                    "document.querySelectorAll('a[href*=\"/series/episode/\"]').length > 0"):
-                time.sleep(3)
+            # espera dedicada para la lista de episodios (no consume el
+            # presupuesto de resolución); si Cloudflare se atasca, se
+            # reintenta la navegación una vez antes de rendirse
+            if not _esperar_episodios(240):
+                cdp.navegar(url, condicion=cond, tiempo_max=60)
+                _esperar_episodios(120)
             titulo = cdp.eval("document.title") or ""
             episodios = _extraer_episodios(cdp)
             if not episodios:
+                if re.search(r"un momento|verificando|just a moment", titulo, re.I):
+                    return {"error": ("Cloudflare no respondió a tiempo en la página de la"
+                                     " serie; volvé a intentar en un momento")}
                 return {"error": "no se encontraron episodios en la página de la serie"}
-            # resolución EN PARALELO: cada pestaña resuelve episodios a la
-            # vez (lo que antes era ~35 min pasa a ~5-10). El presupuesto se
-            # calcula dentro (90 s por episodio repartidos entre pestañas).
-            # La pestaña maestra (esta conexión) entra como un trabajador
-            # más; la lista de episodios ya está extraída, no se pierde.
+
             servidores, incompleto = _extraer_serie_paralela(
                 episodios, _PARALELO_SERIE, ws_url, None,
                 on_progreso=on_progreso, titulo=titulo)
