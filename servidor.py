@@ -1162,11 +1162,12 @@ _ENLACES_LOCK = threading.Lock()
 _ENLACES_TAREAS = {}         # id -> {url, estado, resultado, ts} (en curso)
 
 
-def _enlaces_extraer(url):
+def _enlaces_extraer(url, on_progreso=None):
     """(síncrono) Lista los enlaces de descarga de una página de juego
     (zona-leros.com o pivigames.blog). Usa el Chrome real del usuario para
     pasar Cloudflare; el resultado se guarda en caché 12 horas (la
-    extracción tarda ~1-3 minutos)."""
+    extracción tarda ~1-3 minutos). on_progreso recibe los resultados
+    parciales de las series (para mostrarlos en vivo mientras extrae)."""
     modulo = _pagina_enlaces(url)
     if modulo is None:
         return {"error": "no parece un enlace de zona-leros.com ni de pivigames.blog"}
@@ -1175,7 +1176,10 @@ def _enlaces_extraer(url):
             ts, r = _ENLACES_CACHE[url]
             if time.time() - ts < _ENLACES_TTL:
                 return r
-        resultado = modulo.extraer(url)
+        if getattr(modulo, "__name__", "") == "zonaleros_copia":
+            resultado = modulo.extraer(url, on_progreso=on_progreso)
+        else:
+            resultado = modulo.extraer(url)
         # solo se cachea si salió al menos un enlace (una extracción vacía
         # no merece quedar guardada) y el resultado no quedó incompleto
         # (las series parciales se reintentan para completar episodios)
@@ -1208,11 +1212,22 @@ def _enlaces_lanzar(url):
             return {"tarea": tid}
     tid = uuid.uuid4().hex[:8]
     _ENLACES_TAREAS[tid] = {"url": url, "estado": "trabajando",
-                            "resultado": None, "ts": time.time()}
+                            "resultado": None, "parcial": None,
+                            "ts": time.time()}
 
     def _trabajo():
         try:
-            _ENLACES_TAREAS[tid]["resultado"] = _enlaces_extraer(url)
+            def _progreso(servidores, n_resueltos, n_total, titulo):
+                # resultados parciales en vivo: el panel los muestra
+                # mientras la extracción sigue (series paralelas)
+                _ENLACES_TAREAS[tid]["parcial"] = {
+                    "servidores": servidores,
+                    "n_resueltos": n_resueltos,
+                    "n_total": n_total,
+                    "titulo": titulo,
+                }
+            _ENLACES_TAREAS[tid]["resultado"] = _enlaces_extraer(
+                url, on_progreso=_progreso)
         except Exception as e:
             _ENLACES_TAREAS[tid]["resultado"] = {
                 "error": "error extrayendo: %s" % e}
@@ -1230,7 +1245,10 @@ def _estado_enlaces_tarea(tid):
     if not t:
         return {"error": "tarea no encontrada"}, 404
     if t["estado"] == "trabajando":
-        return {"estado": "trabajando"}, 200
+        r = {"estado": "trabajando"}
+        if t.get("parcial"):
+            r["parcial"] = t["parcial"]
+        return r, 200
     # limpieza de tareas viejas (más de 1 hora) para no acumular memoria
     for k, v in list(_ENLACES_TAREAS.items()):
         if time.time() - v["ts"] > 3600:

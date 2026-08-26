@@ -1026,12 +1026,16 @@ def _crear_pestanas(n):
 
 
 def _extraer_serie_paralela(episodios, n_pestanas, ws_maestro,
-                            target_maestro):
+                            target_maestro, on_progreso=None, titulo=None):
     """Resuelve los episodios de una serie EN PARALELO: n_pestanas pestañas
     nuevas del mismo Chrome (cada una con su conexión CDP) más la pestaña
     maestra (la que ya trae la lista de episodios). Devuelve
     (servidores, incompleto) en el orden de la serie. Si no se pueden abrir
-    las pestañas, cae a secuencial con la pestaña maestra."""
+    las pestañas, cae a secuencial con la pestaña maestra.
+
+    on_progreso(servidores, n_resueltos, n_total, titulo) se invoca desde
+    los hilos trabajadores cada vez que un episodio queda resuelto, con la
+    lista acumulada hasta ese momento (para mostrarla EN VIVO en el panel)."""
     import queue as _queue
     import threading as _threading
     pestañas = _crear_pestanas(n_pestanas)
@@ -1076,6 +1080,16 @@ def _extraer_serie_paralela(episodios, n_pestanas, ws_maestro,
                     inc = False
                 with candado:
                     resultados.append((i, eps, inc))
+                    if on_progreso is not None:
+                        try:
+                            vivos = sorted(resultados)
+                            acum = []
+                            for _, e_, _inc in vivos:
+                                acum.extend(e_)
+                            on_progreso(acum, len(vivos), len(episodios),
+                                        titulo)
+                        except Exception:
+                            pass
         finally:
             if cdp:
                 try:
@@ -1098,7 +1112,7 @@ def _extraer_serie_paralela(episodios, n_pestanas, ws_maestro,
     return servidores, incompleto
 
 
-def extraer(url):
+def extraer(url, on_progreso=None):
     """Flujo completo: abre la página (juego, episodio o serie) con el perfil
     de Chrome, resuelve el reto y saca los enlaces de cada servidor / episodio.
     Devuelve {"servidores": [...], "titulo"} o {"error": ...}. Para series
@@ -1106,7 +1120,10 @@ def extraer(url):
     Chrome, ~5-10 min en vez de ~35); el resultado puede traer "incompleto":
     True si se agotó el presupuesto antes de recorrerlos todos (no se guarda
     en caché).
-    """
+
+    on_progreso(servidores, n_resueltos, n_total, titulo): se invoca con los
+    resultados parciales de las series mientras la extracción sigue (para
+    mostrarlos en vivo en el panel)."""
     ws_url, err = _lanzar(url)
     if err:
         return {"error": err}
@@ -1134,7 +1151,8 @@ def extraer(url):
             # La pestaña maestra (esta conexión) entra como un trabajador
             # más; la lista de episodios ya está extraída, no se pierde.
             servidores, incompleto = _extraer_serie_paralela(
-                episodios, _PARALELO_SERIE, ws_url, None)
+                episodios, _PARALELO_SERIE, ws_url, None,
+                on_progreso=on_progreso, titulo=titulo)
             resultado = {"servidores": servidores, "titulo": titulo[:150]}
             if incompleto:
                 resultado["incompleto"] = True
