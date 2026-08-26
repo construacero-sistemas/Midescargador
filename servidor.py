@@ -404,6 +404,7 @@ def _cargar_config():
     global ORGANIZAR_POR_TIPO, MAX_SIMULTANEAS
     global DESCOMPRESION_AUTO, PASSWORD_DESCOMPRESION
     global LIMITE_VELOCIDAD_KBPS
+    global CATALOGO_CARPETA
     try:
         with open(CONFIG_RUTA, encoding="utf-8") as f:
             c = json.load(f)
@@ -419,6 +420,9 @@ def _cargar_config():
                 "limite_kbps", LIMITE_VELOCIDAD_KBPS)))
         except (TypeError, ValueError):
             pass
+        cc = str(c.get("catalogo_carpeta", "") or "").strip()
+        if cc:
+            CATALOGO_CARPETA = cc
     except Exception:
         pass
     _aplicar_limite_global()
@@ -434,6 +438,7 @@ def _guardar_config():
                 "descompresion_auto": DESCOMPRESION_AUTO,
                 "password_descompresion": PASSWORD_DESCOMPRESION,
                 "limite_kbps": LIMITE_VELOCIDAD_KBPS,
+                "catalogo_carpeta": CATALOGO_CARPETA,
             }, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
@@ -1258,7 +1263,7 @@ def _estado_enlaces_tarea(tid):
 
 
 # ---------------- Catálogo ZonaLeros ----------------
-_CATALOGO_RUTA = os.path.join(CARPETA_DEFECTO, "Catálogo ZonaLeros")
+CATALOGO_CARPETA = os.path.join(CARPETA_DEFECTO, "Catálogo ZonaLeros")
 _CATALOGO = None
 _CATALOGO_LOCK = threading.Lock()
 
@@ -1267,8 +1272,30 @@ def _catalogo():
     global _CATALOGO
     with _CATALOGO_LOCK:
         if _CATALOGO is None:
-            _CATALOGO = catalogo_mod.Catalogo(_CATALOGO_RUTA)
+            try:
+                os.makedirs(CATALOGO_CARPETA, exist_ok=True)
+            except Exception:
+                pass
+            _CATALOGO = catalogo_mod.Catalogo(CATALOGO_CARPETA)
         return _CATALOGO
+
+
+def _set_carpeta_catalogo(carpeta):
+    global _CATALOGO, CATALOGO_CARPETA
+    carpeta = (carpeta or "").strip()
+    if not carpeta:
+        return False
+    try:
+        os.makedirs(carpeta, exist_ok=True)
+    except Exception:
+        return False
+    with _CATALOGO_LOCK:
+        if _CATALOGO is not None and _CATALOGO.corriendo():
+            return False
+        CATALOGO_CARPETA = carpeta
+        _CATALOGO = None
+    _guardar_config()
+    return True
 
 
 _UA_VERIF = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -3000,7 +3027,9 @@ class Manejador(BaseHTTPRequestHandler):
             datos, codigo = _estado_enlaces_tarea(tid)
             self._json(datos, codigo)
         elif ruta == "/api/catalogo":
-            self._json(_catalogo().estado_publico())
+            d = _catalogo().estado_publico()
+            d["carpeta"] = CATALOGO_CARPETA
+            self._json(d)
         elif ruta.startswith("/api/media/"):
             tid = urllib.parse.unquote(ruta[len("/api/media/"):])
             self._servir_media(tid)
@@ -3080,7 +3109,18 @@ class Manejador(BaseHTTPRequestHandler):
             self._json(_catalogo().estado_publico())
         elif ruta == "/api/catalogo/pausar":
             _catalogo().pausar()
-            self._json(_catalogo().estado_publico())
+            d = _catalogo().estado_publico()
+            d["carpeta"] = CATALOGO_CARPETA
+            self._json(d)
+        elif ruta == "/api/catalogo/carpeta":
+            carpeta = (datos.get("carpeta") or "").strip()
+            if not carpeta:
+                self._json({"error": "falta carpeta"}, 400)
+                return
+            if _set_carpeta_catalogo(carpeta):
+                self._json({"ok": True, "carpeta": CATALOGO_CARPETA})
+            else:
+                self._json({"error": "no se pudo cambiar la carpeta (corrida activa o ruta inválida)"}, 409)
         elif ruta == "/api/verificar-enlaces":
             urls = datos.get("urls") or []
             if isinstance(urls, str):

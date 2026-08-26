@@ -70,6 +70,19 @@ _JS_ENLACES_INDICE = {
 }
 
 
+_BITACORA = []
+_BITACORA_LOCK = threading.Lock()
+_MAX_BITACORA = 500
+
+def _log(mensaje):
+    """Registro en memoria del catalogo; el backend lo vuelca a disco."""
+    linea = "[%s] %s" % (time.strftime("%H:%M:%S"), mensaje)
+    with _BITACORA_LOCK:
+        _BITACORA.append(linea)
+        if len(_BITACORA) > _MAX_BITACORA:
+            del _BITACORA[:len(_BITACORA) - _MAX_BITACORA]
+    return linea
+
 class Catalogo:
     def __init__(self, root):
         self.root = root
@@ -140,7 +153,7 @@ class Catalogo:
             s = conteo("series")
             ep = conteo("series_ep")
             pend = sum(1 for it in items.values() if self._es_pendiente(it))
-            return {
+            r = {
                 "estado": self._estado,
                 "juegos": j,
                 "peliculas": p,
@@ -151,18 +164,25 @@ class Catalogo:
                 "ultimo_item": self._ultimo_item,
                 "ruta": self.root,
             }
+        con = dict(r)
+        with _BITACORA_LOCK:
+            con["logs"] = list(_BITACORA)
+        return con
 
     # ---------------- control ----------------
     def iniciar(self, revisar=False):
         if self.corriendo():
+            _log("ya hay una corrida en curso")
             return
         self._detener = False
+        _log("iniciando catálogo")
         self._hilo = threading.Thread(
             target=self._correr, kwargs={"revisar": bool(revisar)}, daemon=True)
         self._hilo.start()
 
     def pausar(self):
         self._detener = True
+        _log("pausa solicitada")
 
     def _correr(self, revisar):
         self._estado = "enumerando"
@@ -170,6 +190,7 @@ class Catalogo:
             ws, err = zc._lanzar(INDICES["juegos"], tiempo_max=60)
             if err:
                 self._estado = "error"
+                _log("ERROR al lanzar Chrome: %s" % err)
                 return
             cdp = None
             try:
@@ -191,8 +212,10 @@ class Catalogo:
             return
         if self._detener:
             self._estado = "pausado"
+            _log("catálogo pausado")
         else:
             self._estado = "terminado"
+            _log("catálogo terminado")
         self._guardar()
 
     # ---------------- enumeracion del catalogo ----------------
@@ -328,6 +351,7 @@ class Catalogo:
                 return
             if ok:
                 it["estado"] = "hecho"
+                _log("hecho: %s" % (titulo or url))
                 if titulo:
                     it["carpeta"] = os.path.join(
                         os.path.dirname(carpeta), _sanitizar(titulo))
@@ -335,6 +359,7 @@ class Catalogo:
                 it["estado"] = "error"
                 it["reintentos"] = it.get("reintentos", 0) + 1
                 it["error"] = (error or "")[:200]
+                _log("error (%d/%d): %s" % (it["reintentos"], _MAX_REINTENTOS, error))
                 if it["reintentos"] >= _MAX_REINTENTOS:
                     it["estado"] = "descartado"
             self._ultimo_item = url
