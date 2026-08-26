@@ -945,13 +945,17 @@ def _extraer_un_episodio(cdp, url, label, fin_global):
     Devuelve (servidores, incompleto). La etiqueta de cada grupo es el
     label del episodio + '· Opción N' cuando hay más de un botón."""
     cond = ("document.querySelectorAll('a[href*=\"anomizador\"]').length > 0"
-            " || /un momento/i.test(document.title)")
-    if not cdp.navegar(url, condicion=cond, tiempo_max=45):
+            " || " + _js_reto_cloudflare())
+    if not cdp.navegar(url, condicion=cond, tiempo_max=60):
         return ([{"servidor": label or "?", "enlaces": [],
                   "es_multipartes": False, "error": "no se pudo abrir el episodio"}],
                 False)
     while time.time() < fin_global and not cdp.eval(
             "document.querySelectorAll('a[href*=\"anomizador\"]').length > 0"):
+        if _bloqueado_duro(cdp):
+            return ([{"servidor": label or "?", "enlaces": [],
+                      "es_multipartes": False,
+                      "error": "Cloudflare bloqueó el episodio; intentá de nuevo"}], False)
         time.sleep(3)
     if not label:
         titulo = (cdp.eval("document.title") or "").strip()
@@ -1113,6 +1117,30 @@ def _extraer_serie_paralela(episodios, n_pestanas, ws_maestro,
     return servidores, incompleto
 
 
+def _js_reto_cloudflare():
+    """JS que detecta el reto de Cloudflare ACTIVO (título en ES/EN o
+    el texto de verificación en la página). Sirve para no darse por
+    vencido mientras Cloudflare verifica (el reto suele resolverse solo
+    en unos segundos si el perfil pasa la verificación)."""
+    return ("/un momento|just a moment|verificaci[oó]n|verifying|"
+            "security check|attention required|access denied/i.test("
+            "document.title + ' ' + (document.body && document.body.innerText"
+            " || '').slice(0, 3000))")
+
+
+def _bloqueado_duro(cdp):
+    """True si Cloudflare mostró una página de BLOQUEO duro (la IP o el
+    navegador no pasan el reto; esperar no ayuda)."""
+    try:
+        return bool(cdp.eval(
+            "/attention required|access denied|bloqueado|blocked/i.test("
+            "document.title + ' ' + (document.body && document.body.innerText"
+            " || '').slice(0, 3000))"))
+    except Exception:
+        return False
+
+
+
 def extraer(url, on_progreso=None):
     """Flujo completo: abre la página (juego, episodio o serie) con el perfil
     de Chrome, resuelve el reto y saca los enlaces de cada servidor / episodio.
@@ -1145,23 +1173,31 @@ def extraer(url, on_progreso=None):
             def _esperar_episodios(budget):
                 fin = time.time() + budget
                 while time.time() < fin and not _hay_episodios():
+                    if _bloqueado_duro(cdp):
+                        return "bloqueado"
                     time.sleep(3)
-                return _hay_episodios()
+                return "ok" if _hay_episodios() else "agotado"
 
             cond = ("document.querySelectorAll('a[href*=\"/series/episode/\"]').length > 0"
-                    " || /un momento/i.test(document.title)")
-            if not cdp.navegar(url, condicion=cond, tiempo_max=60):
-                return {"error": "Cloudflare no dejó pasar la página"}
+                    " || " + _js_reto_cloudflare())
+            # la navegación inicial puede tardar por el reto de Cloudflare:
+            # margen amplio y, si no cargó, se reintenta una vez
+            if not cdp.navegar(url, condicion=cond, tiempo_max=120):
+                if not cdp.navegar(url, condicion=cond, tiempo_max=120):
+                    return {"error": "Cloudflare no dejó pasar la página"}
             # espera dedicada para la lista de episodios (no consume el
-            # presupuesto de resolución); si Cloudflare se atasca, se
-            # reintenta la navegación una vez antes de rendirse
-            if not _esperar_episodios(240):
-                cdp.navegar(url, condicion=cond, tiempo_max=60)
-                _esperar_episodios(120)
+            # presupuesto de resolución); si el reto se atasca, se reintenta
+            # la navegación una vez antes de rendirse
+            if _esperar_episodios(240) == "agotado":
+                cdp.navegar(url, condicion=cond, tiempo_max=120)
+                _esperar_episodios(180)
             titulo = cdp.eval("document.title") or ""
             episodios = _extraer_episodios(cdp)
             if not episodios:
-                if re.search(r"un momento|verificando|just a moment", titulo, re.I):
+                if _bloqueado_duro(cdp):
+                    return {"error": ("Cloudflare bloqueó la página de la serie; "
+                                     "intentá de nuevo en unos minutos")}
+                if re.search(r"un momento|verificando|just a moment|verificaci[oó]n|security check", titulo, re.I):
                     return {"error": ("Cloudflare no respondió a tiempo en la página de la"
                                      " serie; volvé a intentar en un momento")}
                 return {"error": "no se encontraron episodios en la página de la serie"}
@@ -1186,12 +1222,15 @@ def extraer(url, on_progreso=None):
 
         # ---------- JUEGO: botones de descarga de la página
         cond = ("document.querySelectorAll('a[id=\"download-link\"]').length > 0"
-                " || /un momento/i.test(document.title)")
-        if not cdp.navegar(url, condicion=cond, tiempo_max=60):
-            return {"error": "Cloudflare no dejó pasar la página"}
+                " || " + _js_reto_cloudflare())
+        if not cdp.navegar(url, condicion=cond, tiempo_max=120):
+            if not cdp.navegar(url, condicion=cond, tiempo_max=120):
+                return {"error": "Cloudflare no dejó pasar la página"}
         # espera extra a que terminen de cargar los botones
         while time.time() < fin_global and not cdp.eval(
                 "document.querySelectorAll('a[id=\"download-link\"]').length > 0"):
+            if _bloqueado_duro(cdp):
+                return {"error": "Cloudflare bloqueó la página (intentá de nuevo en unos minutos)"}
             time.sleep(3)
         titulo = cdp.eval("document.title") or ""
         botones = _extraer_botones(cdp)
