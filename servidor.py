@@ -384,7 +384,8 @@ CATEGORIAS = [
 
 ORGANIZAR_POR_TIPO = True   # se puede cambiar desde el panel
 DESCOMPRESION_AUTO = False  # descomprimir automáticamente al terminar
-PASSWORD_DESCOMPRESION = ""  # contraseña para comprimidos protegidosCONFIG_RUTA = os.path.join(_dir_datos(), "config.json")
+PASSWORD_DESCOMPRESION = ""  # contraseña para comprimidos protegidos
+CONFIG_RUTA = os.path.join(_dir_datos(), "config.json")
 LIMITE_VELOCIDAD_KBPS = 0  # límite GLOBAL de velocidad en KB/s (0 = sin límite)
 
 
