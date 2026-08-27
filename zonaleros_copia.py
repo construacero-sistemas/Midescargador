@@ -940,7 +940,19 @@ def _resolver_enlace_episodio(cdp, boton, fin_global):
             "nombre_base": nombre or None}
 
 
-def _extraer_un_episodio(cdp, url, label, fin_global):
+def _nombre_hoster_url(url):
+    """Nombre estable del hoster real para filtrar resultados de series."""
+    host = (urllib.parse.urlparse(url or "").hostname or "").lower()
+    for frag, nombre in (("mediafire.com", "MediaFire"), ("mega.nz", "Mega"),
+                         ("mega.co.nz", "Mega"), ("gofile.io", "GoFile"),
+                         ("rootz.so", "Rootz"), ("1fichier.com", "1Fichier"),
+                         ("megaup.net", "MegaUp"), ("fireload.com", "Fireload")):
+        if host == frag or host.endswith("." + frag):
+            return nombre
+    return host or "Servidor"
+
+
+def _extraer_un_episodio(cdp, url, label, fin_global, hosters_permitidos=None):
     """Navega a la página de un episodio y resuelve sus botones DESCARGAR.
     Devuelve (servidores, incompleto). La etiqueta de cada grupo es el
     label del episodio + '· Opción N' cuando hay más de un botón."""
@@ -971,8 +983,17 @@ def _extraer_un_episodio(cdp, url, label, fin_global):
         if clasificado is None:
             incompleto = True
             break
-        clasificado["servidor"] = (label + (" · Opción %d" % (i + 1)
+        # El hoster solo se conoce tras resolver el acortador. Filtramos aquí,
+        # antes de entregar el resultado al panel/cola, no después.
+        urls_finales = [e.get("url") for e in (clasificado.get("enlaces") or []) if isinstance(e, dict)]
+        hosters = {_nombre_hoster_url(u) for u in urls_finales if u}
+        permitidos = {str(x).lower() for x in (hosters_permitidos or [])}
+        if permitidos and hosters and not any(any(p in h.lower() for p in permitidos) for h in hosters):
+            continue
+        nombre = next(iter(hosters), "Servidor por confirmar")
+        clasificado["servidor"] = (nombre + " · " + label + (" · Opción %d" % (i + 1)
                                             if len(botones) > 1 else ""))
+        clasificado["episodio"] = label
         servidores.append(clasificado)
     return servidores, incompleto
 
@@ -1031,7 +1052,8 @@ def _crear_pestanas(n):
 
 
 def _extraer_serie_paralela(episodios, n_pestanas, ws_maestro,
-                            target_maestro, on_progreso=None, titulo=None):
+                            target_maestro, on_progreso=None, titulo=None,
+                            hosters_permitidos=None):
     """Resuelve los episodios de una serie EN PARALELO: n_pestanas pestañas
     nuevas del mismo Chrome (cada una con su conexión CDP) más la pestaña
     maestra (la que ya trae la lista de episodios). Devuelve
@@ -1076,7 +1098,8 @@ def _extraer_serie_paralela(episodios, n_pestanas, ws_maestro,
                     break
                 try:
                     eps, inc = _extraer_un_episodio(
-                        cdp, ep["url"], ep["label"], fin_global)
+                        cdp, ep["url"], ep["label"], fin_global,
+                        hosters_permitidos=hosters_permitidos)
                 except Exception as e:
                     # un episodio que falla no hunde la serie completa
                     eps = [{"servidor": (ep.get("label") or "?").strip()
@@ -1141,7 +1164,7 @@ def _bloqueado_duro(cdp):
 
 
 
-def extraer(url, on_progreso=None):
+def extraer(url, on_progreso=None, hosters_permitidos=None, episodios_permitidos=None):
     """Flujo completo: abre la página (juego, episodio o serie) con el perfil
     de Chrome, resuelve el reto y saca los enlaces de cada servidor / episodio.
     Devuelve {"servidores": [...], "titulo"} o {"error": ...}. Para series
@@ -1202,9 +1225,13 @@ def extraer(url, on_progreso=None):
                                      " serie; volvé a intentar en un momento")}
                 return {"error": "no se encontraron episodios en la página de la serie"}
 
+            if episodios_permitidos:
+                permitidos_urls = set(episodios_permitidos)
+                episodios = [e for e in episodios if e.get("url") in permitidos_urls]
             servidores, incompleto = _extraer_serie_paralela(
                 episodios, _PARALELO_SERIE, ws_url, None,
-                on_progreso=on_progreso, titulo=titulo)
+                on_progreso=on_progreso, titulo=titulo,
+                hosters_permitidos=hosters_permitidos)
             resultado = {"servidores": servidores, "titulo": titulo[:150]}
             if incompleto:
                 resultado["incompleto"] = True

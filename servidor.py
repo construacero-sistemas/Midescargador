@@ -1169,7 +1169,108 @@ _ENLACES_LOCK = threading.Lock()
 _ENLACES_TAREAS = {}         # id -> {url, estado, resultado, ts} (en curso)
 
 
-def _enlaces_extraer(url, on_progreso=None):
+def _numero_temporada(label):
+    """Extrae el número de temporada de etiquetas habituales de episodios."""
+    s = str(label or "")
+    patrones = (r"\bS(?:eason)?\s*0*(\d+)",
+                r"\bT(?:emporada)?\s*0*(\d+)",
+                r"\b(\d{1,2})\s*[xX]\s*0*\d+")
+    for patron in patrones:
+        m = re.search(patron, s, re.I)
+        if m:
+            return int(m.group(1))
+    return 0
+
+
+def _escaneo_serie(url):
+
+    """Escaneo ligero: obtiene título y episodios, sin resolver acortadores."""
+    if not getattr(zonaleros, "_es_pagina_serie", lambda u: False)(url):
+        return {"tipo": "pagina", "url": url}
+    ws_url, err = zonaleros._lanzar(url)
+    if err:
+        return {"error": err}
+    cdp = None
+    try:
+        cdp = zonaleros._Cdp(ws_url)
+        cond = ("document.querySelectorAll('a[href*=\\\"/series/episode/\\\"]').length > 0"
+                " || " + zonaleros._js_reto_cloudflare())
+        if not cdp.navegar(url, condicion=cond, tiempo_max=120):
+            if not cdp.navegar(url, condicion=cond, tiempo_max=120):
+                return {"error": "Cloudflare no dejó pasar la página"}
+        fin = time.time() + 240
+        episodios = []
+        while time.time() < fin:
+            episodios = zonaleros._extraer_episodios(cdp)
+            if episodios:
+                break
+            if zonaleros._bloqueado_duro(cdp):
+                return {"error": "Cloudflare bloqueó la página de la serie"}
+            time.sleep(3)
+        if not episodios:
+            return {"error": "no se encontraron episodios en la página de la serie"}
+        titulo = cdp.eval("document.title") or ""
+        temporadas = {}
+        for i, ep in enumerate(episodios):
+            label = ep.get("label") or "?"
+            n = _numero_temporada(label)
+            clave = str(n) if n else "especiales"
+            temporadas.setdefault(clave, []).append({
+                "indice": i, "label": label, "url": ep.get("url") or "",
+                "servidores": []})
+        return {"tipo": "serie", "titulo": titulo[:150], "url": url,
+                "servidores_confirmados": False,
+                "temporadas": [{"id": k, "numero": int(k) if k.isdigit() else 0,
+                                 "nombre": ("Temporada " + k) if k.isdigit() else "Especiales",
+                                 "episodios": v} for k, v in sorted(temporadas.items(), key=lambda x: (not x[0].isdigit(), int(x[0]) if x[0].isdigit() else 0))],
+                "total_episodios": len(episodios)}
+    finally:
+        if cdp:
+            try:
+                cdp.cerrar()
+            except Exception:
+                pass
+        zonaleros._finalizar()
+
+
+def _escaneo_lanzar(url):
+    """Arranca el análisis previo sin alterar la extracción normal."""
+    modulo = _pagina_enlaces(url)
+    if modulo is None or _es_url_archivo(url):
+        return {"tipo": "flujo_actual"}
+    if getattr(modulo, "__name__", "") != "zonaleros_copia":
+        return {"tipo": "flujo_actual", "mensaje": "Este contenido se analizará con el flujo normal."}
+    for tid, tarea in list(_ENLACES_TAREAS.items()):
+        if tarea.get("modo") == "escaneo" and tarea.get("url") == url and tarea.get("estado") == "trabajando":
+            return {"tarea": tid}
+    tid = uuid.uuid4().hex[:8]
+    _ENLACES_TAREAS[tid] = {"url": url, "modo": "escaneo", "estado": "trabajando",
+                            "resultado": None, "ts": time.time()}
+    def trabajo():
+        try:
+            if _ENLACES_TAREAS.get(tid, {}).get("cancelado"):
+                _ENLACES_TAREAS[tid]["resultado"] = {"error": "escaneo cancelado"}
+                return
+            r = _escaneo_serie(url)
+            _ENLACES_TAREAS[tid]["resultado"] = r
+        except Exception as e:
+            _ENLACES_TAREAS[tid]["resultado"] = {"error": "error escaneando: %s" % e}
+        finally:
+            _ENLACES_TAREAS[tid]["estado"] = "listo"
+            _ENLACES_TAREAS[tid]["ts"] = time.time()
+    threading.Thread(target=trabajo, daemon=True).start()
+    return {"tarea": tid, "modo": "escaneo"}
+
+
+def _escaneo_cancelar(tid):
+    tarea = _ENLACES_TAREAS.get(tid)
+    if not tarea or tarea.get("modo") != "escaneo":
+        return False
+    tarea["cancelado"] = True
+    return True
+
+
+def _enlaces_extraer(url, on_progreso=None, hosters_permitidos=None, episodios_permitidos=None):
     """(síncrono) Lista los enlaces de descarga de una página de juego
     (zona-leros.com o pivigames.blog). Usa el Chrome real del usuario para
     pasar Cloudflare; el resultado se guarda en caché 12 horas (la
@@ -1184,7 +1285,9 @@ def _enlaces_extraer(url, on_progreso=None):
             if time.time() - ts < _ENLACES_TTL:
                 return r
         if getattr(modulo, "__name__", "") == "zonaleros_copia":
-            resultado = modulo.extraer(url, on_progreso=on_progreso)
+            resultado = modulo.extraer(url, on_progreso=on_progreso,
+                                       hosters_permitidos=hosters_permitidos,
+                                       episodios_permitidos=episodios_permitidos)
         else:
             resultado = modulo.extraer(url)
         # solo se cachea si salió al menos un enlace (una extracción vacía
@@ -1197,7 +1300,7 @@ def _enlaces_extraer(url, on_progreso=None):
         return resultado
 
 
-def _enlaces_lanzar(url):
+def _enlaces_lanzar(url, urls_seleccionadas=None, servidores_seleccionados=None):
     """Devuelve la extracción si ya está en caché, o la arranca en un hilo
     y devuelve un id de tarea para sondearla. Así el panel no mantiene una
     conexión HTTP de 1-3 minutos que se cae con 'Failed to fetch' cuando
@@ -1220,6 +1323,8 @@ def _enlaces_lanzar(url):
     tid = uuid.uuid4().hex[:8]
     _ENLACES_TAREAS[tid] = {"url": url, "estado": "trabajando",
                             "resultado": None, "parcial": None,
+                            "urls_seleccionadas": urls_seleccionadas or [],
+                            "servidores_seleccionados": servidores_seleccionados or [],
                             "ts": time.time()}
 
     def _trabajo():
@@ -1233,8 +1338,25 @@ def _enlaces_lanzar(url):
                     "n_total": n_total,
                     "titulo": titulo,
                 }
-            _ENLACES_TAREAS[tid]["resultado"] = _enlaces_extraer(
-                url, on_progreso=_progreso)
+            urls = _ENLACES_TAREAS[tid].get("urls_seleccionadas") or []
+            if urls:
+                resultados = []
+                total = len(urls)
+                for i, una_url in enumerate(urls):
+                    r = _enlaces_extraer(
+                        una_url, on_progreso=_progreso,
+                        hosters_permitidos=_ENLACES_TAREAS[tid].get("servidores_seleccionados"))
+                    if r.get("servidores"):
+                        resultados.extend(r["servidores"])
+                    _progreso(resultados, i + 1, total, r.get("titulo") or "")
+                permitidos = {x.lower() for x in (_ENLACES_TAREAS[tid].get("servidores_seleccionados") or [])}
+                if permitidos:
+                    resultados = [s for s in resultados if any(p in (s.get("servidor") or "").lower() for p in permitidos)]
+                _ENLACES_TAREAS[tid]["resultado"] = {"servidores": resultados, "titulo": "Selección de enlaces",
+                                                        "seleccion": True}
+            else:
+                _ENLACES_TAREAS[tid]["resultado"] = _enlaces_extraer(
+                    url, on_progreso=_progreso)
         except Exception as e:
             _ENLACES_TAREAS[tid]["resultado"] = {
                 "error": "error extrayendo: %s" % e}
@@ -1253,8 +1375,12 @@ def _estado_enlaces_tarea(tid):
         return {"error": "tarea no encontrada"}, 404
     if t["estado"] == "trabajando":
         r = {"estado": "trabajando"}
+        if t.get("modo"):
+            r["modo"] = t["modo"]
         if t.get("parcial"):
             r["parcial"] = t["parcial"]
+        if t.get("cancelado"):
+            r["estado"] = "cancelando"
         return r, 200
     # limpieza de tareas viejas (más de 1 hora) para no acumular memoria
     for k, v in list(_ENLACES_TAREAS.items()):
@@ -2386,7 +2512,8 @@ class Gestor:
         with self._lock:
             self.trabajos[t.id] = t
         if iniciar_auto:
-            t.iniciar()
+            t.estado = "en cola"
+            _procesar_cola()
         else:
             t.estado = "en cola"
         _guardar_cola()
@@ -2736,8 +2863,9 @@ MAX_SIMULTANEAS = 3        # por defecto; cambiable desde el panel
 
 
 def _contar_activas():
-    return sum(1 for t in GESTOR.trabajos.values()
-               if t.estado in ("descargando", "uniendo", "esperando"))
+    with GESTOR._lock:
+        return sum(1 for t in GESTOR.trabajos.values()
+                   if t.estado in ("descargando", "uniendo", "esperando"))
 
 
 def _hay_activa():
@@ -2748,7 +2876,8 @@ _cola_lock = threading.Lock()
 
 
 def _en_cola():
-    return [t for t in GESTOR.trabajos.values() if t.estado == "en cola"]
+    with GESTOR._lock:
+        return [t for t in GESTOR.trabajos.values() if t.estado == "en cola"]
 
 
 def _procesar_cola():
@@ -2758,12 +2887,21 @@ def _procesar_cola():
     arrancar para que el hilo en probe no se cuente dos veces."""
     with _cola_lock:
         con = _contar_activas()
-        for t in _en_cola():
+        for t in list(_en_cola()):
             if con >= MAX_SIMULTANEAS:
                 break
-            t.estado = "esperando"   # sale de la cola: ya no se re-arranca
-            t.iniciar()
-            con += 1
+            # Solo el hilo de la cola cambia el estado y lanza la tarea.
+            # Evita carreras entre agregar(), completar() y el watcher.
+            t.estado = "esperando"
+            try:
+                t.iniciar()
+            except Exception as e:
+                t.estado = "error"
+                t.error = "no se pudo iniciar la descarga: %s" % e
+                _registrar_error(t)
+            else:
+                con += 1
+        _guardar_cola()
 
 
 def _encolar_lote(urls, segmentos, origen=None, limite_kbps=0):
@@ -3099,12 +3237,25 @@ class Manejador(BaseHTTPRequestHandler):
                 self._json(res, 422)
             else:
                 self._json({"formatos": res})
+        elif ruta == "/api/enlaces/escaneo":
+            url = (datos.get("url") or "").strip()
+            if not url:
+                self._json({"error": "falta url"}, 400)
+                return
+            self._json(_escaneo_lanzar(url))
+        elif ruta == "/api/enlaces/escaneo/cancelar":
+            tid = (datos.get("tarea") or "").strip()
+            self._json({"ok": _escaneo_cancelar(tid)})
         elif ruta == "/api/enlaces":
             url = (datos.get("url") or "").strip()
             if not url:
                 self._json({"error": "falta url"}, 400)
                 return
-            self._json(_enlaces_lanzar(url))
+            seleccion = datos.get("seleccion") or {}
+            self._json(_enlaces_lanzar(
+                url,
+                urls_seleccionadas=seleccion.get("urls"),
+                servidores_seleccionados=seleccion.get("servidores")))
         elif ruta == "/api/catalogo/iniciar":
             _catalogo().iniciar(revisar=bool(datos.get("revisar")))
             self._json(_catalogo().estado_publico())
