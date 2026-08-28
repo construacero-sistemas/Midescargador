@@ -952,6 +952,38 @@ def _nombre_hoster_url(url):
     return host or "Servidor"
 
 
+# Lista canónica de hosters por los que se puede filtrar en series. El panel la
+# pide al backend para pintar las opciones dinámicamente (no hardcodear con 5
+# nombres). El orden también es el que muestra el extractor para dominios no
+# reconocidos.
+HOSTERES_CONOCIDOS = ("MediaFire", "Mega", "GoFile", "Rootz",
+                      "1Fichier", "MegaUp", "Fireload",
+                      "Servidor por confirmar")
+
+
+def _hoster_para_grupo(urls_finales, label, n_opciones, opcion,
+                       hosters_permitidos=None):
+    """Resuelve el hoster real de un grupo de enlaces de episodio y aplica el
+    filtro por servidores elegidos (función pura, testeable).
+
+    Devuelve None si el grupo queda fuera del filtro, o un dict
+    {servidor, episodio, hoster} con el nombre visible del grupo.
+
+    La comparación de hosters es EXACTA (si no, "Mega" filtraría también
+    "MegaUp"). Solo se descarta cuando se conoce el hoster y no coincide con
+    ninguna opción elegida; un grupo sin hoster confirmado pasa a
+    "Servidor por confirmar" y solo queda si el usuario lo eligió o no filtró."""
+    hosters = {_nombre_hoster_url(u) for u in urls_finales if u}
+    permitidos = {str(x).lower() for x in (hosters_permitidos or [])}
+    hosters_lower = {h.lower() for h in hosters}
+    if permitidos and hosters and not (hosters_lower & permitidos):
+        return None
+    nombre = next(iter(hosters), "Servidor por confirmar")
+    sufijo = (" · Opción %d" % opcion) if n_opciones > 1 else ""
+    return {"servidor": nombre + " · " + label + sufijo,
+            "episodio": label, "hoster": nombre}
+
+
 def _extraer_un_episodio(cdp, url, label, fin_global, hosters_permitidos=None):
     """Navega a la página de un episodio y resuelve sus botones DESCARGAR.
     Devuelve (servidores, incompleto). La etiqueta de cada grupo es el
@@ -986,14 +1018,11 @@ def _extraer_un_episodio(cdp, url, label, fin_global, hosters_permitidos=None):
         # El hoster solo se conoce tras resolver el acortador. Filtramos aquí,
         # antes de entregar el resultado al panel/cola, no después.
         urls_finales = [e.get("url") for e in (clasificado.get("enlaces") or []) if isinstance(e, dict)]
-        hosters = {_nombre_hoster_url(u) for u in urls_finales if u}
-        permitidos = {str(x).lower() for x in (hosters_permitidos or [])}
-        if permitidos and hosters and not any(any(p in h.lower() for p in permitidos) for h in hosters):
+        grupo = _hoster_para_grupo(urls_finales, label, len(botones), i + 1,
+                                   hosters_permitidos)
+        if grupo is None:
             continue
-        nombre = next(iter(hosters), "Servidor por confirmar")
-        clasificado["servidor"] = (nombre + " · " + label + (" · Opción %d" % (i + 1)
-                                            if len(botones) > 1 else ""))
-        clasificado["episodio"] = label
+        clasificado.update(grupo)
         servidores.append(clasificado)
     return servidores, incompleto
 

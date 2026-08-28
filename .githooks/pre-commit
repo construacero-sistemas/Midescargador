@@ -1,0 +1,23 @@
+#!/bin/sh
+# Pre-commit: corre la suite de pruebas (`npm test`) antes de cada commit.
+# Si alguna prueba falla, se cancela el commit (código de salida != 0).
+#
+# Para saltarte la suite en un commit puntual (¡con cuidado!):
+#     git commit --no-verify
+
+set -e
+
+echo ""
+echo "==> pre-commit: ejecutando 'npm test' (backend + frontend)"
+echo "    Para omitirlo en este commit:  git commit --no-verify"
+echo ""
+
+if ! npm test; then
+  echo ""
+  echo "==> Las pruebas fallaron. Se cancela el commit."
+  echo "    Corregí el error o usá 'git commit --no-verify' para omitir la suite."
+  exit 1
+fi
+
+echo ""
+echo "==> Todas las suites de pruebas pasaron. Commit OK."

@@ -1218,8 +1218,17 @@ def _escaneo_serie(url):
             temporadas.setdefault(clave, []).append({
                 "indice": i, "label": label, "url": ep.get("url") or "",
                 "servidores": []})
+        # SOLO se ofrecen los hosters detectados reales de esta serie (los que
+        # el catálogo registró al resolver sus páginas de episodio). Nunca la
+        # lista completa fija: si aún no hay detección, se manda vacío y el
+        # panel no muestra filtros de servidor (equivale a 'todos').
+        try:
+            detectados = _catalogo().hosters_de(url) or []
+        except Exception:
+            detectados = []
         return {"tipo": "serie", "titulo": titulo[:150], "url": url,
                 "servidores_confirmados": False,
+                "servidores_posibles": list(detectados),
                 "temporadas": [{"id": k, "numero": int(k) if k.isdigit() else 0,
                                  "nombre": ("Temporada " + k) if k.isdigit() else "Especiales",
                                  "episodios": v} for k, v in sorted(temporadas.items(), key=lambda x: (not x[0].isdigit(), int(x[0]) if x[0].isdigit() else 0))],
@@ -1300,6 +1309,18 @@ def _enlaces_extraer(url, on_progreso=None, hosters_permitidos=None, episodios_p
         return resultado
 
 
+def _filtrar_servidores(resultados, servidores_seleccionados=None):
+    """Post-filtro por servidores elegidos (función pura, testeable).
+
+    Sin selección devuelve todo tal cual. Con selección, deja solo los
+    resultados cuyo hoster real (campo 'hoster') coincida EXACTAMENTE con
+    alguna opción (ausencia de 'hoster' ⇒ se descarta)."""
+    permitidos = {str(x).lower() for x in (servidores_seleccionados or [])}
+    if not permitidos:
+        return resultados
+    return [s for s in resultados if (s.get("hoster") or "").lower() in permitidos]
+
+
 def _enlaces_lanzar(url, urls_seleccionadas=None, servidores_seleccionados=None):
     """Devuelve la extracción si ya está en caché, o la arranca en un hilo
     y devuelve un id de tarea para sondearla. Así el panel no mantiene una
@@ -1349,14 +1370,26 @@ def _enlaces_lanzar(url, urls_seleccionadas=None, servidores_seleccionados=None)
                     if r.get("servidores"):
                         resultados.extend(r["servidores"])
                     _progreso(resultados, i + 1, total, r.get("titulo") or "")
-                permitidos = {x.lower() for x in (_ENLACES_TAREAS[tid].get("servidores_seleccionados") or [])}
-                if permitidos:
-                    resultados = [s for s in resultados if any(p in (s.get("servidor") or "").lower() for p in permitidos)]
+                # coincidencia EXACTA por hoster real (para que "Mega" no
+                # arrastre "MegaUp"). hoster lo pone zonaleros_copia.
+                resultados = _filtrar_servidores(
+                    resultados, _ENLACES_TAREAS[tid].get("servidores_seleccionados"))
                 _ENLACES_TAREAS[tid]["resultado"] = {"servidores": resultados, "titulo": "Selección de enlaces",
                                                         "seleccion": True}
             else:
                 _ENLACES_TAREAS[tid]["resultado"] = _enlaces_extraer(
                     url, on_progreso=_progreso)
+            # Serie resuelta completa: registrar los hosters detectados en el
+            # catálogo (por URL de su página) para que los próximos escaneos
+            # ofrezcan en el panel solo los servidores que usa ESTA serie.
+            try:
+                res = _ENLACES_TAREAS[tid].get("resultado") or {}
+                hosters = {s.get("hoster") for s in res.get("servidores", [])
+                           if s.get("hoster")}
+                if hosters and not _ENLACES_TAREAS[tid].get("urls_seleccionadas"):
+                    _catalogo().registrar_hosters(url, hosters)
+            except Exception:
+                pass
         except Exception as e:
             _ENLACES_TAREAS[tid]["resultado"] = {
                 "error": "error extrayendo: %s" % e}
@@ -3121,7 +3154,14 @@ class Manejador(BaseHTTPRequestHandler):
                 fpath = os.path.join(base, "static",
                                      os.path.basename(ruta))
             if fpath and os.path.isfile(fpath):
-                ctype = "image/svg+xml" if fpath.endswith(".svg") else "image/x-icon" if fpath.endswith(".ico") else "application/octet-stream"
+                if fpath.endswith(".js"):
+                    ctype = "application/javascript; charset=utf-8"
+                elif fpath.endswith(".svg"):
+                    ctype = "image/svg+xml"
+                elif fpath.endswith(".ico"):
+                    ctype = "image/x-icon"
+                else:
+                    ctype = "application/octet-stream"
                 try:
                     with open(fpath, "rb") as f:
                         cuerpo = f.read()

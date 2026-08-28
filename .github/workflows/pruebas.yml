@@ -1,0 +1,41 @@
+name: pruebas
+
+# Corre automáticamente TODAS las pruebas del filtro de selección (temporada +
+# servidor) en cada commit a main y en cada PR:
+#   - backend : python -m unittest discover -s tests
+#   - frontend: node test_frontend/seleccion.test.js (jsdom)
+#
+# Un solo job ejecuta ambas suites juntas vía `npm test` (scripts/run_tests.js):
+# si una falla, falla. Los módulos del backend se importan con stdlib puro
+# (websocket/yt-dlp se cargan de forma perezosa), por eso no se instalan
+# paquetes Python; el frontend solo necesita jsdom en test_frontend.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  completo:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias (jsdom) — frontend
+        working-directory: test_frontend
+        run: npm install --no-audit --no-fund
+
+      - name: npm test (backend + frontend juntos)
+        run: npm test
+
+      - name: Chequeo del módulo seleccion.js
+        run: node -e "require('./static/seleccion.js'); console.log('seleccion.js carga OK')"

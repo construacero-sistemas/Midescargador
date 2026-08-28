@@ -1,0 +1,12 @@
+{
+  "name": "midescargador-frontend-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pruebas del panel de selección de temporadas y servidores del frontend (jsdom).",
+  "scripts": {
+    "test": "node seleccion.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "^24.1.0"
+  }
+}

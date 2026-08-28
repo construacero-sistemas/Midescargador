@@ -106,6 +106,34 @@ class Catalogo:
         except Exception:
             self._progreso = {"items": {}}
         self._progreso.setdefault("items", {})
+        self._progreso.setdefault("hosters_serie", {})
+
+    # ---------------- hosters detectados por serie ----------------
+    def registrar_hosters(self, url, hosters):
+        """Acumula los hosters reales detectados de una serie (por URL de su
+        página) en progreso.json. Se fusiona: repasar la serie con otro
+        hoster agrega, nunca borra. Persiste en disco."""
+        if not url or not hosters:
+            return
+        con = [str(x).strip() for x in hosters if x and str(x).strip()]
+        if not con:
+            return
+        with self._lock:
+            mapa = self._progreso.setdefault("hosters_serie", {})
+            actual = set(mapa.get(url, []) or [])
+            actual.update(con)
+            mapa[url] = sorted(actual)
+            self._guardar()
+
+    def hosters_de(self, url):
+        """Lista de hosters detectados de la serie (URL de su página) o None
+        si aún no se han registrado hosters para ella."""
+        if not url:
+            return None
+        with self._lock:
+            mapa = self._progreso.get("hosters_serie") or {}
+            datos = mapa.get(url) or []
+            return list(datos) if datos else None
 
     def _guardar(self):
         try:

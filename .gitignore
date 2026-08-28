@@ -3,6 +3,7 @@ venv/
 __pycache__/
 *.pyc
 electron/node_modules/
+test_frontend/node_modules/
 
 # Builds y artefactos
 backend/

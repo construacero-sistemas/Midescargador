@@ -69,6 +69,56 @@ Las preguntas de instalación, uso o de la extensión de Chrome van en
 - El código y los mensajes de commit en español o inglés, lo que te sea más
   cómodo; los comentarios del código, en español (como está hoy).
 
+### Pruebas (suite del filtro de selección)
+
+Hay **dos suites** de pruebas para el panel de análisis/extracción de series
+(temporadas + servidores):
+
+- **Backend** — `tests/test_seleccion_filtro.py` (unittest, `unittest` de la
+  stdlib): el filtro por hoster/temporada (`_hoster_para_grupo` en
+  `zonaleros_copia.py` y `_filtrar_servidores` en `servidor.py`) y la
+  persistencia de hosters por serie en el catálogo (`registrar_hosters` /
+  `hosters_de` en `catalogo.py`).
+- **Frontend** — `test_frontend/seleccion.test.js` (jsdom) sobre la lógica
+  real de `static/seleccion.js`: que el panel liste solo los servidores
+  detectados, que desmarcar una temporada desmarque sus episodios (y
+  viceversa) y que resolver la selección solo envíe a `/api/enlaces` los
+  episodios y servidores elegidos.
+
+#### Cómo correrlas
+
+**Con `npm test`** (desde la raíz, las dos suites en orden y un solo
+resultado; falla con código != 0 si alguna no pasa):
+
+```bash
+npm test
+```
+
+Para correr solo una:
+
+```bash
+npm run test:backend    # o: npm test -- --backend
+npm run test:frontend   # o: npm test -- --frontend
+npm test -- --solo backend|frontend
+```
+
+**En Windows sin npm/Node:** `ejecutar_pruebas.bat` corre las dos suites
+directamente (backend con `python -m unittest discover -s tests` y frontend
+con `node test_frontend/seleccion.test.js`). Si jsdom aún no está instalado
+en `test_frontend`, el `.bat` lo instala automáticamente la primera vez.
+
+**En CI (GitHub Actions):** `.github/workflows/pruebas.yml` corre `npm test`
+en un solo job (setup-node + setup-python; instala jsdom en `test_frontend`),
+disparado en cada **push a `main`**, en cada **PR** y de forma manual
+(`workflow_dispatch`). También verifica que `static/seleccion.js` carga. Si
+alguna suite queda roja, el CI falla y el PR no puede mergearse.
+
+**Pre-commit:** el repo activa `npm test` antes de cada commit local (hook en
+`.githooks/pre-commit`, activado con `git config core.hooksPath .githooks`;
+en un clon nuevo lo configura el script `prepare` de `package.json` tras
+`npm install`). Si las pruebas fallan, el commit se cancela. Para omitirlas
+puntualmente: `git commit --no-verify`.
+
 ### Estructura rápida
 
 ```
@@ -76,6 +126,9 @@ motor.py             ← motor de descargas segmentadas (solo stdlib)
 torrents.py          ← torrents: resolver zetrrent + aria2c
 servidor.py          ← servidor local + API REST
 static/index.html    ← interfaz web (panel)
+static/seleccion.js  ← lógica del panel selección (temporadas + servidores)
+tests/               ← pruebas del backend (unittest)
+test_frontend/       ← pruebas del panel (jsdom, importa seleccion.js)
 extension/           ← extensión de Chrome (MV3)
 electron/            ← app de escritorio (Electron + electron-builder)
 build_mei/           ← scripts de release (solo local, gitignored)

@@ -1,0 +1,13 @@
+{
+  "name": "midescargador",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Comandos de prueba raíz: 'npm test' corre juntas la suite de backend (unittest) y la de frontend (jsdom).",
+  "scripts": {
+    "test": "node scripts/run_tests.js",
+    "test:backend": "python -m unittest discover -s tests -p test*.py -v",
+    "test:frontend": "node test_frontend/seleccion.test.js",
+    "prepare": "node scripts/instalar-hook.js"
+  },
+  "devDependencies": {}
+}
