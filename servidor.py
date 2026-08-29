@@ -3274,7 +3274,9 @@ class Manejador(BaseHTTPRequestHandler):
                 else:
                     self._json({"token": TOKEN_API})
                 return
-            if not ruta.startswith("/api/media/") and not self._token_ok():
+            if not ruta.startswith("/api/media/") \
+                    and ruta != "/api/drive/oauth" \
+                    and not self._token_ok():
                 self._json({"error": "no autorizado"}, 401)
                 return
         if ruta in ("/", "/index.html"):
