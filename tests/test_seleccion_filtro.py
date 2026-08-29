@@ -22,6 +22,7 @@ import unittest
 import os
 import sys
 import tempfile
+import time
 
 # tests/ está dentro del proyecto: se añade la raíz (padre de tests/)
 # para importar los módulos del backend (servidor, zonaleros_copia, ...).
@@ -261,6 +262,97 @@ class TestSeleccionTemporadaMasServidor(unittest.TestCase):
         # ningún grupo de Mega/MegaUp en el parcial
         self.assertNotIn("Mega", {g["hoster"] for g in parcial})
         self.assertNotIn("MegaUp", {g["hoster"] for g in parcial})
+
+
+class _CdpFake:
+    """Fake de la conexión CDP para _episodios_serie_completa.
+    Devuelve lo que esperan _extraer_episodios y _temporadas: los ANCLAS
+    crudos {t, h} (el JS del navegador devuelve eso y las funciones los
+    convierten a {label, url})."""
+
+    def __init__(self, anclas_por_url):
+        # url -> lista de anclas crudas {t, h}; "__season" devuelve las
+        # temporadas de la página inicial; "<actual>" son los episodios
+        # directos de la página inicial
+        self._mapa = anclas_por_url or {}
+        self._actual = "<directos>"
+
+    def navegar(self, url, condicion=None, tiempo_max=None):
+        self._actual = url
+        return True
+
+    def eval(self, js):
+        if "series/season/" in js and "episode" not in js:
+            return self._mapa.get("__season", [])
+        if "series/episode/" in js:
+            return self._mapa.get(self._actual) or []
+        return None
+
+    def cerrar(self):
+        pass
+
+
+class TestEpisodiosSerieCompleta(unittest.TestCase):
+    """La página `/series/ataque-a-los-titanes` lista TEMPORADAS en vez de
+    episodios directos: _episodios_serie_completa debe recorrerlas y juntar
+    todos los episodios (antes buscaba solo episodios directos y fallaba)."""
+
+    def _ancla(self, p, n):
+        return {"t": "%dx%d" % (p, n),
+                "h": "https://zona-leros.com/series/episode/titulo-%d-%d" % (p, n)}
+
+    def test_pagina_con_episodios_directos(self):
+        anclas = [self._ancla(1, i) for i in (1, 2, 3)]
+        cdp = _CdpFake({"<directos>": anclas})
+        r, err = zonaleros._episodios_serie_completa(
+            cdp, "https://zona-leros.com/series/x", time.time() + 240)
+        self.assertIsNone(err)
+        self.assertEqual(len(r), 3)
+        self.assertEqual({e["label"] for e in r}, {"1x1", "1x2", "1x3"})
+
+    def test_pagina_que_lista_temporadas_recorre_todas(self):
+        # la página inicial NO tiene episodios, solo enlaces a temporadas
+        temporadas = [
+            {"h": "https://zona-leros.com/series/season/x-1", "t": "Temp 1"},
+            {"h": "https://zona-leros.com/series/season/x-2", "t": "Temp 2"},
+        ]
+        cdp = _CdpFake({
+            "<directos>": [],
+            "__season": temporadas,
+            "https://zona-leros.com/series/season/x-1": [
+                self._ancla(1, i) for i in (1, 2)],
+            "https://zona-leros.com/series/season/x-2": [
+                self._ancla(2, i) for i in (1, 2)],
+        })
+        r, err = zonaleros._episodios_serie_completa(
+            cdp, "https://zona-leros.com/series/x", time.time() + 240)
+        self.assertIsNone(err)
+        self.assertEqual(len(r), 4)
+        labels = {e["label"] for e in r}
+        self.assertEqual(labels, {"1x1", "1x2", "2x1", "2x2"})
+
+    def test_sin_episodios_ni_temporadas_devuelve_vacio(self):
+        cdp = _CdpFake({"<directos>": []})
+        r, err = zonaleros._episodios_serie_completa(
+            cdp, "https://zona-leros.com/series/x", time.time() + 240)
+        self.assertIsNone(err)
+        self.assertEqual(r, [])
+
+    def test_temporadas_sin_episodios_evitan_duplicados(self):
+        temporadas = [
+            {"h": "https://zona-leros.com/series/season/x-1", "t": "T1"},
+            {"h": "https://zona-leros.com/series/season/x-2", "t": "T2"},
+        ]
+        ancla = self._ancla(1, 1)
+        cdp = _CdpFake({
+            "<directos>": [],
+            "__season": temporadas,
+            "https://zona-leros.com/series/season/x-1": [ancla],
+            "https://zona-leros.com/series/season/x-2": [ancla],  # duplicado
+        })
+        r, err = zonaleros._episodios_serie_completa(
+            cdp, "https://zona-leros.com/series/x", time.time() + 240)
+        self.assertEqual(len(r), 1)
 
 
 if __name__ == "__main__":

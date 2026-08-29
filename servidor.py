@@ -1316,16 +1316,14 @@ def _escaneo_serie(url):
         if not cdp.navegar(url, condicion=cond, tiempo_max=120):
             if not cdp.navegar(url, condicion=cond, tiempo_max=120):
                 return {"error": "Cloudflare no dejó pasar la página"}
-        fin = time.time() + 240
-        episodios = []
-        while time.time() < fin:
-            episodios = zonaleros._extraer_episodios(cdp)
-            if episodios:
-                break
+        # lista de episodios tolerante a la estructura del sitio: la página
+        # `/series/ataque-a-los-titanes` suele listar temporadas, no episodios
+        # directos; se recorren las temporadas (/series/season/) y se juntan
+        episodios, _err = zonaleros._episodios_serie_completa(
+            cdp, url, time.time() + 240)
+        if not episodios:
             if zonaleros._bloqueado_duro(cdp):
                 return {"error": "Cloudflare bloqueó la página de la serie"}
-            time.sleep(3)
-        if not episodios:
             return {"error": "no se encontraron episodios en la página de la serie"}
         titulo = cdp.eval("document.title") or ""
         temporadas = {}

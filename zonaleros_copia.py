@@ -813,6 +813,68 @@ def _extraer_episodios(cdp):
     return salida
 
 
+def _temporadas(cdp):
+    """Enlaces a las temporadas de una página de serie. El sitio organiza
+    las series por temporada: `/series/ataque-a-los-titanes` lista los
+    accesos a `/series/season/ataque-a-los-titanes-N`, y cada temporada
+    contiene sus episodios. Devuelve la lista de URLs de temporadas."""
+    return cdp.eval('''(() => {
+        const out = [];
+        for (const a of document.querySelectorAll('a[href*="/series/season/"]')) {
+            const h = (a.href || '').split('#')[0];
+            const t = (a.innerText || a.title || '').trim().replace(/\\s+/g, ' ');
+            if (/^https?:\\/\\//.test(h) && out.indexOf(h) === -1) out.push({h: h, t: t});
+        }
+        return out;
+    })()''') or []
+
+
+def _extraer_episodios_de_temporada(cdp, url_temporada, fin_global):
+    """Navega a una página de temporada (/series/season/...) y devuelve sus
+    episodios. Devuelve (episodios, error)"""
+    cond = ("document.querySelectorAll('a[href*=\\\"/series/episode/\\\"]').length > 0"
+            " || " + _js_reto_cloudflare())
+    if not cdp.navegar(url_temporada, condicion=cond, tiempo_max=90):
+        if not cdp.navegar(url_temporada, condicion=cond, tiempo_max=90):
+            return [], "Cloudflare no dejó pasar la página de la temporada"
+    fin = min(time.time() + 120, fin_global)
+    epis = []
+    while time.time() < fin:
+        epis = _extraer_episodios(cdp)
+        if epis:
+            break
+        if _bloqueado_duro(cdp):
+            return [], "Cloudflare bloqueó la página de la temporada"
+        time.sleep(3)
+    return epis, None
+
+
+def _episodios_serie_completa(cdp, url, fin_global):
+    """Lista de episodios de una serie, tolerante a la estructura del sitio:
+    1) episodios directos en la página (a[href*="/series/episode/"]);
+    2) si no hay, recorre las temporadas (a[href*="/series/season/"]) y
+       junta los episodios de todas. Devuelve ([{label, url}], error)."""
+    episodios = _extraer_episodios(cdp) or []
+    if episodios:
+        return episodios, None
+    temporadas = _temporadas(cdp)
+    if not temporadas:
+        return [], None
+    todos = []
+    vistos = set()
+    for temp in temporadas:
+        if time.time() >= fin_global:
+            break
+        eps, err = _extraer_episodios_de_temporada(cdp, temp["h"], fin_global)
+        if err:
+            continue
+        for e in eps:
+            if e.get("url") and e["url"] not in vistos:
+                vistos.add(e["url"])
+                todos.append(e)
+    return todos, None
+
+
 def _extraer_botones_episodio(cdp):
     """Botones DESCARGAR de una página de episodio: anclas al acortador
     anomizador. No llevan title en el HTML; se etiquetan por opción."""
@@ -1244,7 +1306,11 @@ def extraer(url, on_progreso=None, hosters_permitidos=None, episodios_permitidos
                 cdp.navegar(url, condicion=cond, tiempo_max=120)
                 _esperar_episodios(180)
             titulo = cdp.eval("document.title") or ""
-            episodios = _extraer_episodios(cdp)
+            # lista de episodios tolerante a la estructura del sitio: si la
+            # página no trae episodios directos (a /series/episode/), recorre
+            # las temporadas (a /series/season/) y junta los de todas
+            episodios, _err_ep = _episodios_serie_completa(
+                cdp, url, time.time() + 240)
             if not episodios:
                 if _bloqueado_duro(cdp):
                     return {"error": ("Cloudflare bloqueó la página de la serie; "
