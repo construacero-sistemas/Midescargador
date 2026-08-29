@@ -43,6 +43,7 @@ import pivigames
 import cuenta
 import descomprimir
 import torrents
+import drive
 
 PUERTO = 17890
 CARPETA_DEFECTO = os.path.join(os.path.expanduser("~"), "Downloads", "MiDescargador")
@@ -387,6 +388,9 @@ DESCOMPRESION_AUTO = False  # descomprimir automáticamente al terminar
 PASSWORD_DESCOMPRESION = ""  # contraseña para comprimidos protegidos
 CONFIG_RUTA = os.path.join(_dir_datos(), "config.json")
 LIMITE_VELOCIDAD_KBPS = 0  # límite GLOBAL de velocidad en KB/s (0 = sin límite)
+# --- subida a Google Drive ---
+DRIVE_SUBIR_AUTO = False   # subir automáticamente cada descarga terminada
+DRIVE_MODO = "borrar_local"  # borrar_local | conservar_local | solo_subir
 
 
 def _aplicar_limite_global():
@@ -406,6 +410,7 @@ def _cargar_config():
     global DESCOMPRESION_AUTO, PASSWORD_DESCOMPRESION
     global LIMITE_VELOCIDAD_KBPS
     global CATALOGO_CARPETA
+    global DRIVE_SUBIR_AUTO, DRIVE_MODO
     try:
         with open(CONFIG_RUTA, encoding="utf-8") as f:
             c = json.load(f)
@@ -424,6 +429,15 @@ def _cargar_config():
         cc = str(c.get("catalogo_carpeta", "") or "").strip()
         if cc:
             CATALOGO_CARPETA = cc
+        DRIVE_SUBIR_AUTO = bool(c.get("drive_subir_auto", DRIVE_SUBIR_AUTO))
+        modo = str(c.get("drive_modo", "") or "").strip()
+        if modo in ("borrar_local", "conservar_local", "solo_subir"):
+            DRIVE_MODO = modo
+    except Exception:
+        pass
+    # el módulo de Drive guarda credenciales/token en la misma carpeta
+    try:
+        drive.inicializar(_dir_datos())
     except Exception:
         pass
     _aplicar_limite_global()
@@ -440,6 +454,8 @@ def _guardar_config():
                 "password_descompresion": PASSWORD_DESCOMPRESION,
                 "limite_kbps": LIMITE_VELOCIDAD_KBPS,
                 "catalogo_carpeta": CATALOGO_CARPETA,
+                "drive_subir_auto": DRIVE_SUBIR_AUTO,
+                "drive_modo": DRIVE_MODO,
             }, f, ensure_ascii=False, indent=2)
     except Exception:
         pass
@@ -506,9 +522,111 @@ def _organizar(trabajo):
         pass
 
 
-motor.on_completada = _organizar        # y aquí cuando termina bien
+# ------------------------------------------------- subida a Google Drive
+# Al terminar una descarga, si DRIVE_SUBIR_AUTO está activo, el archivo se
+# sube a Drive. Según DRIVE_MODO: borrar_local borra el archivo local tras
+# subir (ahorra espacio); conservar_local lo deja también en disco; solo_subir
+# baja a una carpeta temporal y la limpia (nunca queda en Descargas).
+
+def _ruta_temp_drive():
+    """Carpeta temporal para el modo 'solo_subir' (archivos que solo viven
+    en Drive y nunca quedan en la carpeta de descargas)."""
+    d = os.path.join(tempfile.gettempdir(), "midescargador_drive")
+    try:
+        os.makedirs(d, exist_ok=True)
+    except OSError:
+        pass
+    return d
+
+
+def _marcar_drive(trabajo, estado, msg="", progreso=None):
+    """Expone el estado de la subida en la tarjeta del panel."""
+    try:
+        trabajo.drive_estado = estado      # subiendo | ok | error
+        trabajo.drive_msg = msg or ""
+        if progreso is not None:
+            trabajo.drive_progreso = progreso
+    except Exception:
+        pass
+
+
+def _subir_a_drive(tid):
+    """Sube el archivo de una descarga (por id) a Google Drive y aplica el
+    modo configurado. Devuelve {id, url} del archivo en Drive. Lanza con un
+    mensaje claro si no hay conexión, archivo o la subida falla."""
+    with GESTOR._lock:
+        t = GESTOR.trabajos.get(tid)
+    if not t:
+        raise RuntimeError("descarga no encontrada")
+    ruta = _archivo_real(t)
+    if not ruta or not os.path.isfile(ruta):
+        raise RuntimeError("el archivo no existe en disco")
+    _marcar_drive(t, "subiendo", "subiendo a Google Drive…", 0)
+
+    def on_progreso(pct):
+        _marcar_drive(t, "subiendo", "subiendo a Google Drive…", int(pct))
+
+    try:
+        res = drive.subir_archivo(ruta, on_progreso=on_progreso)
+    except Exception as e:
+        _marcar_drive(t, "error", str(e)[:200])
+        raise
+    _marcar_drive(t, "ok", "subido a Google Drive", 100)
+    # modo: borrar el local (borrar_local y solo_subir liberan el espacio)
+    if DRIVE_MODO in ("borrar_local", "solo_subir"):
+        try:
+            os.remove(ruta)
+        except OSError:
+            pass
+    try:
+        _guardar_cola()
+    except Exception:
+        pass
+    return res
+
+
+def _drive_tras_completar(trabajo):
+    """Hook post-descarga: si la subida automática está activa y hay sesión
+    de Drive, lanza la subida en segundo plano (no bloquea el servidor)."""
+    if not DRIVE_SUBIR_AUTO:
+        return
+    try:
+        if not drive.estado().get("conectado"):
+            return
+    except Exception:
+        return
+    tid = getattr(trabajo, "id", None)
+    if not tid:
+        return
+    threading.Thread(target=_subir_drive_hilo, args=(tid,), daemon=True).start()
+
+
+def _subir_drive_hilo(tid):
+    try:
+        _subir_a_drive(tid)
+    except Exception as e:
+        try:
+            log("subida a Drive falló: " + str(e)[:200])
+        except Exception:
+            pass
+
+
+def _al_completar(trabajo):
+    """Wrapper del hook de descarga terminada: organiza por tipo y, si la
+    subida automática a Drive está activa, lanza la subida en segundo plano."""
+    try:
+        _organizar(trabajo)
+    except Exception:
+        pass
+    try:
+        _drive_tras_completar(trabajo)
+    except Exception:
+        pass
+
+
+motor.on_completada = _al_completar    # y aquí cuando termina bien
 mega.on_error = _registrar_error        # mega avisa aquí cuando algo falla
-mega.on_completada = _organizar
+mega.on_completada = _al_completar
 
 
 def _al_error(trabajo):
@@ -1292,6 +1410,13 @@ def _enlaces_extraer(url, on_progreso=None, hosters_permitidos=None, episodios_p
         if url in _ENLACES_CACHE:
             ts, r = _ENLACES_CACHE[url]
             if time.time() - ts < _ENLACES_TTL:
+                # la caché guarda la extracción COMPLETA (sin filtro); si
+                # esta llamada viene con filtro de servidores (selección),
+                # se aplica igual que a un resultado fresco
+                if hosters_permitidos:
+                    r = dict(r)
+                    r["servidores"] = _filtrar_servidores(
+                        r.get("servidores") or [], hosters_permitidos)
                 return r
         if getattr(modulo, "__name__", "") == "zonaleros_copia":
             resultado = modulo.extraer(url, on_progreso=on_progreso,
@@ -1352,7 +1477,12 @@ def _enlaces_lanzar(url, urls_seleccionadas=None, servidores_seleccionados=None)
         try:
             def _progreso(servidores, n_resueltos, n_total, titulo):
                 # resultados parciales en vivo: el panel los muestra
-                # mientras la extracción sigue (series paralelas)
+                # mientras la extracción sigue (series paralelas). Se aplica
+                # el MISMO filtro de servidores que al final, para que no
+                # aparezcan servidores que el usuario no eligió.
+                servidores = _filtrar_servidores(
+                    servidores,
+                    _ENLACES_TAREAS[tid].get("servidores_seleccionados"))
                 _ENLACES_TAREAS[tid]["parcial"] = {
                     "servidores": servidores,
                     "n_resueltos": n_resueltos,
@@ -2452,6 +2582,10 @@ class Gestor:
     def agregar(self, url, segmentos=8, carpeta=None, formato=None,
                 iniciar_auto=True, origen=None, limite_kbps=None):
         carpeta = carpeta or CARPETA_DEFECTO
+        # modo 'solo_subir': la descarga nunca queda en Descargas, se baja a
+        # una carpeta temporal y se sube a Drive al terminar (o se borra)
+        if DRIVE_MODO == "solo_subir" and iniciar_auto:
+            carpeta = _ruta_temp_drive()
         # límite de ESTA descarga (KB/s; 0 = usa el límite global)
         kbps = max(0, int(limite_kbps or 0))
         bps = kbps * 1024
@@ -2568,6 +2702,11 @@ class Gestor:
                     p["descompresion"] = t.descompresion_estado
                     p["descompresion_msg"] = getattr(
                         t, "descompresion_msg", "") or ""
+                if getattr(t, "drive_estado", None):
+                    p["drive"] = t.drive_estado
+                    p["drive_msg"] = getattr(t, "drive_msg", "") or ""
+                    p["drive_progreso"] = getattr(
+                        t, "drive_progreso", 0) or 0
                 # scheduler de reintentos: lo que le falta al panel para
                 # mostrar "reintento automático en Xs"
                 p["reintentos_auto"] = getattr(t, "_reintentos_auto", 0)
@@ -3185,7 +3324,47 @@ class Manejador(BaseHTTPRequestHandler):
                         "max_simultaneas": MAX_SIMULTANEAS,
                         "descompresion_auto": DESCOMPRESION_AUTO,
                         "password_descompresion": PASSWORD_DESCOMPRESION,
-                        "limite_kbps": LIMITE_VELOCIDAD_KBPS})
+                        "limite_kbps": LIMITE_VELOCIDAD_KBPS,
+                        "drive_subir_auto": DRIVE_SUBIR_AUTO,
+                        "drive_modo": DRIVE_MODO,
+                        "drive": drive.estado()})
+        elif ruta == "/api/drive/estado":
+            self._json(drive.estado())
+        elif ruta == "/api/drive/oauth":
+            # callback de Google tras autorizar: intercambia el código y
+            # responde una página simple (la pestaña que abrió Google)
+            qs = urllib.parse.parse_qs(
+                urllib.parse.urlparse(self.path).query)
+            code = (qs.get("code") or [""])[0]
+            error = (qs.get("error") or [""])[0]
+            if error or not code:
+                cuerpo = ("<html><body style='font-family:sans-serif;"
+                          "background:#111622;color:#e5e7eb;display:flex;"
+                          "align-items:center;justify-content:center;height:100vh;'>"
+                          "<div style='text-align:center'><h2>No se pudo conectar "
+                          "Google Drive</h2><p>" + (error or "sin código") +
+                          "</p></div></body></html>")
+            else:
+                try:
+                    cuenta = drive.intercambiar_codigo(code)
+                    cuerpo = ("<html><body style='font-family:sans-serif;"
+                              "background:#111622;color:#e5e7eb;display:flex;"
+                              "align-items:center;justify-content:center;height:100vh;'>"
+                              "<div style='text-align:center'><h2>✓ Conectado: " +
+                              cuenta + "</h2><p>Ya podés cerrar esta pestaña.</p>"
+                              "</div></body></html>")
+                except Exception as e:
+                    cuerpo = ("<html><body style='font-family:sans-serif;"
+                              "background:#111622;color:#f87171;display:flex;"
+                              "align-items:center;justify-content:center;height:100vh;'>"
+                              "<div style='text-align:center'><h2>Error al conectar</h2>"
+                              "<p>" + str(e)[:300] + "</p></div></body></html>")
+            b = cuerpo.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(b)))
+            self.end_headers()
+            self.wfile.write(b)
         elif ruta == "/api/hosters":
             self._json({"hosters": hosters.hosters_soportados()})
         elif ruta == "/api/lote":
@@ -3356,6 +3535,24 @@ class Manejador(BaseHTTPRequestHandler):
             self._json({"ok": GESTOR.borrar(datos.get("id"))})
         elif ruta == "/api/abrir":
             self._json({"ok": GESTOR.abrir(datos.get("id"))})
+        elif ruta == "/api/drive/autorizar":
+            # devuelve la URL del consentimiento de Google para abrirla en
+            # el navegador (flujo OAuth de escritorio)
+            try:
+                self._json({"ok": True, "url": drive.url_autorizacion()})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)[:200]}, 400)
+        elif ruta == "/api/drive/desconectar":
+            drive.desconectar()
+            self._json({"ok": True, "drive": drive.estado()})
+        elif ruta == "/api/drive/subir":
+            # botón «Subir a Drive» en una descarga terminada: sube el
+            # archivo y (según el modo) borra o conserva el local
+            try:
+                res = _subir_a_drive(datos.get("id"))
+                self._json({"ok": True, "resultado": res})
+            except Exception as e:
+                self._json({"ok": False, "error": str(e)[:300]}, 500)
         elif ruta == "/api/carpeta":
             # acceso rápido desde el popup de la extensión: abre la carpeta
             # de descargas por defecto en el explorador de archivos
@@ -3459,12 +3656,34 @@ class Manejador(BaseHTTPRequestHandler):
                     _aplicar_limite_global()   # aplica en vivo al motor/Mega
                 except (TypeError, ValueError):
                     pass
+            global DRIVE_SUBIR_AUTO, DRIVE_MODO
+            if "drive_subir_auto" in datos:
+                DRIVE_SUBIR_AUTO = bool(datos["drive_subir_auto"])
+            if "drive_modo" in datos:
+                m = str(datos["drive_modo"] or "")
+                if m in ("borrar_local", "conservar_local", "solo_subir"):
+                    DRIVE_MODO = m
+            if "drive_client_id" in datos or "drive_client_secret" in datos:
+                cid, secret = drive.credenciales()
+                if "drive_client_id" in datos:
+                    cid = str(datos["drive_client_id"] or "")
+                if "drive_client_secret" in datos:
+                    secret = str(datos["drive_client_secret"] or "")
+                if cid and secret:
+                    try:
+                        drive.guardar_credenciales(cid, secret)
+                    except Exception as e:
+                        self._json({"ok": False, "error": str(e)[:200]}, 400)
+                        return
             _guardar_config()
             self._json({"ok": True, "organizar": ORGANIZAR_POR_TIPO,
                         "max_simultaneas": MAX_SIMULTANEAS,
                         "descompresion_auto": DESCOMPRESION_AUTO,
                         "password_descompresion": PASSWORD_DESCOMPRESION,
-                        "limite_kbps": LIMITE_VELOCIDAD_KBPS})
+                        "limite_kbps": LIMITE_VELOCIDAD_KBPS,
+                        "drive_subir_auto": DRIVE_SUBIR_AUTO,
+                        "drive_modo": DRIVE_MODO,
+                        "drive": drive.estado()})
         else:
             self._json({"error": "no encontrado"}, 404)
 

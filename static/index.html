@@ -2486,6 +2486,56 @@
         <span id="txt-estado-update" style="flex:1; min-width:180px; font-size:13px; color:var(--text-secondary);"></span>
       </div>
 
+      <div class="config-section-title" data-i18n="config.drive.titulo">Google Drive</div>
+      <div class="config-nota" data-i18n="config.drive.nota">
+        Sube los archivos descargados a tu Google Drive en vez de (o además de) dejarlos en disco.
+      </div>
+      <div class="config-nota" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px;">
+        <label style="flex:1; min-width:220px; font-size:12.5px; color:var(--text-secondary);" data-i18n="config.drive.client_id">Client ID (Google Cloud)</label>
+        <input type="text" id="drive-client-id" class="input-config" placeholder="1234-xxxx.apps.googleusercontent.com" style="flex:2; min-width:260px;" />
+      </div>
+      <div class="config-nota" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px;">
+        <label style="flex:1; min-width:220px; font-size:12.5px; color:var(--text-secondary);" data-i18n="config.drive.client_secret">Client Secret</label>
+        <input type="password" id="drive-client-secret" class="input-config" placeholder="GOCSPX-…" style="flex:2; min-width:260px;" />
+      </div>
+      <div class="config-nota" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px;">
+        <button class="btn btn-secondary btn-sm" id="btn-drive-guardar-creds">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+          <span data-i18n="config.drive.guardar">Guardar credenciales</span>
+        </button>
+        <button class="btn btn-primary btn-sm" id="btn-drive-conectar" style="display:none;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+          <span data-i18n="config.drive.conectar">Conectar Google Drive</span>
+        </button>
+        <button class="btn btn-ghost btn-sm" id="btn-drive-desconectar" style="display:none;">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+          <span data-i18n="config.drive.desconectar">Desconectar</span>
+        </button>
+        <span id="txt-drive-estado" style="flex:1; min-width:180px; font-size:13px; color:var(--text-secondary);"></span>
+      </div>
+      <div class="config-nota" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px;">
+        <span style="flex:1; min-width:200px; font-size:12.5px; color:var(--text-secondary);" data-i18n="config.drive.auto">Subir automáticamente cada descarga terminada a Drive</span>
+        <label class="switch">
+          <input type="checkbox" id="drive-subir-auto" />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="config-nota" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:18px;">
+        <span style="flex:1; min-width:200px; font-size:12.5px; color:var(--text-secondary);" data-i18n="config.drive.modo">Después de subir a Drive:</span>
+        <div class="custom-select-container" style="min-width:220px; max-width:280px;">
+          <select id="drive-modo" class="custom-select">
+            <option value="borrar_local" data-i18n="config.drive.modo.borrar">Borrar el archivo local</option>
+            <option value="conservar_local" data-i18n="config.drive.modo.conservar">Conservar el archivo local</option>
+            <option value="solo_subir" data-i18n="config.drive.modo.solo">Solo subir (no guardar en disco)</option>
+          </select>
+          <span class="custom-select-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </span>
+        </div>
+      </div>
+
       <div class="config-section-title" id="config-seccion-sesiones" data-i18n="config.sesiones">Sesiones de descarga</div>
       <div class="config-nota" data-i18n="config.sesiones.nota">
         Iniciar sesión permite descargar videos que exigen cuenta (anti-bot de YouTube,
@@ -2945,6 +2995,24 @@
       "config.update.lista": "Actualización v{v} lista para instalar.",
       "config.update.error": "No se pudo buscar actualizaciones.",
       "config.update.solo_app": "Solo disponible en la aplicación de escritorio.",
+      "config.drive.titulo": "Google Drive",
+      "config.drive.nota": "Sube los archivos descargados a tu Google Drive en vez de (o además de) dejarlos en disco.",
+      "config.drive.client_id": "Client ID (Google Cloud)",
+      "config.drive.client_secret": "Client Secret",
+      "config.drive.guardar": "Guardar credenciales",
+      "config.drive.conectar": "Conectar Google Drive",
+      "config.drive.desconectar": "Desconectar",
+      "config.drive.auto": "Subir automáticamente cada descarga terminada a Drive",
+      "config.drive.modo": "Después de subir a Drive:",
+      "config.drive.modo.borrar": "Borrar el archivo local",
+      "config.drive.modo.conservar": "Conservar el archivo local",
+      "config.drive.modo.solo": "Solo subir (no guardar en disco)",
+      "config.drive.estado.conectado": "Conectado como {cuenta}",
+      "config.drive.estado.no": "No conectado. Creá el OAuth Client ID en Google Cloud Console y pegá los datos arriba.",
+      "config.drive.estado.guardado": "Credenciales guardadas. Pulsa «Conectar Google Drive» para autorizar.",
+      "config.drive.estado.error": "Error de conexión: {msg}",
+      "config.drive.autorizando": "Abriendo el navegador… completá el acceso en la ventana de Google.",
+      "config.drive.ok": "Credenciales de Google Drive guardadas.",
       "sesion.youtube": "YouTube (Google)",
       "sesion.tiktok": "TikTok",
       "sesion.comprobando": "Comprobando…",
@@ -3046,6 +3114,11 @@
       "tarjeta.extraer_mp3.haciendo": "Extrayendo…",
       "tarjeta.extraer_mp3.ok": "✓ MP3 extraído",
       "tarjeta.abrir": "Abrir carpeta",
+      "tarjeta.subir_drive": "Subir a Drive",
+      "tarjeta.subir_drive.title": "Subir este archivo a tu Google Drive",
+      "tarjeta.subir_drive.subiendo": "Subiendo a Drive",
+      "tarjeta.subir_drive.ok": "Subido a Google Drive",
+      "tarjeta.subir_drive.error": "Error al subir",
       "tarjeta.quitar": "Quitar",
       "tarjeta.quitar.title": "Eliminar de la lista",
       "tarjeta.peers": "Buscando peers…",
@@ -3212,6 +3285,24 @@
       "config.update.lista": "Update v{v} ready to install.",
       "config.update.error": "Could not check for updates.",
       "config.update.solo_app": "Only available in the desktop app.",
+      "config.drive.titulo": "Google Drive",
+      "config.drive.nota": "Upload downloaded files to your Google Drive instead of (or in addition to) keeping them on disk.",
+      "config.drive.client_id": "Client ID (Google Cloud)",
+      "config.drive.client_secret": "Client Secret",
+      "config.drive.guardar": "Save credentials",
+      "config.drive.conectar": "Connect Google Drive",
+      "config.drive.desconectar": "Disconnect",
+      "config.drive.auto": "Automatically upload every finished download to Drive",
+      "config.drive.modo": "After uploading to Drive:",
+      "config.drive.modo.borrar": "Delete the local file",
+      "config.drive.modo.conservar": "Keep the local file",
+      "config.drive.modo.solo": "Upload only (don't keep on disk)",
+      "config.drive.estado.conectado": "Connected as {cuenta}",
+      "config.drive.estado.no": "Not connected. Create the OAuth Client ID in Google Cloud Console and paste the details above.",
+      "config.drive.estado.guardado": "Credentials saved. Click \"Connect Google Drive\" to authorize.",
+      "config.drive.estado.error": "Connection error: {msg}",
+      "config.drive.autorizando": "Opening the browser… complete the sign-in in the Google window.",
+      "config.drive.ok": "Google Drive credentials saved.",
       "sesion.youtube": "YouTube (Google)",
       "sesion.tiktok": "TikTok",
       "sesion.comprobando": "Checking…",
@@ -3313,6 +3404,11 @@
       "tarjeta.extraer_mp3.haciendo": "Extracting…",
       "tarjeta.extraer_mp3.ok": "✓ MP3 extracted",
       "tarjeta.abrir": "Open folder",
+      "tarjeta.subir_drive": "Upload to Drive",
+      "tarjeta.subir_drive.title": "Upload this file to your Google Drive",
+      "tarjeta.subir_drive.subiendo": "Uploading to Drive",
+      "tarjeta.subir_drive.ok": "Uploaded to Google Drive",
+      "tarjeta.subir_drive.error": "Upload error",
       "tarjeta.quitar": "Remove",
       "tarjeta.quitar.title": "Remove from list",
       "tarjeta.reintento.en": "Auto-retry in {s}s (attempt {n}/{max})",
@@ -3514,6 +3610,7 @@
             dato.error, dato.aviso || "", dato.nombre, dato.calidad,
             dato.calidad_real, dato.descompresion,
             dato.descompresion_msg || "",
+            dato.drive || "", dato.drive_progreso || 0, dato.drive_msg || "",
             dato.reintentos_auto || 0, dato.proximo_reintento || 0].join("|");
   }
 
@@ -3578,6 +3675,17 @@
         </div>
       ` : ""}
 
+      ${dato.drive ? `
+        <div class="decompression-badge ${dato.drive}">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+          <span>${dato.drive === "subiendo"
+            ? `${t("tarjeta.subir_drive.subiendo")} ${dato.drive_progreso || 0}%`
+            : dato.drive === "ok"
+              ? t("tarjeta.subir_drive.ok")
+              : `${t("tarjeta.subir_drive.error")}: ${escapeHtml(dato.drive_msg || "")}`}</span>
+        </div>
+      ` : ""}
+
       ${dato.error ? `
         <div class="error-banner">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -3636,6 +3744,12 @@
             ${ICONS.audio} <span>${t("tarjeta.extraer_mp3")}</span>
           </button>
         ` : ""}
+        ${dato.estado === "completa" && dato.drive !== "ok" && dato.drive !== "subiendo" ? `
+          <button class="btn btn-secondary btn-sm" data-acc="subir-drive" title="${t("tarjeta.subir_drive.title")}">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+            <span>${t("tarjeta.subir_drive")}</span>
+          </button>
+        ` : ""}
         ${["completa", "error", "cancelada", "pausada"].includes(dato.estado) ? `
           <button class="btn btn-secondary btn-sm" data-acc="abrir">
             ${ICONS.folder} <span>${t("tarjeta.abrir")}</span>
@@ -3680,6 +3794,35 @@
             .finally(() => {
               b.disabled = false;
               if (etiqueta) etiqueta.textContent = t("tarjeta.extraer_mp3");
+            });
+          return;
+        }
+        // "subir-drive": sube el archivo terminado a Google Drive. Es
+        // lento (chunks de 8 MB): timeout largo + estado del botón.
+        if (acc === "subir-drive") {
+          const etiqueta = b.querySelector("span");
+          b.disabled = true;
+          if (etiqueta) etiqueta.textContent = t("tarjeta.subir_drive.subiendo") + "…";
+          fetchConTimeout("/api/drive/subir", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: dato.id })
+          }, 3600000).then(r => r.json().then(d => ({ ok: r.ok, d })))
+            .then(({ ok, d }) => {
+              if (ok) {
+                mostrarAvisoCalidad(t("tarjeta.subir_drive.ok") + (d.resultado && d.resultado.url ? ": " + d.resultado.url : ""), false);
+              } else {
+                mostrarAvisoCalidad((d.error || t("accion.error")), true);
+              }
+              refrescar();
+            })
+            .catch(() => {
+              fallosServidor++;
+              mostrarServidorCaido(t("aviso.servidor"));
+            })
+            .finally(() => {
+              b.disabled = false;
+              if (etiqueta) etiqueta.textContent = t("tarjeta.subir_drive");
             });
           return;
         }
@@ -5046,6 +5189,9 @@
       $("#descomprimir").checked = !!d.descompresion_auto;
       $("#password-descompresion").value = d.password_descompresion || "";
       if (d.limite_kbps != null) $("#config-limite").value = String(d.limite_kbps);
+      if (d.drive_subir_auto != null) $("#drive-subir-auto").checked = !!d.drive_subir_auto;
+      if (d.drive_modo) $("#drive-modo").value = d.drive_modo;
+      if (d.drive) actualizarEstadoDrive(d.drive);
       mdSelectsActualizar();   // reflejar el límite guardado en el select custom
     } catch (e) {}
   }
@@ -5093,6 +5239,117 @@
       body: JSON.stringify({ password_descompresion: $("#password-descompresion").value })
     });
   });
+
+  // -------------------------------------------------- Google Drive (Config)
+  function actualizarEstadoDrive(drv) {
+    const txt = $("#txt-drive-estado");
+    const btnConectar = $("#btn-drive-conectar");
+    const btnDesconectar = $("#btn-drive-desconectar");
+    if (!txt) return;
+    if (drv && drv.conectado) {
+      txt.textContent = t("config.drive.estado.conectado", { cuenta: drv.cuenta || "" });
+      if (btnConectar) btnConectar.style.display = "none";
+      if (btnDesconectar) btnDesconectar.style.display = "inline-flex";
+    } else {
+      txt.textContent = t("config.drive.estado.no");
+      if (btnConectar) btnConectar.style.display = "inline-flex";
+      if (btnDesconectar) btnDesconectar.style.display = "none";
+    }
+  }
+
+  const btnDriveGuardar = $("#btn-drive-guardar-creds");
+  if (btnDriveGuardar) {
+    btnDriveGuardar.onclick = async () => {
+      const cid = ($("#drive-client-id").value || "").trim();
+      const sec = ($("#drive-client-secret").value || "").trim();
+      if (!cid || !sec) {
+        mostrarAvisoCalidad(t("config.drive.estado.error", { msg: "Client ID y Secret requeridos" }), true);
+        return;
+      }
+      try {
+        const r = await fetch("/api/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ drive_client_id: cid, drive_client_secret: sec })
+        });
+        const d = await r.json();
+        if (!r.ok) {
+          mostrarAvisoCalidad(d.error || t("accion.error"), true);
+          return;
+        }
+        const txt = $("#txt-drive-estado");
+        if (txt) txt.textContent = t("config.drive.estado.guardado");
+        mostrarAvisoCalidad(t("config.drive.ok"), false);
+        actualizarEstadoDrive(d.drive);
+      } catch (e) {
+        mostrarAvisoCalidad(t("accion.error"), true);
+      }
+    };
+  }
+
+  const btnDriveConectar = $("#btn-drive-conectar");
+  if (btnDriveConectar) {
+    btnDriveConectar.onclick = async () => {
+      const txt = $("#txt-drive-estado");
+      if (txt) txt.textContent = t("config.drive.autorizando");
+      try {
+        const r = await fetch("/api/drive/autorizar", { method: "POST" });
+        const d = await r.json();
+        if (!r.ok || !d.url) {
+          if (txt) txt.textContent = (d && d.error) || t("accion.error");
+          return;
+        }
+        window.open(d.url, "_blank");
+        // la pestaña de Google redirige a /api/drive/oauth que intercambia
+        // el código; sondeamos el estado hasta que quede conectado
+        const t0 = Date.now();
+        const iv = setInterval(async () => {
+          if (Date.now() - t0 > 180000) { clearInterval(iv); return; }
+          try {
+            const rr = await fetch("/api/drive/estado");
+            const dd = await rr.json();
+            if (dd.conectado) {
+              clearInterval(iv);
+              actualizarEstadoDrive(dd);
+              mostrarAvisoCalidad(t("config.drive.estado.conectado", { cuenta: dd.cuenta || "" }), false);
+            }
+          } catch (e) {}
+        }, 2000);
+      } catch (e) {
+        if (txt) txt.textContent = t("accion.error");
+      }
+    };
+  }
+
+  const btnDriveDesconectar = $("#btn-drive-desconectar");
+  if (btnDriveDesconectar) {
+    btnDriveDesconectar.onclick = async () => {
+      await fetch("/api/drive/desconectar", { method: "POST" });
+      actualizarEstadoDrive({ conectado: false });
+    };
+  }
+
+  const driveAuto = $("#drive-subir-auto");
+  if (driveAuto) {
+    driveAuto.onchange = async () => {
+      await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ drive_subir_auto: driveAuto.checked })
+      });
+    };
+  }
+
+  const driveModo = $("#drive-modo");
+  if (driveModo) {
+    driveModo.onchange = async () => {
+      await fetch("/api/config", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ drive_modo: driveModo.value })
+      });
+    };
+  }
 
   setInterval(refrescar, 900);
   refrescar();

@@ -233,6 +233,13 @@ POST /api/carpeta                  (abre la carpeta de descargas en el
                                    explorador de archivos del sistema)
 GET  /api/media/<id>                (sirve el archivo con soporte de Range:
                                      el reproductor integrado del panel)
+
+# Google Drive (subir descargas a la nube)
+GET  /api/drive/estado                                → {conectado, cuenta}
+POST /api/drive/autorizar                             → {url} (consentimiento OAuth)
+GET  /api/drive/oauth?code=...                        (callback de Google; intercambia el token)
+POST /api/drive/desconectar
+POST /api/drive/subir      {"id"}    → sube el archivo de esa descarga a Drive
 ```
 
 ### ¿Qué tiene que IDM no tiene? (las mejoras)

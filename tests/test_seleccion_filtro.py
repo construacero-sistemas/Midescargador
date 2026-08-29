@@ -243,6 +243,25 @@ class TestSeleccionTemporadaMasServidor(unittest.TestCase):
         self.assertTrue(all(g["hoster"] == "Mega" for g in final))
         self.assertNotIn("MegaUp", {g["hoster"] for g in final})
 
+    def test_parcial_en_vivo_tambien_filtrado(self):
+        # el reporte: marcando SOLO MediaFire, el panel en vivo mostraba
+        # todos los servidores (Mega, drive, ...). El parcial debe filtrarse
+        # igual que el resultado final, no solo al terminar la extracción.
+        episodios = [
+            {"ep": "1x1", "urls": [URL_MEDIAFIRE, URL_MEGA]},
+            {"ep": "1x2", "urls": [URL_MEGAUP, URL_MEGA]},
+            {"ep": "1x3", "urls": [URL_MEDIAFIRE]},
+        ]
+        # mientras extrae (parcial): la app llama _filtrar_servidores sobre
+        # lo acumulado en cada _progreso, exactamente como el resultado final
+        parcial = servidor._filtrar_servidores(
+            self._resolver_temporada(episodios, ["MediaFire"]), ["MediaFire"])
+        self.assertTrue(parcial, "el parcial no debe quedar vacío")
+        self.assertEqual({g["hoster"] for g in parcial}, {"MediaFire"})
+        # ningún grupo de Mega/MegaUp en el parcial
+        self.assertNotIn("Mega", {g["hoster"] for g in parcial})
+        self.assertNotIn("MegaUp", {g["hoster"] for g in parcial})
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
