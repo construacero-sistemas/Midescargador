@@ -1048,28 +1048,23 @@ def _hoster_para_grupo(urls_finales, label, n_opciones, opcion,
 
 def _extraer_un_episodio(cdp, url, label, fin_global, hosters_permitidos=None):
     """Navega a la página de un episodio y resuelve sus botones DESCARGAR.
-    Devuelve (servidores, incompleto). La etiqueta de cada grupo es el
-    label del episodio + '· Opción N' cuando hay más de un botón."""
+    Devuelve (servidores, incompleto, motivo). La etiqueta de cada grupo es
+    el label del episodio + '· Opción N' cuando hay más de un botón."""
     cond = ("document.querySelectorAll('a[href*=\"anomizador\"]').length > 0"
             " || " + _js_reto_cloudflare())
     if not cdp.navegar(url, condicion=cond, tiempo_max=60):
-        return ([{"servidor": label or "?", "enlaces": [],
-                  "es_multipartes": False, "error": "no se pudo abrir el episodio"}],
-                False)
+        return ([], True, "no se pudo abrir el episodio")
     while time.time() < fin_global and not cdp.eval(
             "document.querySelectorAll('a[href*=\"anomizador\"]').length > 0"):
         if _bloqueado_duro(cdp):
-            return ([{"servidor": label or "?", "enlaces": [],
-                      "es_multipartes": False,
-                      "error": "Cloudflare bloqueó el episodio; intentá de nuevo"}], False)
+            return ([], True, "Cloudflare bloqueó el episodio; intentá de nuevo")
         time.sleep(3)
     if not label:
         titulo = (cdp.eval("document.title") or "").strip()
         label = re.sub(r"\s*\|\s*ZonaLeRoS\s*$", "", titulo, flags=re.I).strip() or "?"
     botones = _extraer_botones_episodio(cdp)
     if not botones:
-        return ([{"servidor": label, "enlaces": [], "es_multipartes": False,
-                  "error": "sin enlaces de descarga en el episodio"}], False)
+        return ([], True, "sin enlaces de descarga en el episodio")
     servidores = []
     incompleto = False
     for i, b in enumerate(botones):
@@ -1086,7 +1081,9 @@ def _extraer_un_episodio(cdp, url, label, fin_global, hosters_permitidos=None):
             continue
         clasificado.update(grupo)
         servidores.append(clasificado)
-    return servidores, incompleto
+    if not servidores and not incompleto:
+        return [], True, "el episodio no devolvió enlaces de descarga"
+    return servidores, incompleto, None
 
 
 def _crear_pestanas(n):
@@ -1148,10 +1145,11 @@ def _extraer_serie_paralela(episodios, n_pestanas, ws_maestro,
     """Resuelve los episodios de una serie EN PARALELO: n_pestanas pestañas
     nuevas del mismo Chrome (cada una con su conexión CDP) más la pestaña
     maestra (la que ya trae la lista de episodios). Devuelve
-    (servidores, incompleto) en el orden de la serie. Si no se pueden abrir
-    las pestañas, cae a secuencial con la pestaña maestra.
+    (servidores, incompleto, episodios_fallidos) en el orden de la serie.
+    Si no se pueden abrir las pestañas, cae a secuencial con la pestaña maestra.
 
-    on_progreso(servidores, n_resueltos, n_total, titulo) se invoca desde
+    on_progreso(servidores, n_resueltos, n_total, titulo, episodios_fallidos)
+    se invoca desde
     los hilos trabajadores cada vez que un episodio queda resuelto, con la
     lista acumulada hasta ese momento (para mostrarla EN VIVO en el panel)."""
     import queue as _queue
@@ -1187,26 +1185,49 @@ def _extraer_serie_paralela(episodios, n_pestanas, ws_maestro,
                     i, ep = q.get_nowait()
                 except _queue.Empty:
                     break
-                try:
-                    eps, inc = _extraer_un_episodio(
-                        cdp, ep["url"], ep["label"], fin_global,
-                        hosters_permitidos=hosters_permitidos)
-                except Exception as e:
-                    # un episodio que falla no hunde la serie completa
-                    eps = [{"servidor": (ep.get("label") or "?").strip()
-                            or "?", "enlaces": [], "es_multipartes": False,
-                            "error": "error extrayendo el episodio: %s" % e}]
-                    inc = False
+                eps, inc, motivo = ([], True, "sin intentar")
+                # Algunos episodios fallan al cambiar entre el perfil junction
+                # y la copia de Chrome. Reintentar evita perder capítulos por
+                # un fallo transitorio de navegación/Cloudflare.
+                for intento in range(3):
+                    try:
+                        eps, inc, motivo = _extraer_un_episodio(
+                            cdp, ep["url"], ep["label"], fin_global,
+                            hosters_permitidos=hosters_permitidos)
+                    except Exception as e:
+                        eps, inc, motivo = [], True, (
+                            "error extrayendo el episodio: %s" % e)
+                    if eps and any(x.get("enlaces") for x in eps):
+                        break
+                    if time.time() >= fin_global:
+                        break
+                    if intento < 2:
+                        time.sleep(2 + intento * 2)
+                # no se agrega un servidor vacío: se conserva el fallo en una
+                # lista aparte para informarlo y poder reintentarlo.
                 with candado:
-                    resultados.append((i, eps, inc))
+                    resultados.append((i, eps, inc, motivo))
                     if on_progreso is not None:
                         try:
                             vivos = sorted(resultados)
                             acum = []
-                            for _, e_, _inc in vivos:
+                            for _, e_, _inc, _motivo in vivos:
                                 acum.extend(e_)
-                            on_progreso(acum, len(vivos), len(episodios),
-                                        titulo)
+                            fallidos_vivos = [{
+                                "indice": j,
+                                "label": episodios[j].get("label") or "?",
+                                "url": episodios[j].get("url") or "",
+                                "error": mot or "sin enlaces de descarga"
+                            } for j, _e, _inc, mot in vivos
+                              if not any(x.get("enlaces") for x in _e)]
+                            try:
+                                on_progreso(acum, len(vivos), len(episodios),
+                                            titulo, fallidos_vivos)
+                            except TypeError:
+                                # Compatibilidad con callbacks antiguos de
+                                # cuatro argumentos.
+                                on_progreso(acum, len(vivos), len(episodios),
+                                            titulo)
                         except Exception:
                             pass
         finally:
@@ -1222,13 +1243,31 @@ def _extraer_serie_paralela(episodios, n_pestanas, ws_maestro,
         h.start()
     for h in hilos:
         h.join()
+    return _consolidar_resultados_serie(resultados, episodios)
+
+
+def _consolidar_resultados_serie(resultados, episodios):
+    """Consolida resultados de trabajadores sin convertir fallos en
+    servidores vacíos. Es pura para poder probarla sin Chrome/CDP."""
     servidores = []
+    episodios_fallidos = []
     # si el presupuesto cortó antes de recorrerlos todos, va "incompleto"
     incompleto = len(resultados) < len(episodios)
-    for i, eps, inc in sorted(resultados):
-        servidores.extend(eps)
+    for item in sorted(resultados):
+        # compatibilidad con resultados antiguos de pruebas/consumidores
+        i, eps, inc = item[:3]
+        motivo = item[3] if len(item) > 3 else None
+        validos = [e for e in eps if e.get("enlaces")]
+        servidores.extend(validos)
+        if not validos:
+            episodio = episodios[i] if i < len(episodios) else {}
+            episodios_fallidos.append({
+                "indice": i, "label": episodio.get("label") or "?",
+                "url": episodio.get("url") or "",
+                "error": motivo or "sin enlaces de descarga"})
+            incompleto = True
         incompleto = incompleto or inc
-    return servidores, incompleto
+    return servidores, incompleto, episodios_fallidos
 
 
 def _js_reto_cloudflare():
@@ -1323,21 +1362,29 @@ def extraer(url, on_progreso=None, hosters_permitidos=None, episodios_permitidos
             if episodios_permitidos:
                 permitidos_urls = set(episodios_permitidos)
                 episodios = [e for e in episodios if e.get("url") in permitidos_urls]
-            servidores, incompleto = _extraer_serie_paralela(
+            servidores, incompleto, episodios_fallidos = _extraer_serie_paralela(
                 episodios, _PARALELO_SERIE, ws_url, None,
                 on_progreso=on_progreso, titulo=titulo,
                 hosters_permitidos=hosters_permitidos)
+            # document.title puede quedar vacío durante una navegación con
+            # Cloudflare; nunca presentar un título vacío como "Página no
+            # encontrada" en la UI.
+            if not titulo.strip():
+                titulo = "Serie ZonaLeros"
             resultado = {"servidores": servidores, "titulo": titulo[:150]}
-            if incompleto:
+            if incompleto or episodios_fallidos:
                 resultado["incompleto"] = True
+            if episodios_fallidos:
+                resultado["episodios_fallidos"] = episodios_fallidos
             return resultado
 
         # ---------- EPISODIO suelto: una sola página con botones DESCARGAR
         if _es_pagina_episodio(url):
-            servidores, incompleto = _extraer_un_episodio(
+            servidores, incompleto, _motivo = _extraer_un_episodio(
                 cdp, url, None, fin_global)
             titulo = cdp.eval("document.title") or ""
-            resultado = {"servidores": servidores, "titulo": titulo[:150]}
+            resultado = {"servidores": servidores,
+                         "titulo": (titulo.strip() or "Episodio ZonaLeros")[:150]}
             if incompleto:
                 resultado["incompleto"] = True
             return resultado

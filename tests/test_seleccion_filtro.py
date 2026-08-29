@@ -140,6 +140,19 @@ class TestFiltrarServidores(unittest.TestCase):
         quedan = servidor._filtrar_servidores(self._grupos(), ["mega"])
         self.assertEqual([g["hoster"] for g in quedan], ["Mega"])
 
+    def test_cache_tambien_respeta_servidor_elegido(self):
+        url = "https://karanpc.com/programa-de-prueba/"
+        anterior = dict(servidor._ENLACES_CACHE)
+        try:
+            servidor._ENLACES_CACHE.clear()
+            servidor._ENLACES_CACHE[url] = (time.time(), {
+                "servidores": self._grupos(), "titulo": "Programa"})
+            r = servidor._enlaces_lanzar(url, servidores_seleccionados=["MediaFire"])
+            self.assertEqual([x["hoster"] for x in r["servidores"]], ["MediaFire"])
+        finally:
+            servidor._ENLACES_CACHE.clear()
+            servidor._ENLACES_CACHE.update(anterior)
+
 
 class TestHostersDetectadosEnCatalogo(unittest.TestCase):
     """persistencia de 'servidores_posibles' por serie en el catálogo."""
@@ -353,6 +366,38 @@ class TestEpisodiosSerieCompleta(unittest.TestCase):
         r, err = zonaleros._episodios_serie_completa(
             cdp, "https://zona-leros.com/series/x", time.time() + 240)
         self.assertEqual(len(r), 1)
+
+
+class TestConsolidarResultadosSerie(unittest.TestCase):
+    """Los episodios que no entregan enlaces no deben aparecer como tarjetas
+    de servidor vacías; deben quedar reportados como fallidos."""
+
+    def test_separa_episodio_sin_enlaces(self):
+        episodios = [
+            {"label": "S02E01", "url": "https://example/1"},
+            {"label": "S02E02", "url": "https://example/2"},
+        ]
+        resultados = [
+            (0, [{"servidor": "MediaFire", "enlaces": [{"url": "u1"}]}], False, None),
+            (1, [], True, "sin enlaces de descarga"),
+        ]
+        servidores, incompleto, fallidos = zonaleros._consolidar_resultados_serie(
+            resultados, episodios)
+        self.assertEqual(len(servidores), 1)
+        self.assertTrue(incompleto)
+        self.assertEqual([x["label"] for x in fallidos], ["S02E02"])
+        self.assertNotIn("enlaces", fallidos[0])
+
+    def test_resultado_reintentado_valido_no_falla(self):
+        episodios = [{"label": "S02E03", "url": "https://example/3"}]
+        resultados = [
+            (0, [{"servidor": "MediaFire", "enlaces": [{"url": "u3"}]}], False, None),
+        ]
+        servidores, incompleto, fallidos = zonaleros._consolidar_resultados_serie(
+            resultados, episodios)
+        self.assertEqual(len(servidores), 1)
+        self.assertFalse(incompleto)
+        self.assertEqual(fallidos, [])
 
 
 if __name__ == "__main__":

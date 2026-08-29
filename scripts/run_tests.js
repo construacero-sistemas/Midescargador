@@ -4,6 +4,7 @@
  *
  *   - backend : python -m unittest discover -s tests
  *   - frontend: node test_frontend/seleccion.test.js (jsdom)
+ *   - updater: node electron/update_logic.test.js (lógica determinista)
  *
  * Por defecto corre las DOS suites. Se puede ejecutar solo una con flags:
  *   node scripts/run_tests.js --backend            # solo backend
@@ -37,6 +38,14 @@ function ejecutar(nombre, comando, args, cwd) {
 }
 
 function correr(suite) {
+  if (suite === "updater") {
+    return ejecutar(
+      "updater (determinista)",
+      process.execPath,
+      ["update_logic.test.js"],
+      path.join(RAIZ, "electron")
+    );
+  }
   if (suite === "backend") {
     return ejecutar(
       "backend (unittest)",
@@ -61,18 +70,21 @@ const VALOR_RE = /^--solo(?:-tipo)?$/;
 
 let backend = true;
 let frontend = true;
+let updater = true;
 
 const flagsUnicos = args.filter((a) => a === "--backend" || a === "--frontend");
 if (flagsUnicos.length) {
   backend = flagsUnicos.includes("--backend");
   frontend = flagsUnicos.includes("--frontend");
+  updater = false;
 }
 
 const idxSolo = args.findIndex((a) => VALOR_RE.test(a));
 if (idxSolo !== -1) {
   const tipo = args[idxSolo + 1];
-  if (tipo === "backend") { backend = true; frontend = false; }
-  else if (tipo === "frontend") { backend = false; frontend = true; }
+  if (tipo === "backend") { backend = true; frontend = false; updater = false; }
+  else if (tipo === "frontend") { backend = false; frontend = true; updater = false; }
+  else if (tipo === "updater") { backend = false; frontend = false; updater = true; }
   else {
     console.error(`[ERROR] --solo <tipo> desconocido: ${tipo || "(falta valor)"} (usa 'backend' o 'frontend')`);
     process.exit(2);
@@ -82,6 +94,7 @@ if (idxSolo !== -1) {
 const wasOk = [];
 if (backend) wasOk.push(correr("backend"));
 if (frontend) wasOk.push(correr("frontend"));
+if (updater) wasOk.push(correr("updater"));
 
 if (wasOk.length === 0) {
   console.error("\n[ERROR] No se pidió correr ninguna suite (uso: --backend | --frontend | --solo backend|frontend).");

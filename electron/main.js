@@ -7,6 +7,7 @@
 // auto-actualización vía electron-updater (solo en la versión instalada; el
 // portable no puede auto-actualizarse).
 const { app, BrowserWindow, dialog, shell, Menu, ipcMain, Tray, nativeImage, Notification } = require("electron");
+const updateLogic = require("./update_logic");
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -143,7 +144,8 @@ function verificarActualizacionAlMostrar() {
   // el pill/modal vuelva a aparecer aunque la ventana estuviera oculta.
   if (updateInfoActual && ultimoAvisoEnviado !== updateInfoActual.version) {
     ultimoAvisoEnviado = updateInfoActual.version;
-    enviarEstadoActualizacion({ estado: "disponible", version: updateInfoActual.version, releaseNotes: updateInfoActual.releaseNotes || null });
+    const estado = updateLogic.estadoAlMostrar(updateInfoActual, null);
+    if (estado) enviarEstadoActualizacion(estado);
   }
   // comprobación nueva: como mucho una vez cada 30 min (además del arranque
   // y del intervalo de 4 h). Así, al abrir la app desde la bandeja o el
@@ -433,11 +435,7 @@ function configurarAutoUpdate() {
   autoUpdater.on("update-available", (info) => {
     updateInfoActual = info;
     log("actualización disponible: " + info.version);
-    enviarEstadoActualizacion({
-      estado: "disponible",
-      version: info.version,
-      releaseNotes: info.releaseNotes || null
-    });
+    enviarEstadoActualizacion(updateLogic.estadoUpdateDisponible(info));
   });
 
   autoUpdater.on("download-progress", (p) => {

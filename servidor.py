@@ -40,6 +40,7 @@ import mega
 import zonaleros_copia as zonaleros   # variante copia de perfil (Chrome abierto, sin taskkill destructivo)
 import catalogo as catalogo_mod
 import pivigames
+import karanpc
 import cuenta
 import descomprimir
 import torrents
@@ -1258,7 +1259,7 @@ def _formatos(url):
         ev.set()
 
 
-# ---------------------------------------------------- enlaces (zona-leros/pivigames)
+# ---------------------------------------------------- enlaces (ZonaLeros/PiviGames/KaranPC)
 # URLs que claramente no son una página de juego (imágenes, comprimidos...):
 # extraer enlaces de ellas lanzaría Chrome para nada.
 _EXT_ARCHIVO = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".svg",
@@ -1277,6 +1278,8 @@ def _pagina_enlaces(url):
         return zonaleros
     if pivigames._es_pivigames(url):
         return pivigames
+    if karanpc._es_karanpc(url):
+        return karanpc
     return None
 
 
@@ -1409,13 +1412,13 @@ def _escaneo_cancelar(tid):
 
 def _enlaces_extraer(url, on_progreso=None, hosters_permitidos=None, episodios_permitidos=None):
     """(síncrono) Lista los enlaces de descarga de una página de juego
-    (zona-leros.com o pivigames.blog). Usa el Chrome real del usuario para
+    (zona-leros.com, pivigames.blog o karanpc.com). Usa el Chrome real del usuario para
     pasar Cloudflare; el resultado se guarda en caché 12 horas (la
     extracción tarda ~1-3 minutos). on_progreso recibe los resultados
     parciales de las series (para mostrarlos en vivo mientras extrae)."""
     modulo = _pagina_enlaces(url)
     if modulo is None:
-        return {"error": "no parece un enlace de zona-leros.com ni de pivigames.blog"}
+        return {"error": "no parece un enlace compatible (ZonaLeros, PiviGames o KaranPC)"}
     with _ENLACES_LOCK:
         if url in _ENLACES_CACHE:
             ts, r = _ENLACES_CACHE[url]
@@ -1429,6 +1432,10 @@ def _enlaces_extraer(url, on_progreso=None, hosters_permitidos=None, episodios_p
                         r.get("servidores") or [], hosters_permitidos)
                 return r
         if getattr(modulo, "__name__", "") == "zonaleros_copia":
+            resultado = modulo.extraer(url, on_progreso=on_progreso,
+                                       hosters_permitidos=hosters_permitidos,
+                                       episodios_permitidos=episodios_permitidos)
+        elif getattr(modulo, "__name__", "") == "karanpc":
             resultado = modulo.extraer(url, on_progreso=on_progreso,
                                        hosters_permitidos=hosters_permitidos,
                                        episodios_permitidos=episodios_permitidos)
@@ -1462,7 +1469,7 @@ def _enlaces_lanzar(url, urls_seleccionadas=None, servidores_seleccionados=None)
     conexión HTTP de 1-3 minutos que se cae con 'Failed to fetch' cuando
     el servidor se reinicia o la red hace un corte transitorio."""
     if _pagina_enlaces(url) is None:
-        return {"error": "no parece un enlace de zona-leros.com ni de pivigames.blog"}
+        return {"error": "no parece un enlace compatible (ZonaLeros, PiviGames o KaranPC)"}
     if _es_url_archivo(url):
         return {"error": ("esa URL es un archivo o imagen, no una página de "
                           "juego. Pega la URL de la página "
@@ -1471,6 +1478,10 @@ def _enlaces_lanzar(url, urls_seleccionadas=None, servidores_seleccionados=None)
         if url in _ENLACES_CACHE:
             ts, r = _ENLACES_CACHE[url]
             if time.time() - ts < _ENLACES_TTL:
+                if servidores_seleccionados:
+                    r = dict(r)
+                    r["servidores"] = _filtrar_servidores(
+                        r.get("servidores") or [], servidores_seleccionados)
                 return r
     # si ya hay una extracción en curso de esta misma url, reusa la tarea
     for tid, t in list(_ENLACES_TAREAS.items()):
@@ -1485,7 +1496,7 @@ def _enlaces_lanzar(url, urls_seleccionadas=None, servidores_seleccionados=None)
 
     def _trabajo():
         try:
-            def _progreso(servidores, n_resueltos, n_total, titulo):
+            def _progreso(servidores, n_resueltos, n_total, titulo, episodios_fallidos=None):
                 # resultados parciales en vivo: el panel los muestra
                 # mientras la extracción sigue (series paralelas). Se aplica
                 # el MISMO filtro de servidores que al final, para que no
@@ -1495,9 +1506,11 @@ def _enlaces_lanzar(url, urls_seleccionadas=None, servidores_seleccionados=None)
                     _ENLACES_TAREAS[tid].get("servidores_seleccionados"))
                 _ENLACES_TAREAS[tid]["parcial"] = {
                     "servidores": servidores,
-                    "n_resueltos": n_resueltos,
+                    "n_resueltos": max(0, n_resueltos - len(episodios_fallidos or [])),
+                    "n_procesados": n_resueltos,
                     "n_total": n_total,
                     "titulo": titulo,
+                    "episodios_fallidos": episodios_fallidos or [],
                 }
             urls = _ENLACES_TAREAS[tid].get("urls_seleccionadas") or []
             if urls:
@@ -2684,7 +2697,7 @@ class Gestor:
         except Exception:
             pass
         t.id = uuid.uuid4().hex[:8]
-        t.origen = origen or ""   # "zonaleros"/"pivigames": contraseña automática
+        t.origen = origen or ""   # "zonaleros"/"pivigames"/"karanpc": origen
         _init_reintentos(t)
         with self._lock:
             self.trabajos[t.id] = t
@@ -3100,7 +3113,7 @@ def _encolar_lote(urls, segmentos, origen=None, limite_kbps=0):
 # ------------------------------------------------- descompresión automática
 # Cuando una descarga termina y DESCOMPRESION_AUTO está activo, los
 # comprimidos (.rar/.zip/.7z/...) se extraen solos. Los enlaces que vienen
-# de zona-leros llevan origen "zonaleros" y usan su contraseña automática.
+# de zona-leros llevan origen "zonaleros" y usan su contraseña automática; KaranPC no fija contraseña.
 _PENDIENTES_DESCOMPRESION = {}   # ruta -> (trabajo, contraseña)
 
 

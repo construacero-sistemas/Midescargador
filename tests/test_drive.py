@@ -186,6 +186,47 @@ def _cabecera(req, nombre):
     return ""
 
 
+def _fake_carpeta(carpeta_id="FOLDER-ROOT"):
+    """Devuelve un fake de urlopen que simula el flujo de carpeta de Drive:
+    GET de búsqueda por nombre (devuelve la carpeta creada) y POST de
+    creación. Devuelve el GET de búsqueda respondiendo con vacío la primera
+    vez para forzar la creación, y con la carpeta a partir de entonces."""
+    creada = {"hecha": False, "solicitudes": 0}
+
+    def respuesta_busqueda():
+        if creada["hecha"]:
+            return _Respuesta(200, json.dumps({
+                "files": [{"id": carpeta_id, "name": "MiDescargador",
+                            "mimeType": "application/vnd.google-apps.folder"}],
+            }).encode())
+        return _Respuesta(200, json.dumps({"files": []}).encode())
+
+    def metodo(req):
+        # urllib solo fija `.method` si se pasó explícito; el GET de búsqueda
+        # se crea sin method, así que se asume GET.
+        return getattr(req, "method", "GET") or "GET"
+
+    def fake(req, timeout=None):
+        url = req.full_url or ""
+        m = metodo(req)
+        if m in ("GET", "POST") and url.startswith(drive.API_BASE):
+            creada["solicitudes"] += 1
+            if m == "GET":
+                return respuesta_busqueda()
+            creada["hecha"] = True
+            return _Respuesta(200, json.dumps({
+                "id": carpeta_id, "name": "MiDescargador",
+                "mimeType": "application/vnd.google-apps.folder",
+            }).encode())
+        return None  # no gestiona; el fake externo decide
+
+    # el primer GET de búsqueda devuelve vacío (fuerza crear), luego la carpeta
+    fake.busqueda = respuesta_busqueda
+    fake.contador = creada
+    return fake
+
+
+
 class TestSubida(unittest.TestCase):
 
     def setUp(self):
@@ -207,7 +248,11 @@ class TestSubida(unittest.TestCase):
     @mock.patch.object(urllib.request, "urlopen")
     def test_subida_completa_con_progreso(self, urlopen):
         llamadas = []
+        carpeta = _fake_carpeta()
         def fake_open(req, timeout=None):
+            res = carpeta(req, timeout)
+            if res:
+                return res
             llamadas.append((req.method, req.full_url, req.data))
             if req.full_url.startswith(drive.UPLOAD_BASE) \
                     and req.method == "POST":
@@ -234,7 +279,11 @@ class TestSubida(unittest.TestCase):
     @mock.patch.object(urllib.request, "urlopen")
     def test_chunk_falla_y_reintenta(self, urlopen):
         intentos = {"n": 0}
+        carpeta = _fake_carpeta()
         def fake_open(req, timeout=None):
+            res = carpeta(req, timeout)
+            if res:
+                return res
             if req.full_url.startswith(drive.UPLOAD_BASE) \
                     and req.method == "POST":
                 return _Respuesta(200, b"",
@@ -255,7 +304,11 @@ class TestSubida(unittest.TestCase):
 
     @mock.patch.object(urllib.request, "urlopen")
     def test_subida_falla_definitiva(self, urlopen):
+        carpeta = _fake_carpeta()
         def fake_open(req, timeout=None):
+            res = carpeta(req, timeout)
+            if res:
+                return res
             if req.full_url.startswith(drive.UPLOAD_BASE) \
                     and req.method == "POST":
                 return _Respuesta(200, b"",
@@ -267,6 +320,37 @@ class TestSubida(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             drive.subir_archivo(self.ruta)
         self.assertIn("Falló la subida", str(ctx.exception))
+
+    @mock.patch.object(urllib.request, "urlopen")
+    def test_crea_carpeta_si_no_existe_y_usa_su_id(self, urlopen):
+        # Verifica el fix del 404 'File not found: MiDescargador': la subida
+        # debe crear la carpeta 'MiDescargador' (si no existe) y mandar su ID
+        # real en 'parents', nunca el nombre como texto.
+        uso_parent = {"valor": None}
+        carpeta = _fake_carpeta("DIR-REAL")
+        def fake_open(req, timeout=None):
+            res = carpeta(req, timeout)
+            if res:
+                return res
+            if req.full_url.startswith(drive.UPLOAD_BASE) \
+                    and getattr(req, "method", "GET") == "POST":
+                cuerpo = json.loads((req.data or b"{}").decode("utf-8"))
+                uso_parent["valor"] = cuerpo.get("parents")
+                return _Respuesta(200, b"",
+                                  {"Location": "https://upload.example/s4"})
+            if getattr(req, "method", "GET") == "PUT":
+                return _Respuesta(201, json.dumps({"id": "F-OK"}).encode())
+            raise AssertionError("request inesperado: %s %s"
+                                 % (getattr(req, "method", "GET"), req.full_url))
+        urlopen.side_effect = fake_open
+        res = drive.subir_archivo(self.ruta)
+        self.assertEqual(res["id"], "F-OK")
+        # la carpeta se crea y su ID real se usa como parent
+        self.assertEqual(uso_parent["valor"], ["DIR-REAL"])
+        # el nombre literal 'MiDescargador' nunca aparece como parent
+        self.assertNotEqual(uso_parent["valor"], ["MiDescargador"])
+        # se hizo la búsqueda GET y la creación POST contra la API de Drive
+        self.assertGreaterEqual(carpeta.contador["solicitudes"], 2)
 
     def test_archivo_inexistente(self):
         with self.assertRaises(RuntimeError):

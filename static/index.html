@@ -2645,7 +2645,7 @@
         Sesiones</strong> y entra con tu cuenta (tus datos quedan solo en tu equipo).
       </div>
 
-      <div class="config-section-title" data-i18n="info.zona.titulo">Juegos y películas de ZonaLeros</div>
+      <div class="config-section-title" data-i18n="info.zona.titulo">Juegos, películas y programas compatibles</div>
       <div class="config-nota" data-i18n-html="info.zona.nota">
         <strong><a href="https://zona-leros.com" target="_blank" class="info-link">zona-leros.com</a></strong> es un sitio de juegos y películas. En vez de estar copiando
         enlace por enlace, haz esto:<br>
@@ -2970,6 +2970,7 @@
       "descomp.password.ph": "Ej. zonaleros o clave personalizada",
       "aviso.zona.zona": "ZonaLeros detectado: se usará <strong>zonaleros</strong> automáticamente",
       "aviso.zona.pivi": "PiviGames detectado: si el archivo pide contraseña, suele ser <strong>pivigames</strong> (cámbiala en Configuración si falla)",
+      "aviso.zona.karan": "KaranPC detectado: se buscarán enlaces directos, hosters conocidos y GloTorrents. La contraseña depende del programa.",
       "lista.titulo": "Cola de Descargas",
       "empty.title": "Aún no hay descargas activas",
       "empty.desc": "Pega enlaces en el cuadro superior o usa el botón de descarga flotante en tus videos.",
@@ -3043,10 +3044,11 @@
       "info.rapido.nota": "En lugar de bajar el archivo de una sola vez, lo <strong>parte en pedazos y baja varios al mismo tiempo</strong> (el número de «Conexiones» del panel). Si se corta la red o apagas la computadora, la próxima vez <strong>continúa donde iba</strong>, sin empezar de cero.",
       "info.videos.titulo": "Videos (YouTube, TikTok, etc.)",
       "info.videos.nota": "Solo pega el enlace del video y pulsa Descargar: el programa baja la <strong>mejor calidad disponible</strong> y te lo deja listo como un solo archivo, con audio y todo. Si un sitio te pide iniciar sesión para ver el video, ve a <strong>Configuración → Sesiones</strong> y entra con tu cuenta (tus datos quedan solo en tu equipo).",
-      "info.zona.titulo": "Juegos y películas de ZonaLeros",
+      "info.zona.titulo": "Juegos, películas y programas compatibles",
       "info.zona.nota": "<strong><a href=\"https://zona-leros.com\" target=\"_blank\" class=\"info-link\">zona-leros.com</a></strong> es un sitio de juegos y películas. En vez de estar copiando enlace por enlace, haz esto:<br>1. Entra a <strong><a href=\"https://zona-leros.com\" target=\"_blank\" class=\"info-link\">zona-leros.com</a></strong> y abre la página del juego o película que quieras.<br>2. Copia la dirección (la que empieza con <code>https://www.zona-leros.com/…</code>).<br>3. Pégala aquí y pulsa <strong>Extraer enlaces de descarga</strong>.<br>La app saca <strong>todos los enlaces de todos los servidores</strong> (Rootz, Mega, MediaFire, 1Fichier…), con MediaFire y Rootz marcados como recomendados. Elige el que más te guste y pulsa <strong>Descargar todo</strong>. Al terminar, los archivos comprimidos se descomprimen solos (la contraseña es <code>zonaleros</code>, puesta automáticamente). <strong>Un consejo:</strong> mientras la app está extrayendo los enlaces, ten Chrome cerrado; ella lo abre sola un momento para pasar los controles del sitio y lo vuelve a cerrar.",
       "info.pivi.titulo": "Juegos de PiviGames",
       "info.pivi.nota": "<strong><a href=\"https://pivigames.blog\" target=\"_blank\" class=\"info-link\">pivigames.blog</a></strong> es un sitio de juegos de PC. Funciona igual que ZonaLeros:<br>1. Entra a <strong><a href=\"https://pivigames.blog\" target=\"_blank\" class=\"info-link\">pivigames.blog</a></strong> y abre la página del juego que quieras.<br>2. Copia la dirección (la que empieza con <code>https://pivigames.blog/…</code>).<br>3. Pégala aquí y pulsa <strong>Extraer enlaces de descarga</strong>.<br>La app resuelve los enlaces (Mega, MediaFire, Gofile, Drive, torrent y otros) y te los lista por servidor. Pulsa <strong>Descargar todo</strong> en el que prefieras. Si al descomprimir el archivo te pide contraseña, prueba con <code>pivigames</code> (puedes ponerla en Configuración). Igual que con ZonaLeros: <strong>ten Chrome cerrado</strong> mientras extrae los enlaces.",
+      "info.karan.nota": "<strong><a href=\"https://karanpc.com/posts/\" target=\"_blank\" class=\"info-link\">KaranPC</a></strong> publica programas en posts individuales. Abre el programa que quieras, copia la URL del post (no la página general <code>/posts/</code>) y pégala aquí. La app detecta enlaces directos, hosters conocidos y páginas intermedias como GloTorrents usando Chrome. La contraseña, si existe, depende del programa.",
       "info.torrent.titulo": "Torrents",
       "info.torrent.nota": "Funciona con cualquier enlace que empiece por <code>magnet:</code> o con archivos <code>.torrent</code> (también con los enlaces TORRENT que traen las páginas de ZonaLeros): péguelo y pulse Descargar, como cualquier otra cosa.",
       "info.descomp.titulo": "Descompresión automática",
@@ -3137,6 +3139,7 @@
       "enlaces.vivo": "Extrayendo en vivo: {n} de {total} episodios resueltos — la lista crece mientras se resuelven los demás.",
       "enlaces.sinresultados": "No se encontraron enlaces de descarga.",
       "enlaces.sin.servidores": "No se encontraron servidores ni enlaces disponibles.",
+      "enlaces.episodios_fallidos": "{n} episodios no devolvieron enlaces tras varios intentos:",
       "enlaces.sin.servidor": "No se encontraron enlaces para este servidor",
       "enlaces.titulo": "Enlaces de Descarga Extraídos",
       "nav.catalogo": "Cat\u00e1logo",
@@ -3260,6 +3263,7 @@
       "descomp.password.ph": "e.g. zonaleros or a custom password",
       "aviso.zona.zona": "ZonaLeros detected: <strong>zonaleros</strong> will be used automatically",
       "aviso.zona.pivi": "PiviGames detected: if the file asks for a password it is usually <strong>pivigames</strong> (change it in Settings if it fails)",
+      "aviso.zona.karan": "KaranPC detected: direct links, known hosters and GloTorrents will be searched. The password depends on the program.",
       "lista.titulo": "Download Queue",
       "empty.title": "No active downloads yet",
       "empty.desc": "Paste links into the box above or use the floating download button on your videos.",
@@ -3333,10 +3337,11 @@
       "info.rapido.nota": "Instead of downloading the file in one go, it <strong>splits it into pieces and downloads several at the same time</strong> (the “Connections” number in the panel). If the network drops or you turn off the computer, next time it <strong>continues where it left off</strong>, without starting from scratch.",
       "info.videos.titulo": "Videos (YouTube, TikTok, etc.)",
       "info.videos.nota": "Just paste the video link and press Download: the program grabs the <strong>best available quality</strong> and leaves it ready as a single file, audio included. If a site asks you to sign in to watch the video, go to <strong>Settings → Sessions</strong> and log in with your account (your data stays only on your computer).",
-      "info.zona.titulo": "ZonaLeros games and movies",
+      "info.zona.titulo": "Compatible games, movies and software",
       "info.zona.nota": "<strong><a href=\"https://zona-leros.com\" target=\"_blank\" class=\"info-link\">zona-leros.com</a></strong> is a games and movies site. Instead of copying links one by one, do this:<br>1. Go to <strong><a href=\"https://zona-leros.com\" target=\"_blank\" class=\"info-link\">zona-leros.com</a></strong> and open the page of the game or movie you want.<br>2. Copy the address (the one starting with <code>https://www.zona-leros.com/…</code>).<br>3. Paste it here and press <strong>Extract download links</strong>.<br>The app pulls <strong>all the links from all the servers</strong> (Rootz, Mega, MediaFire, 1Fichier…), with MediaFire and Rootz marked as recommended. Pick the one you like and press <strong>Download all</strong>. When it finishes, the compressed files are extracted automatically (the password is <code>zonaleros</code>, set automatically). <strong>One tip:</strong> while the app is extracting links, keep Chrome closed; it opens it briefly by itself to get past the site's checks and closes it again.",
       "info.pivi.titulo": "PiviGames games",
       "info.pivi.nota": "<strong><a href=\"https://pivigames.blog\" target=\"_blank\" class=\"info-link\">pivigames.blog</a></strong> is a PC games site. It works just like ZonaLeros:<br>1. Go to <strong><a href=\"https://pivigames.blog\" target=\"_blank\" class=\"info-link\">pivigames.blog</a></strong> and open the page of the game you want.<br>2. Copy the address (the one starting with <code>https://pivigames.blog/…</code>).<br>3. Paste it here and press <strong>Extract download links</strong>.<br>The app resolves the links (Mega, MediaFire, Gofile, Drive, torrent and others) and lists them per server. Press <strong>Download all</strong> on the one you prefer. If the file asks for a password when extracting, try <code>pivigames</code> (you can set it in Settings). Same as with ZonaLeros: <strong>keep Chrome closed</strong> while it extracts the links.",
+      "info.karan.nota": "<strong><a href=\"https://karanpc.com/posts/\" target=\"_blank\" class=\"info-link\">KaranPC</a></strong> publishes software in individual posts. Open the program you want, copy the post URL (not the general <code>/posts/</code> page), and paste it here. The app detects direct links, known hosters and intermediate pages such as GloTorrents using Chrome. The password, if any, depends on the program.",
       "info.torrent.titulo": "Torrents",
       "info.torrent.nota": "Works with any link starting with <code>magnet:</code> or with <code>.torrent</code> files (also with the TORRENT links that ZonaLeros pages include): paste it and press Download, like anything else.",
       "info.descomp.titulo": "Automatic decompression",
@@ -3427,6 +3432,7 @@
       "enlaces.vivo": "Extracting live: {n} of {total} episodes resolved — the list grows as the rest are solved.",
       "enlaces.sinresultados": "No download links were found.",
       "enlaces.sin.servidores": "No servers or available links were found.",
+      "enlaces.episodios_fallidos": "{n} episodes did not return links after several attempts:",
       "enlaces.sin.servidor": "No links were found for this server",
       "enlaces.titulo": "Extracted Download Links",
       "nav.catalogo": "Catalog",
@@ -4008,12 +4014,13 @@
   }
 
   function esZonaLeros(url) {
-    return /zona-leros\.com|pivigames\.blog/i.test(url);
+    return /zona-leros\.com|pivigames\.blog|karanpc\.com/i.test(url);
   }
 
   function nombreSitioEnlaces(url) {
     if (/zona-leros\.com/i.test(url)) return "ZonaLeros";
     if (/pivigames\.blog/i.test(url)) return "PiviGames";
+    if (/karanpc\.com/i.test(url)) return "KaranPC";
     return "";
   }
 
@@ -4029,6 +4036,7 @@
     if (/pinterest\.com/i.test(url)) return { name: "Pinterest", cls: "pinterest" };
     if (/zona-leros\.com/i.test(url)) return { name: "ZonaLeros", cls: "zonaleros" };
     if (/pivigames\.blog/i.test(url)) return { name: "PiviGames", cls: "pivigames" };
+    if (/karanpc\.com/i.test(url)) return { name: "KaranPC", cls: "karanpc" };
     return null;
   }
 
@@ -4311,6 +4319,7 @@
 
   function origenDeEnlaces() {
     if (/pivigames\.blog/i.test(urlEnlacesOrigen)) return "pivigames";
+    if (/karanpc\.com/i.test(urlEnlacesOrigen)) return "karanpc";
     return "zonaleros";
   }
 
@@ -4416,6 +4425,17 @@
     });
 
     html += `</div>`;
+
+    const fallidos = Array.isArray(d.episodios_fallidos) ? d.episodios_fallidos : [];
+    if (fallidos.length) {
+      const nombresFallidos = fallidos.map(x => x.label || "episodio").join(", ");
+      html += `
+        <div class="error-banner" style="margin:10px 0;">
+          <span>${escapeHtml(t("enlaces.episodios_fallidos", { n: fallidos.length }))}</span>
+          <span style="opacity:.8;">${escapeHtml(nombresFallidos)}</span>
+        </div>
+      `;
+    }
 
     // Accordions
     servidores.forEach((s, idx) => {
@@ -4900,6 +4920,9 @@
     } else if (urls.length === 1 && /pivigames\.blog/i.test(urls[0] || "")) {
       avisoZona.style.display = "flex";
       avisoZona.querySelector("span").innerHTML = t("aviso.zona.pivi");
+    } else if (urls.length === 1 && /karanpc\.com/i.test(urls[0] || "")) {
+      avisoZona.style.display = "flex";
+      avisoZona.querySelector("span").innerHTML = t("aviso.zona.karan");
     } else {
       avisoZona.style.display = "none";
     }

@@ -203,11 +203,65 @@ def estado():
 
 # ------------------------------------------------------- subida resumible
 
-def _iniciar_sesion_upload(token, nombre, tamano, carpeta="MiDescargador"):
-    """POST inicial del flujo resumible; devuelve la URI de subida (Location)."""
+def _api(token, nombre_buscar):
+    """GET a la API de Drive para buscar la carpeta por nombre. Devuelve
+    el primer archivo de tipo carpeta cuyo nombre coincide (o None).
+    El 404/400 con 'File not found' se traduce para dar pista clara."""
+    q = urllib.parse.quote(
+        "name='%s' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+        % nombre_buscar.replace("'", "\\'"))
+    url = API_BASE + "?q=%s&fields=files(id,name,mimeType)" % q
+    req = urllib.request.Request(url, headers={"Authorization": "Bearer " + token})
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            datos = json.loads(r.read().decode("utf-8") or "{}")
+    except urllib.error.HTTPError as e:
+        raise RuntimeError("Google rechazó la subida (%d): %s"
+                           % (e.code, _cuerpo_error(e))) from e
+    archivos = datos.get("files") or []
+    return archivos[0]["id"] if archivos else None
+
+
+def _crear_carpeta(token, nombre):
+    """Crea una carpeta en Drive y devuelve su ID."""
     body = json.dumps({
         "name": nombre,
-        "parents": [carpeta],
+        "mimeType": "application/vnd.google-apps.folder",
+    }).encode("utf-8")
+    req = urllib.request.Request(
+        API_BASE + "?fields=id,name,mimeType", data=body, method="POST",
+        headers={
+            "Authorization": "Bearer " + token,
+            "Content-Type": "application/json; charset=UTF-8",
+        })
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            return json.loads(r.read().decode("utf-8")).get("id")
+    except urllib.error.HTTPError as e:
+        raise RuntimeError("Google rechazó la subida (%d): %s"
+                           % (e.code, _cuerpo_error(e))) from e
+
+
+def _id_carpeta_upload(token, carpeta="MiDescargador"):
+    """Devuelve el ID real (en Drive) de la carpeta donde subir. Si la
+    carpeta indicada no existe, la crea. Evita el 404 'File not found'
+    que ocurre cuando se pasa el nombre (texto) como si fuera un ID."""
+    if not carpeta:
+        return None  # raíz
+    pid = _api(token, carpeta)
+    if pid is None:
+        pid = _crear_carpeta(token, carpeta)
+    return pid
+
+
+def _iniciar_sesion_upload(token, nombre, tamano, carpeta="MiDescargador"):
+    """POST inicial del flujo resumible; devuelve la URI de subida (Location).
+    Carpeta se interpreta como nombre (por defecto 'MiDescargador'); se
+    resuelve a su ID real, creándola si hace falta."""
+    parent = _id_carpeta_upload(token, carpeta)
+    body = json.dumps({
+        "name": nombre,
+        "parents": [parent] if parent else [],
     }).encode("utf-8")
     req = urllib.request.Request(
         UPLOAD_BASE + "?uploadType=resumable&fields=id,name,webViewLink,size",
