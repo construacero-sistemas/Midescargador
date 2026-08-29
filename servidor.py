@@ -1218,14 +1218,14 @@ def _escaneo_serie(url):
             temporadas.setdefault(clave, []).append({
                 "indice": i, "label": label, "url": ep.get("url") or "",
                 "servidores": []})
-        # SOLO se ofrecen los hosters detectados reales de esta serie (los que
-        # el catálogo registró al resolver sus páginas de episodio). Nunca la
-        # lista completa fija: si aún no hay detección, se manda vacío y el
-        # panel no muestra filtros de servidor (equivale a 'todos').
+        # Se ofrecen los hosters detectados reales de esta serie (los que el
+        # catálogo registró al resolver sus páginas de episodio); si la serie
+        # todavía no se resolvió y no hay detección, se cae a la lista completa
+        # conocida como respaldo para que el filtro de servidor siempre exista.
         try:
-            detectados = _catalogo().hosters_de(url) or []
+            detectados = _catalogo().hosters_de(url) or list(zonaleros.HOSTERES_CONOCIDOS)
         except Exception:
-            detectados = []
+            detectados = list(zonaleros.HOSTERES_CONOCIDOS)
         return {"tipo": "serie", "titulo": titulo[:150], "url": url,
                 "servidores_confirmados": False,
                 "servidores_posibles": list(detectados),
