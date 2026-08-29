@@ -986,6 +986,21 @@
       min-width: 0;
     }
 
+    .server-header-info {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 0;
+      flex: 1;
+    }
+
+    .server-header-title-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+
     .accordion-chevron {
       color: var(--text-secondary);
       transition: transform var(--transition-fast);
@@ -997,13 +1012,23 @@
       color: var(--primary);
     }
 
-    .server-name-title {
-      font-size: 13.5px;
-      font-weight: 700;
-      color: var(--text-primary);
-      display: flex;
+    .server-hoster-name {
+      font-size: 15px;
+      font-weight: 800;
+      display: inline-flex;
       align-items: center;
-      gap: 8px;
+      gap: 6px;
+      white-space: nowrap;
+    }
+
+    .server-name-detail {
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      margin-left: 21px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 100%;
     }
 
     .server-parts-count {
@@ -1013,6 +1038,8 @@
       border-radius: var(--radius-pill);
       background: rgba(255, 255, 255, 0.08);
       color: var(--text-secondary);
+      white-space: nowrap;
+      flex-shrink: 0;
     }
 
     .server-header-right {
@@ -1026,7 +1053,7 @@
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      padding: 6px 14px;
+      padding: 7px 14px;
       border-radius: var(--radius-pill);
       font-size: 12px;
       font-weight: 700;
@@ -1036,6 +1063,15 @@
       cursor: pointer;
       transition: all var(--transition-fast);
       box-shadow: 0 2px 8px var(--primary-glow);
+      white-space: nowrap;
+      max-width: 100%;
+    }
+
+    .btn-download-server span {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 200px;
     }
 
     .btn-download-server:hover {
@@ -1464,6 +1500,18 @@
       display: flex;
       align-items: center;
       gap: 8px;
+    }
+
+    .server-accordion-body .error-banner {
+      margin-top: 4px;
+      padding: 12px;
+      border-radius: var(--radius-md);
+      background: rgba(127, 29, 29, 0.18);
+      border: 1px dashed rgba(248, 113, 113, 0.4);
+      color: #fca5a5;
+      font-size: 12px;
+      justify-content: center;
+      font-weight: 600;
     }
 
     /* Catalogo ZonaLeros */
@@ -4013,6 +4061,17 @@
   let vistaModoCompacto = true;
   let servidorFiltroActivo = "todos";
 
+  // Separa "MediaFire · Ver título · Opción 3" en el nombre corto del hoster
+  // ("MediaFire") y el detalle descriptivo ("Ver título · Opción 3").
+  function separarServidor(nombreServidor) {
+    const n = (nombreServidor || "").trim();
+    if (!n) return { nombre: "", detalle: "" };
+    const sep = " · ";
+    const idx = n.indexOf(sep);
+    if (idx === -1) return { nombre: n, detalle: "" };
+    return { nombre: n.substring(0, idx).trim(), detalle: n.substring(idx + sep.length).trim() };
+  }
+
   function getHosterMeta(nombreServidor) {
     const s = (nombreServidor || "").toLowerCase();
     if (s.includes("mediafire")) return { color: "#3b82f6", bg: "rgba(59, 130, 246, 0.14)", border: "rgba(59, 130, 246, 0.35)", label: "MediaFire" };
@@ -4218,6 +4277,9 @@
     // Accordions
     servidores.forEach((s, idx) => {
       const meta = getHosterMeta(s.servidor);
+      const ss = separarServidor(s.servidor);
+      const nombreCorto = ss.nombre || meta.label;
+      const detalle = ss.detalle;
       const enl = s.enlaces || [];
       const cant = enl.length;
       const esMulti = !!s.es_multipartes;
@@ -4228,29 +4290,36 @@
       html += `
         <div class="server-accordion ${isOpen ? 'open' : ''}" id="servidor-card-${idx}" style="${isHidden ? 'display:none;' : ''}; border-left: 3px solid ${meta.color};">
           <div class="server-accordion-header" onclick="toggleServidor(${idx})">
-            <div class="server-header-left">
-              <span class="accordion-chevron">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="6 9 12 15 18 9"></polyline>
-                </svg>
-              </span>
-              <div class="server-name-title">
-                <span style="color:${meta.color}; font-size:14px; font-weight:800;">${escapeHtml(s.servidor)}</span>
+            <div class="server-header-info">
+              <div class="server-header-title-row">
+                <span class="accordion-chevron">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="6 9 12 15 18 9"></polyline>
+                  </svg>
+                </span>
+                <span class="server-hoster-name" style="color:${meta.color};">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"></circle>
+                    <line x1="2" y1="12" x2="22" y2="12"></line>
+                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                  </svg>
+                  ${escapeHtml(nombreCorto)}
+                </span>
                 ${esRecomendado(s.servidor) ? `<span class="recomendado-badge" title="${t("enlaces.recomendado.title")}">${t("enlaces.recomendado")}</span>` : ''}
                 <span class="server-parts-count">${textoConteo}</span>
-                ${esMulti && s.nombre_base ? `<span class="server-parts-count" style="opacity:.75;">· ${escapeHtml(s.nombre_base)}</span>` : ''}
               </div>
+              ${detalle ? `<div class="server-name-detail" title="${escapeHtml(detalle)}">${escapeHtml(detalle)}</div>` : ''}
             </div>
 
             <div class="server-header-right" onclick="event.stopPropagation();">
               ${cant > 0 ? `
-                <button class="btn-download-server" onclick="descargarServidorLote(${idx})">
+                <button class="btn-download-server" title="${t("enlaces.descargar_todo", { servidor: nombreCorto, n: cant })}" onclick="descargarServidorLote(${idx})">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                     <polyline points="7 10 12 15 17 10"></polyline>
                     <line x1="12" y1="15" x2="12" y2="3"></line>
                   </svg>
-                  <span>${t("enlaces.descargar_todo", { servidor: escapeHtml(s.servidor), n: cant })}</span>
+                  <span>${t("enlaces.descargar_todo", { servidor: nombreCorto, n: cant })}</span>
                 </button>
               ` : ""}
             </div>
