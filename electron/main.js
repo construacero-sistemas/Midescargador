@@ -129,12 +129,38 @@ function ventanaPrincipal() {
   return BrowserWindow.getAllWindows()[0];
 }
 
+let ultimoChequeoUpdate = 0;      // marca de tiempo del último checkForUpdates
+let ultimoAvisoEnviado = null;    // último estado "disponible"/"lista" reenviado a la UI
+
+// Comprueba actualizaciones de forma controlada: solo si hace más de un rato
+// desde la última comprobación (para no golpear GitHub en cada show/focus) y
+// reaparece el aviso pendiente si ya se detectó una versión nueva.
+function verificarActualizacionAlMostrar() {
+  if (!autoUpdater) return;
+  const ahora = Date.now();
+  // si ya hay una actualización detectada (disponible o lista) y no se le
+  // re-avisó a la UI en esta sesión de ventana, reenviar el estado para que
+  // el pill/modal vuelva a aparecer aunque la ventana estuviera oculta.
+  if (updateInfoActual && ultimoAvisoEnviado !== updateInfoActual.version) {
+    ultimoAvisoEnviado = updateInfoActual.version;
+    enviarEstadoActualizacion({ estado: "disponible", version: updateInfoActual.version, releaseNotes: updateInfoActual.releaseNotes || null });
+  }
+  // comprobación nueva: como mucho una vez cada 30 min (además del arranque
+  // y del intervalo de 4 h). Así, al abrir la app desde la bandeja o el
+  // autostart oculto se detecta una versión nueva casi al instante.
+  if (ahora - ultimoChequeoUpdate > 30 * 60 * 1000) {
+    ultimoChequeoUpdate = ahora;
+    autoUpdater.checkForUpdates().catch(() => {});
+  }
+}
+
 function mostrarVentana() {
   const win = ventanaPrincipal();
   if (!win) { crearVentana(); return; }
   if (win.isMinimized()) win.restore();
   win.show();
   win.focus();
+  verificarActualizacionAlMostrar();
 }
 
 // clic izquierdo del tray: muestra/oculta la ventana
@@ -146,6 +172,12 @@ function alternarVentana() {
   } else {
     mostrarVentana();
   }
+}
+
+// Al hacer doble clic en el tray o volver a la ventana, comprobar
+// actualizaciones pendientes (bandeja / autostart oculto).
+function comprobarAlRestaurar() {
+  verificarActualizacionAlMostrar();
 }
 
 // aviso único la primera vez que se oculta a la bandeja, para que nadie
@@ -168,6 +200,7 @@ function crearTray() {
     tray.setToolTip("MiDescargador");
     actualizarMenuTray();
     tray.on("click", alternarVentana);
+    tray.on("double-click", () => { mostrarVentana(); });
   } catch (e) {
     log("no se pudo crear el tray: " + (e && e.message));
   }
@@ -632,6 +665,7 @@ app.whenReady().then(async () => {
   configurarAutoUpdate();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) crearVentana();
+    else mostrarVentana();
   });
 });
 
