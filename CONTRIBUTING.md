@@ -69,21 +69,29 @@ Las preguntas de instalación, uso o de la extensión de Chrome van en
 - El código y los mensajes de commit en español o inglés, lo que te sea más
   cómodo; los comentarios del código, en español (como está hoy).
 
-### Pruebas (suite del filtro de selección)
+### Pruebas (cinco suites)
 
-Hay **dos suites** de pruebas para el panel de análisis/extracción de series
-(temporadas + servidores):
+`npm test` corre, en orden, **cinco suites** (si una falla, falla todo):
 
-- **Backend** — `tests/test_seleccion_filtro.py` (unittest, `unittest` de la
-  stdlib): el filtro por hoster/temporada (`_hoster_para_grupo` en
-  `zonaleros_copia.py` y `_filtrar_servidores` en `servidor.py`) y la
-  persistencia de hosters por serie en el catálogo (`registrar_hosters` /
-  `hosters_de` en `catalogo.py`).
-- **Frontend** — `test_frontend/seleccion.test.js` (jsdom) sobre la lógica
+- **lint** — `scripts/lint.js`: sintaxis de todo el JS propio
+  (`node --check`: electron/, extension/, scripts/, test_frontend/) y de los
+  .py de la raíz (`py_compile`). Sin dependencias.
+- **backend** — `python -m unittest discover -s tests` (unittest, stdlib):
+  filtro de selección (`tests/test_seleccion_filtro.py`), subida a Drive
+  (`test_drive.py`), extractor KaranPC (`test_karanpc.py`), API HTTP de
+  extremo a extremo (`test_api.py`), scheduler de reintentos
+  (`test_reintentos.py`), hosters sin red (`test_hosters.py`), empaquetado de
+  Electron (`test_electron_package.py`).
+- **frontend** — `test_frontend/seleccion.test.js` (jsdom) sobre la lógica
   real de `static/seleccion.js`: que el panel liste solo los servidores
   detectados, que desmarcar una temporada desmarque sus episodios (y
   viceversa) y que resolver la selección solo envíe a `/api/enlaces` los
   episodios y servidores elegidos.
+- **updater** — `electron/update_logic.test.js`: lógica determinista del
+  aviso de actualización (que `update-available` muestre el aviso), sin red.
+- **e2e** — `scripts/e2e_smoke.py`: smoke de extremo a extremo 100% local —
+  levanta un servidor de archivos con soporte Range y la API real, descarga
+  vía `/api/descargar`, espera `completa` y verifica el sha256 byte a byte.
 
 #### Cómo correrlas
 
@@ -102,7 +110,7 @@ npm run test:frontend   # o: npm test -- --frontend
 npm test -- --solo backend|frontend
 ```
 
-**En Windows sin npm/Node:** `ejecutar_pruebas.bat` corre las dos suites
+**En Windows sin npm/Node:** `ejecutar_pruebas.bat` corre backend y frontend
 directamente (backend con `python -m unittest discover -s tests` y frontend
 con `node test_frontend/seleccion.test.js`). Si jsdom aún no está instalado
 en `test_frontend`, el `.bat` lo instala automáticamente la primera vez.
@@ -110,8 +118,19 @@ en `test_frontend`, el `.bat` lo instala automáticamente la primera vez.
 **En CI (GitHub Actions):** `.github/workflows/pruebas.yml` corre `npm test`
 en un solo job (setup-node + setup-python; instala jsdom en `test_frontend`),
 disparado en cada **push a `main`**, en cada **PR** y de forma manual
-(`workflow_dispatch`). También verifica que `static/seleccion.js` carga. Si
-alguna suite queda roja, el CI falla y el PR no puede mergearse.
+(`workflow_dispatch`). Las cinco suites corren juntas (lint incluida), de
+modo que un error de sintaxis no puede llegar a empaquetarse. Si alguna suite
+queda roja, el CI falla y el PR no puede mergearse.
+
+**Ejecutar solo una suite:**
+
+```bash
+npm test -- --solo lint
+npm test -- --solo backend
+npm test -- --solo frontend
+npm test -- --solo updater
+npm test -- --solo e2e
+```
 
 **Pre-commit:** el repo activa `npm test` antes de cada commit local (hook en
 `.githooks/pre-commit`, activado con `git config core.hooksPath .githooks`;
@@ -124,11 +143,19 @@ puntualmente: `git commit --no-verify`.
 ```
 motor.py             ← motor de descargas segmentadas (solo stdlib)
 torrents.py          ← torrents: resolver zetrrent + aria2c
+hosters.py           ← extractores de hosters (MediaFire, GoFile, Drive…)
+zonaleros_copia.py   ← único módulo ZonaLeros (series/episodios/juegos, CDP)
+pivigames.py         ← extractor PiviGames
+karanpc.py           ← extractor KaranPC (posts de programas)
+catalogo.py          ← catálogo navegable del sitio
+cuenta.py            ← sesiones de navegador (cookies para yt-dlp)
+drive.py             ← subida a Google Drive (OAuth + resumable)
 servidor.py          ← servidor local + API REST
 static/index.html    ← interfaz web (panel)
 static/seleccion.js  ← lógica del panel selección (temporadas + servidores)
-tests/               ← pruebas del backend (unittest)
+tests/               ← pruebas backend (unittest) + API + empaquetado
 test_frontend/       ← pruebas del panel (jsdom, importa seleccion.js)
+scripts/             ← run_tests.js (5 suites), lint.js, e2e_smoke.py
 extension/           ← extensión de Chrome (MV3)
 electron/            ← app de escritorio (Electron + electron-builder)
 build_mei/           ← scripts de release (solo local, gitignored)

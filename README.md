@@ -50,14 +50,20 @@ ningún sitio, sin publicidad.
 - **Servidores y hosters**: MediaFire, Mega, Rootz, 1Fichier, MegaUp, GoFile y más.
 - **Torrents**: enlaces `magnet:` y archivos `.torrent` (descarga BitTorrent mediante aria2c).
 - **Extracción de enlaces**: pega la URL de páginas con múltiples mirrors o servidores y pulsa
-  «Extraer enlaces de descarga» para obtenerlos todos automáticamente.
+  «Extraer enlaces de descarga» para obtenerlos todos automáticamente. Sitios soportados:
+  - **ZonaLeros** (`zona-leros.com`) — series, episodios y juegos, con selección de temporadas
+    y servidores antes de resolver.
+  - **PiviGames** (`pivigames.lat`) — juegos.
+  - **KaranPC** (`karanpc.com`) — programas; pega la URL del **post individual** del software
+    (no el índice `/posts/`). Resuelve también enlaces intermedios como GloTorrents.
 
 ### Auto-actualización
 
-La **versión instalada** se actualiza sola: al arrancar y cada 4 horas
-consulta los releases, avisa cuando hay versión nueva, la descarga en segundo
-plano y al reiniciar instala y vuelve a abrir la app. Tus datos (config, logs,
-descargas) viven fuera de la carpeta de la app y nunca se tocan.
+La **versión instalada** se actualiza sola: al arrancar, al abrir o restaurar la ventana
+(y como mucho cada 30 min en cada apertura, más un chequeo cada 4 horas) consulta los
+releases, avisa cuando hay versión nueva, la descarga en segundo plano (con watchdog
+de descarga congelada y reintentos) y al reiniciar instala y vuelve a abrir la app.
+Tus datos (config, logs, descargas) viven fuera de la carpeta de la app y nunca se tocan.
 
 El **portable** no puede auto-actualizarse; baja la versión nueva a mano.
 
@@ -200,9 +206,22 @@ committear/pushear y repite el `gh release create` con el tag correcto.
 MiDescargador/
 ├── Iniciar.bat          ← doble clic para arrancar (panel en el navegador)
 ├── motor.py             ← motor de descargas segmentadas (solo stdlib)
-├── torrents.py          ← torrents: motor BitTorrent vía aria2c
+├── torrents.py          ← torrents: resolver zetrrent + aria2c
+├── hosters.py           ← extractores de hosters (MediaFire, GoFile, Drive…)
+├── mega.py              ← descargas de Mega (criptografía de claves incluida)
+├── zonaleros_copia.py   ← extractor ZonaLeros (series/episodios/juegos, vía Chrome/CDP)
+├── pivigames.py         ← extractor PiviGames (juegos)
+├── karanpc.py           ← extractor KaranPC (posts de programas)
+├── catalogo.py          ← catálogo navegable de series/juegos del sitio
+├── cuenta.py            ← sesiones de navegador (cookies para yt-dlp)
+├── drive.py             ← subida a Google Drive (OAuth + resumable)
+├── descomprimir.py      ← extracción automática de .rar/.zip/.7z al terminar
 ├── servidor.py          ← servidor local + API REST
 ├── static/index.html    ← interfaz web (panel)
+├── static/seleccion.js  ← lógica del panel selección (temporadas + servidores)
+├── tests/               ← pruebas backend (unittest) + empaquetado + API HTTP
+├── test_frontend/       ← pruebas del panel (jsdom, importa seleccion.js)
+├── scripts/             ← run_tests.js, lint.js, e2e_smoke.py
 ├── extension/           ← extensión de Chrome (MV3)
 │   ├── manifest.json
 │   ├── content.js       ← detecta videos, pone el botón
@@ -214,6 +233,7 @@ MiDescargador/
 ├── backend/servidor/    ← servidor.exe compilado (PyInstaller, usado por Electron)
 ├── electron/            ← app de escritorio (Electron + electron-builder)
 │   ├── main.js          ← lanza el backend y abre la ventana del panel
+│   ├── update_logic.js  ← lógica pura del aviso de actualización (testeada)
 │   ├── package.json     ← configuración de electron-builder
 │   └── dist/            ← instalador + portable
 └── venv/                ← Python + yt-dlp (todo local, nada global)
@@ -221,23 +241,53 @@ MiDescargador/
 
 ### API REST (por si quieres automatizar)
 
+Todas las rutas `/api/*` exigen el header `X-MiDescargador-Token` (salvo las marcadas).
 ```
 POST /api/descargar   {"url", "segmentos"?, "carpeta"?}   → {"id"}
 GET  /api/estado                                           → [ {id, nombre, estado, descargado, total, velocidad, eta, ...} ]
+GET  /api/version                                           → {nombre, version}
+GET  /api/log                                              → últimas líneas de errores.log
+GET/POST /api/config                                        → preferencias (organizar, conexiones, drive…)
 POST /api/pausar      {"id"}
 POST /api/reanudar    {"id"}
+POST /api/reintentar  {"id"}
 POST /api/cancelar    {"id"}
 POST /api/borrar      {"id"}
 POST /api/abrir       {"id"}       (abre la carpeta en el explorador)
-POST /api/carpeta                  (abre la carpeta de descargas en el
-                                   explorador de archivos del sistema)
+POST /api/carpeta                  (abre la carpeta de descargas)
+POST /api/reproducir  {"id"}       (abre el reproductor integrado o VLC)
+POST /api/extraer-audio {"id"}    (extrae el audio a mp3 con ffmpeg)
 GET  /api/media/<id>                (sirve el archivo con soporte de Range:
-                                     el reproductor integrado del panel)
+                                     el reproductor integrado del panel; sin token)
+GET  /api/token                     (bootstrap de la extensión; solo hosts locales)
+POST /api/formatos    {"url"}      (resoluciones disponibles de un video)
+POST /api/lote        {"urls": [...]}          (encola varias URLs)
+POST /api/verificar-enlaces {"servidores":...} (comprueba si los enlaces siguen activos)
+
+# Extracción de enlaces (ZonaLeros / PiviGames / KaranPC)
+POST /api/enlaces/escaneo  {"url"}              → inicia el escaneo de la página
+POST /api/enlaces          {"url", "episodios"?, "servidores"?} → resuelve con filtros
+GET  /api/enlaces/estado?tid=<id>              → progreso/resultado de la tarea
+POST /api/enlaces/escaneo/cancelar {"tid"}
+GET  /api/hosters                              → hosters soportados
+
+# Catálogo (navegación de series/juegos del sitio)
+GET  /api/catalogo                             → estado del catálogo
+POST /api/catalogo/iniciar  {"revisar"?}
+POST /api/catalogo/pausar
+POST /api/catalogo/carpeta
+
+# Sesiones de navegador (cookies para yt-dlp)
+GET  /api/sesion                               → estado por plataforma
+GET  /api/sesion/perfiles                      → perfiles de Chrome con sesión
+POST /api/sesion/iniciar  {"plataforma"}      → abre Chrome para iniciar sesión
+POST /api/sesion/exportar {"plataforma"}
+POST /api/sesion/borrar   {"plataforma"}
 
 # Google Drive (subir descargas a la nube)
-GET  /api/drive/estado                                → {conectado, cuenta}
+GET  /api/drive/estado                                → {conectado, cuenta} (sin token no)
 POST /api/drive/autorizar                             → {url} (consentimiento OAuth)
-GET  /api/drive/oauth?code=...                        (callback de Google; intercambia el token)
+GET  /api/drive/oauth?code=...                        (callback de Google; solo hosts locales, sin token)
 POST /api/drive/desconectar
 POST /api/drive/subir      {"id"}    → sube el archivo de esa descarga a Drive
 ```
