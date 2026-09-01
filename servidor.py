@@ -25,6 +25,7 @@ import re
 import secrets
 import sys
 import time
+import traceback
 import uuid
 import tempfile
 import subprocess
@@ -179,6 +180,27 @@ def _reset_reintentos(t):
     a mano desde el panel)."""
     try:
         _init_reintentos(t)
+    except Exception:
+        pass
+
+
+def _log_api(metodo, ruta, exc):
+    """Deja rastro en errores.log de cualquier excepción no manejada en la
+    API. Antes estas excepciones morían en el hilo del Manejador sin rastro:
+    el cliente veía la conexión cortada y el usuario no tenía nada que
+    reportar. Las desconexiones del cliente (pipe roto) no se registran.
+    """
+    try:
+        if isinstance(exc, (BrokenPipeError, ConnectionResetError)):
+            return
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        tb = traceback.format_exc().strip().splitlines()[-4:]
+        detalle = " ".join(tb)[:600].replace("\n", " | ")
+        linea = "[%s] API %s %s\n    ERROR: %s: %s\n" % (
+            ts, metodo, ruta, type(exc).__name__, detalle)
+        with open(LOG_RUTA, "a", encoding="utf-8") as f:
+            f.write(linea)
+        _recortar_log()
     except Exception:
         pass
 
@@ -3286,6 +3308,28 @@ class Manejador(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        # todo el enrutado corre bajo un guard: una excepción no manejada
+        # devolvía la conexión cortada sin log ni respuesta JSON
+        try:
+            self._api_get()
+        except Exception as e:
+            _log_api("GET", self.path, e)
+            try:
+                self._json({"error": "error interno"}, 500)
+            except Exception:
+                pass
+
+    def do_POST(self):
+        try:
+            self._api_post()
+        except Exception as e:
+            _log_api("POST", self.path, e)
+            try:
+                self._json({"error": "error interno"}, 500)
+            except Exception:
+                pass
+
+    def _api_get(self):
         ruta = urllib.parse.urlparse(self.path).path
         # API protegida por token. /api/token es el bootstrap de la extensión
         # y solo responde a hosts locales (bloquea DNS rebinding: una web que
@@ -3297,6 +3341,13 @@ class Manejador(BaseHTTPRequestHandler):
                 else:
                     self._json({"token": TOKEN_API})
                 return
+            if ruta == "/api/drive/oauth":
+                # callback de Google: sin token (el navegador no puede
+                # mandarlo), pero igual que /api/token solo hosts locales —
+                # bloquea DNS rebinding hacia el intercambio de código
+                if not self._host_local():
+                    self._json({"error": "no autorizado"}, 401)
+                    return
             if not ruta.startswith("/api/media/") \
                     and ruta != "/api/drive/oauth" \
                     and not self._token_ok():
@@ -3430,7 +3481,7 @@ class Manejador(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
-    def do_POST(self):
+    def _api_post(self):
         ruta = urllib.parse.urlparse(self.path).path
         if not self._token_ok():
             self._json({"error": "no autorizado"}, 401)

@@ -368,6 +368,30 @@ class TestEpisodiosSerieCompleta(unittest.TestCase):
         self.assertEqual(len(r), 1)
 
 
+class TestTituloValido(unittest.TestCase):
+    """El título del resultado nunca debe ser un texto genérico de error
+    ("Página no encontrada", retos de Cloudflare…): se reemplaza por un
+    fallback presentable por tipo de página."""
+
+    def test_quita_sufijo_del_sitio(self):
+        self.assertEqual(zonaleros._titulo_valido("Ataque a los Titanes | ZonaLeRoS"),
+                         "Ataque a los Titanes")
+
+    def test_titulos_de_error_usan_fallback(self):
+        for malo in ("Página no encontrada", "Page Not Found", "404 Not Found",
+                     "Just a moment...", "Attention Required", "Error 403",
+                     "   ", ""):
+            self.assertEqual(zonaleros._titulo_valido(malo, "Serie ZonaLeros"),
+                             "Serie ZonaLeros", malo)
+
+    def test_titulo_valido_pasa(self):
+        self.assertEqual(zonaleros._titulo_valido("Ver Ataque a los Titanes 2x1"),
+                         "Ver Ataque a los Titanes 2x1")
+
+    def test_recorta_a_150(self):
+        self.assertEqual(len(zonaleros._titulo_valido("x" * 300)), 150)
+
+
 class TestConsolidarResultadosSerie(unittest.TestCase):
     """Los episodios que no entregan enlaces no deben aparecer como tarjetas
     de servidor vacías; deben quedar reportados como fallidos."""

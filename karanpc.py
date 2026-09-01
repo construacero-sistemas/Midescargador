@@ -128,8 +128,12 @@ def _titulo(cdp):
         titulo = (cdp.eval("document.title") or "").strip()
     except Exception:
         titulo = ""
-    titulo = re.sub(r"\s*[|–-]\s*KaranPC\s*$", "", titulo, flags=re.I).strip()
-    return titulo or "Programa KaranPC"
+    titulo = re.sub(r"\s*[|\u2013-]\s*KaranPC\s*$", "", titulo, flags=re.I).strip()
+    # descartar títulos genéricos de error (404, Cloudflare…): nunca
+    # presentarlos como nombre del programa
+    if not titulo or zonaleros._es_titulo_error(titulo):
+        return "Programa KaranPC"
+    return titulo
 
 
 def _navegar_intermedio(cdp, url, fin_global):

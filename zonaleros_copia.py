@@ -1061,7 +1061,7 @@ def _extraer_un_episodio(cdp, url, label, fin_global, hosters_permitidos=None):
         time.sleep(3)
     if not label:
         titulo = (cdp.eval("document.title") or "").strip()
-        label = re.sub(r"\s*\|\s*ZonaLeRoS\s*$", "", titulo, flags=re.I).strip() or "?"
+        label = _titulo_valido(titulo, "?")
     botones = _extraer_botones_episodio(cdp)
     if not botones:
         return ([], True, "sin enlaces de descarga en el episodio")
@@ -1294,6 +1294,32 @@ def _bloqueado_duro(cdp):
 
 
 
+# Títulos genéricos de error que NUNCA deben presentarse como título del
+# resultado: si document.title trae esto (404, reto de Cloudflare, error del
+# servidor), la página no es la que el usuario pidió y conviene el fallback.
+_FRASES_TITULO_ERROR = re.compile(
+    r"\b(p[a\u00e1]gina no encontrada|page not found|not found|attention required|"
+    r"access denied|acceso denegado|just a moment|un momento|"
+    r"verificando|verification|security check|denegado|blocked)", re.I)
+_TITULO_SOLO_ERROR = re.compile(
+    r"^\s*(\d{3}|error \d{3}|\d{3}\s+(error|forbidden|not found)|404|403|500)\s*$",
+    re.I)
+
+
+def _es_titulo_error(t):
+    return bool(_FRASES_TITULO_ERROR.search(t)) or bool(_TITULO_SOLO_ERROR.match(t))
+
+
+def _titulo_valido(titulo, fallback="ZonaLeros"):
+    """Limpia un document.title y devuelve un título presentable.
+    Recorta el sufijo '| ZonaLeRoS', descarta títulos vacíos o genéricos de
+    error y aplica el fallback en ese caso. Nunca devuelve vacío."""
+    t = re.sub(r"\s*\|\s*ZonaLeRoS\s*$", "", (titulo or "").strip(), flags=re.I).strip()
+    if not t or _es_titulo_error(t):
+        return fallback
+    return t[:150]
+
+
 def extraer(url, on_progreso=None, hosters_permitidos=None, episodios_permitidos=None):
     """Flujo completo: abre la página (juego, episodio o serie) con el perfil
     de Chrome, resuelve el reto y saca los enlaces de cada servidor / episodio.
@@ -1367,10 +1393,9 @@ def extraer(url, on_progreso=None, hosters_permitidos=None, episodios_permitidos
                 on_progreso=on_progreso, titulo=titulo,
                 hosters_permitidos=hosters_permitidos)
             # document.title puede quedar vacío durante una navegación con
-            # Cloudflare; nunca presentar un título vacío como "Página no
-            # encontrada" en la UI.
-            if not titulo.strip():
-                titulo = "Serie ZonaLeros"
+            # Cloudflare, o traer un título de error genérico; nunca presentar
+            # eso como "Página no encontrada" en la UI.
+            titulo = _titulo_valido(titulo, "Serie ZonaLeros")
             resultado = {"servidores": servidores, "titulo": titulo[:150]}
             if incompleto or episodios_fallidos:
                 resultado["incompleto"] = True
@@ -1384,7 +1409,7 @@ def extraer(url, on_progreso=None, hosters_permitidos=None, episodios_permitidos
                 cdp, url, None, fin_global)
             titulo = cdp.eval("document.title") or ""
             resultado = {"servidores": servidores,
-                         "titulo": (titulo.strip() or "Episodio ZonaLeros")[:150]}
+                         "titulo": _titulo_valido(titulo, "Episodio ZonaLeros")[:150]}
             if incompleto:
                 resultado["incompleto"] = True
             return resultado
@@ -1413,7 +1438,8 @@ def extraer(url, on_progreso=None, hosters_permitidos=None, episodios_permitidos
                 break   # se acabó el presupuesto: entregamos lo extraído
             clasificado["servidor"] = servidor
             servidores.append(clasificado)
-        return {"servidores": servidores, "titulo": titulo[:150]}
+        return {"servidores": servidores,
+                "titulo": _titulo_valido(titulo, "Juego ZonaLeros")[:150]}
     except Exception as e:
         # si nuestra instancia de Chrome murió a mitad, dilo claro
         if not _nuestro_chrome_vivo():
