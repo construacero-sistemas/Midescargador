@@ -406,15 +406,13 @@ async function sembrarInstaladorCacheado() {
 }
 
 function enviarEstadoActualizacion(datos) {
+  // Un solo canal: el preload (contextBridge) expone onUpdaterStatus sobre
+  // IPC. Antes además se inyectaba window.__onUpdateStatus por
+  // executeJavaScript — un canal duplicado que disparaba la UI dos veces.
   try {
     const win = BrowserWindow.getAllWindows()[0];
     if (win && !win.isDestroyed() && win.webContents) {
       win.webContents.send("updater:status", datos);
-      win.webContents.executeJavaScript(`
-        if (typeof window.__onUpdateStatus === 'function') {
-          window.__onUpdateStatus(${JSON.stringify(datos)});
-        }
-      `).catch(() => {});
     }
   } catch (e) { /* ventana cerrándose */ }
 }

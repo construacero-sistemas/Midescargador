@@ -19,7 +19,7 @@ import subprocess
 import tempfile
 import urllib.request
 
-import zonaleros
+import zonaleros_copia as zonaleros   # módulo único (la variante copia no destructiva)
 
 try:
     import websocket as _ws
@@ -92,6 +92,33 @@ def _ruta_cookies(plataforma="youtube"):
     return _config(plataforma)["ruta"]
 
 
+# Proceso de Chrome que ESTE flujo de login lanzó. El cierre es quirúrgico:
+# solo ese árbol de proceso. El viejo _matar_chrome() hacía taskkill /IM
+# chrome.exe y se llevaba por delante TODAS las ventanas del navegador del
+# usuario.
+_proc_chrome_login = None
+
+
+def _cerrar_chrome_login():
+    """Cierra SOLO la instancia de Chrome que abrió el login (por PID) y
+    restaura cookies dañadas como red de seguridad. Nunca toca el Chrome
+    que el usuario tenga abierto por su cuenta."""
+    global _proc_chrome_login
+    proc = _proc_chrome_login
+    _proc_chrome_login = None
+    if proc is None or proc.poll() is not None:
+        zonaleros._restaurar_cookies_si_danadas()
+        return
+    try:
+        subprocess.run(
+            ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+            capture_output=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        pass
+    zonaleros._restaurar_cookies_si_danadas()
+
+
 def _lanzar_visible(url, plataforma):
     """Lanza Chrome (perfil real, ventana visible) y devuelve (ws_url, err)."""
     if _ws is None:
@@ -115,7 +142,9 @@ def _lanzar_visible(url, plataforma):
         url,
     ]
     zonaleros._respaldar_cookies()
-    subprocess.Popen(cmd, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    global _proc_chrome_login
+    _proc_chrome_login = subprocess.Popen(
+        cmd, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     fin = time.time() + 50
     while time.time() < fin:
         try:
@@ -457,8 +486,7 @@ def iniciar_sesion(plataforma="youtube", espera_max=240):
                 ws.close()
             except Exception:
                 pass
-        zonaleros._matar_chrome()
-        zonaleros._restaurar_cookies_si_danadas()
+        _cerrar_chrome_login()
 
 
 # ---------------------------------------------------------------- detección
