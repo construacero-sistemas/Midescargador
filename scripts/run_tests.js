@@ -54,6 +54,22 @@ function correr(suite) {
       RAIZ
     );
   }
+  if (suite === "e2e") {
+    return ejecutar(
+      "e2e (smoke, local)",
+      "python",
+      [path.join("scripts", "e2e_smoke.py")],
+      RAIZ
+    );
+  }
+  if (suite === "lint") {
+    return ejecutar(
+      "lint (sintaxis js/py)",
+      process.execPath,
+      [path.join("scripts", "lint.js")],
+      RAIZ
+    );
+  }
   return ejecutar(
     "frontend (jsdom)",
     process.execPath,
@@ -71,30 +87,38 @@ const VALOR_RE = /^--solo(?:-tipo)?$/;
 let backend = true;
 let frontend = true;
 let updater = true;
+let e2e = true;
+let lint = true;
 
 const flagsUnicos = args.filter((a) => a === "--backend" || a === "--frontend");
 if (flagsUnicos.length) {
   backend = flagsUnicos.includes("--backend");
   frontend = flagsUnicos.includes("--frontend");
   updater = false;
+  e2e = false;
+  lint = false;
 }
 
 const idxSolo = args.findIndex((a) => VALOR_RE.test(a));
 if (idxSolo !== -1) {
   const tipo = args[idxSolo + 1];
-  if (tipo === "backend") { backend = true; frontend = false; updater = false; }
-  else if (tipo === "frontend") { backend = false; frontend = true; updater = false; }
-  else if (tipo === "updater") { backend = false; frontend = false; updater = true; }
-  else {
-    console.error(`[ERROR] --solo <tipo> desconocido: ${tipo || "(falta valor)"} (usa 'backend' o 'frontend')`);
+  backend = tipo === "backend";
+  frontend = tipo === "frontend";
+  updater = tipo === "updater";
+  e2e = tipo === "e2e";
+  lint = tipo === "lint";
+  if (!backend && !frontend && !updater && !e2e && !lint) {
+    console.error(`[ERROR] --solo <tipo> desconocido: ${tipo || "(falta valor)"} (usa 'backend', 'frontend', 'updater', 'e2e' o 'lint')`);
     process.exit(2);
   }
 }
 
 const wasOk = [];
+if (lint) wasOk.push(correr("lint"));
 if (backend) wasOk.push(correr("backend"));
 if (frontend) wasOk.push(correr("frontend"));
 if (updater) wasOk.push(correr("updater"));
+if (e2e) wasOk.push(correr("e2e"));
 
 if (wasOk.length === 0) {
   console.error("\n[ERROR] No se pidió correr ninguna suite (uso: --backend | --frontend | --solo backend|frontend).");

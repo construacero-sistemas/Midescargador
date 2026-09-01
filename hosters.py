@@ -292,7 +292,7 @@ def _extraer_megaup(url):
       3. Esa URL soporta Range y se descarga con el motor segmentado. El
          token caduca rápido (rotación), así que se genera en el momento.
     """
-    import zonaleros  # local: evita dependencia circular
+    import zonaleros_copia as zonaleros  # módulo único; evita dependencia circular
 
     if zonaleros._chrome_corriendo():
         raise RuntimeError(
@@ -781,7 +781,7 @@ def _extraer_fuckingfast(url):
     URL con la sesión del navegador: el servidor redirige a la URL real
     (ts.fuckingfast.net/d/<id>?v=<firma>) con nombre y tamaño del archivo.
     """
-    import zonaleros  # local: evita dependencia circular con servidor.py
+    import zonaleros_copia as zonaleros  # módulo único; evita dependencia circular con servidor.py
 
     if zonaleros._chrome_corriendo():
         raise RuntimeError(

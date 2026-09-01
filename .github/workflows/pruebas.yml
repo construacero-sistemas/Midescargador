@@ -1,11 +1,14 @@
 name: pruebas
 
-# Corre automáticamente TODAS las pruebas del filtro de selección (temporada +
-# servidor) en cada commit a main y en cada PR:
+# Corre automáticamente TODAS las suites en cada commit a main y en cada PR:
+#   - lint    : sintaxis js (node --check) y py (py_compile), sin dependencias
 #   - backend : python -m unittest discover -s tests
 #   - frontend: node test_frontend/seleccion.test.js (jsdom)
+#   - updater : node electron/update_logic.test.js (determinista, sin red)
+#   - e2e     : scripts/e2e_smoke.py (pipeline completo contra un servidor
+#               de archivos local, sin internet)
 #
-# Un solo job ejecuta ambas suites juntas vía `npm test` (scripts/run_tests.js):
+# Un solo job ejecuta las cinco suites vía `npm test` (scripts/run_tests.js):
 # si una falla, falla. Los módulos del backend se importan con stdlib puro
 # (websocket/yt-dlp se cargan de forma perezosa), por eso no se instalan
 # paquetes Python; el frontend solo necesita jsdom en test_frontend.
