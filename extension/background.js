@@ -8,8 +8,12 @@ importScripts("exclusiones.js", "token.js");
 
 const SERVIDOR = "http://127.0.0.1:17890";
 const ID_MENU = "midesc-descargar";
+const ID_MENU_NAV = "midesc-descargar-nav";
 
-// ---------- menú contextual "Descargar con MiDescargador" (estilo IDM) ----------
+// ---------- menú contextual (estilo IDM) ----------
+// Dos entradas para que la elección MiDescargador/navegador esté siempre a
+// un clic derecho: la de MiDescargador respeta exclusiones solo en la
+// captura automática (el menú es intención explícita y siempre envía).
 chrome.runtime.onInstalled.addListener(() => {
   // removeAll evita el error "duplicate id" al recargar la extensión
   chrome.contextMenus.removeAll(() => {
@@ -17,6 +21,11 @@ chrome.runtime.onInstalled.addListener(() => {
       id: ID_MENU,
       title: "Descargar con MiDescargador",
       contexts: ["link", "video", "audio", "page", "selection"],
+    });
+    chrome.contextMenus.create({
+      id: ID_MENU_NAV,
+      title: "Descargar con el navegador",
+      contexts: ["link", "video", "audio", "selection"],
     });
   });
 });
@@ -28,8 +37,33 @@ chrome.contextMenus.onClicked.addListener((info) => {
     if (/^https?:\/\//i.test(t)) url = t;
   }
   if (!url) return;
+  if (info.menuItemId === ID_MENU_NAV) {
+    descargarConNavegador(url);
+    return;
+  }
   encolarEnServidor(url, null, "menu");
 });
+
+// Descarga por el navegador (chrome.downloads), usada por el menú contextual
+// y por el selector "¿Cómo descargar?" del modo Preguntar (content.js).
+function descargarConNavegador(url) {
+  if (/^blob:/i.test(url || "")) {
+    notificar("No se pudo descargar", "los enlaces blob no se pueden reenviar", true);
+    return;
+  }
+  try {
+    chrome.downloads.download(
+      { url, conflictAction: "uniquify", saveAs: false },
+      (id) => {
+        if (chrome.runtime.lastError) {
+          notificar("No se pudo descargar", chrome.runtime.lastError.message, true);
+        }
+      }
+    );
+  } catch (e) {
+    notificar("No se pudo descargar", String(e), true);
+  }
+}
 
 function recortar(s, n) {
   s = String(s || "");
