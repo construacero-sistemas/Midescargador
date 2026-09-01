@@ -8,8 +8,9 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <!-- SDK de PayPal para el botón de donación (Hosted Button) -->
-  <script src="https://www.paypal.com/sdk/js?client-id=BAApEI3GY3EXDLv6zZyI3K5vP3agotWdxu-yJ4KztXDRBgIFwScuAq_vEhn36YyB1rvsNfzh0DhfFSTqG0&components=hosted-buttons&disable-funding=venmo&currency=USD"></script>
+  <!-- El SDK de PayPal ya NO se carga al abrir el panel: se inyecta
+       perezosamente solo al abrir Información → Apoyar (cargarPayPal). Pesaba
+       en cada arranque, fallaba sin internet y contradecía "todo local". -->
   <style>
     /* ==========================================================================
        VARIABLES & DESIGN SYSTEM (UI/UX 2.0)
@@ -256,6 +257,22 @@
     .nav-pill:focus-visible {
       outline: none;
       box-shadow: 0 0 0 2px var(--primary);
+    }
+    /* Accesibilidad: indicador de foco visible en todo control enfocado
+       con teclado (antes solo cubría .nav-pill y algunos selects). */
+    :focus-visible {
+      outline: 2px solid #60a5fa;
+      outline-offset: 2px;
+    }
+    /* Respeta la preferencia del sistema de reducir el movimiento: quita
+       animaciones/transiciones largas que pueden marear. */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+        scroll-behavior: auto !important;
+      }
     }
 
     .nav-pill.active-state {
@@ -2761,21 +2778,32 @@
               }
               mostrarFallback();
             }
-            // el SDK puede tardar en cargar; reintenta unos segundos
-            if (typeof window.paypal !== "undefined") { intentar(); }
-            else {
+            function esperarSdk() {
               var veces = 0;
-              var t = setInterval(function () {
+              var iv = setInterval(function () {
                 veces++;
                 if (typeof window.paypal !== "undefined") {
-                  clearInterval(t);
+                  clearInterval(iv);
                   intentar();
                 } else if (veces > 20) {
-                  clearInterval(t);
+                  clearInterval(iv);
                   mostrarFallback();
                 }
               }, 500);
             }
+            // Carga perezosa: se llama al ABRIR el panel de Información, no
+            // al arrancar el panel. Inyecta el SDK una sola vez.
+            window.cargarPayPal = function () {
+              if (window.__paypalSolicitado) return;
+              window.__paypalSolicitado = true;
+              if (typeof window.paypal !== "undefined") { intentar(); return; }
+              var s = document.createElement("script");
+              s.src = "https://www.paypal.com/sdk/js?client-id=BAApEI3GY3EXDLv6zZyI3K5vP3agotWdxu-yJ4KztXDRBgIFwScuAq_vEhn36YyB1rvsNfzh0DhfFSTqG0&components=hosted-buttons&disable-funding=venmo&currency=USD";
+              s.async = true;
+              s.onerror = mostrarFallback;
+              document.head.appendChild(s);
+              esperarSdk();
+            };
           })();
         </script>
       </div>
@@ -3079,6 +3107,9 @@
       "update.lista.title": "Actualización lista para instalar",
       "update.lista.desc": "La versión {v} ya está descargada y verificada. Reinicia la aplicación para aplicar todos los cambios de inmediato.",
       "update.lista.action": "Reiniciar e instalar ahora",
+      "update.error.title": "No se pudo descargar la actualización",
+      "update.error.desc": "{error} Podés reintentar la descarga; si sigue fallando, probá más tarde o bajá el instalador desde GitHub.",
+      "update.error.action": "Reintentar descarga",
       "update.pill.nueva": "Nueva v{v}",
       "update.pill.descargando": "Descargando {p}%",
       "update.pill.lista": "Actualización lista",
@@ -3372,6 +3403,9 @@
       "update.lista.title": "Update ready to install",
       "update.lista.desc": "Version {v} is downloaded and verified. Restart the app to apply all the changes right away.",
       "update.lista.action": "Restart and install now",
+      "update.error.title": "Could not download the update",
+      "update.error.desc": "{error} You can retry the download; if it keeps failing, try again later or grab the installer from GitHub.",
+      "update.error.action": "Retry download",
       "update.pill.nueva": "New v{v}",
       "update.pill.descargando": "Downloading {p}%",
       "update.pill.lista": "Update ready",
@@ -4223,6 +4257,18 @@
     return { nombre: n.substring(0, idx).trim(), detalle: n.substring(idx + sep.length).trim() };
   }
 
+  // Extrae el marcador de episodio (2x05, S02E05) del label de un grupo de
+  // servidores, para que los chips del filtro distingan "MediaFire · 2x1" de
+  // "MediaFire · 2x2" en vez de repetir "MediaFire 1" idénticos.
+  function episodioDeServidor(nombreServidor) {
+    const n = nombreServidor || "";
+    let m = n.match(/S(\d{1,2})\s*[\u00b7x\-]?\s*E(\d{1,3})/i);
+    if (m) return "S" + m[1].padStart(2, "0") + "E" + m[2].padStart(2, "0");
+    m = n.match(/\b(\d{1,2})x(\d{1,3})\b/i);
+    if (m) return m[1] + "x" + String(m[2]).padStart(2, "0");
+    return "";
+  }
+
   function getHosterMeta(nombreServidor) {
     const s = (nombreServidor || "").toLowerCase();
     if (s.includes("mediafire")) return { color: "#3b82f6", bg: "rgba(59, 130, 246, 0.14)", border: "rgba(59, 130, 246, 0.35)", label: "MediaFire" };
@@ -4414,11 +4460,12 @@
 
     servidores.forEach((s, idx) => {
       const meta = getHosterMeta(s.servidor);
+      const ep = episodioDeServidor(s.servidor);
       const cant = s.enlaces ? s.enlaces.length : 0;
       const isAct = servidorFiltroActivo === String(idx);
       html += `
-        <button class="server-tab-btn ${isAct ? 'active' : ''}" onclick="filtrarServidor('${idx}')" style="${isAct ? `border-color:${meta.color}; color:${meta.color};` : ''}">
-          <span>${meta.label}</span>
+        <button class="server-tab-btn ${isAct ? 'active' : ''}" onclick="filtrarServidor('${idx}')" style="${isAct ? `border-color:${meta.color}; color:${meta.color};` : ''}" title="${escapeHtml(s.servidor || meta.label)}">
+          <span>${escapeHtml(ep ? meta.label + " \u00b7 " + ep : meta.label)}</span>
           <span class="tab-count">${cant}</span>
         </button>
       `;
@@ -5139,7 +5186,10 @@
   };
 
   // Info Panel Handlers
-  $("#btn-info").onclick = () => { $("#info-panel").style.display = "flex"; };
+  $("#btn-info").onclick = () => {
+    $("#info-panel").style.display = "flex";
+    if (typeof window.cargarPayPal === "function") window.cargarPayPal();
+  };
   $("#info-cerrar").onclick = () => { $("#info-panel").style.display = "none"; };
   $("#info-panel").onclick = e => {
     if (e.target === $("#info-panel")) $("#info-panel").style.display = "none";
@@ -5609,9 +5659,75 @@
   cargarHosters();
 
   // ==========================================================================
+  // ACCESIBILIDAD DE MODALES (Esc + trampa de foco + restauración)
+  // ==========================================================================
+  // Sin tocar cada botón que abre/cierra modales, un MutationObserver vigila
+  // los .modal-overlay: al abrirse, mueve el foco al primer control; Tab no
+  // sale del modal; Esc lo cierra; al cerrar, el foco vuelve al elemento que
+  // lo abrió. Funciona para los modales que ya existen y para los nuevos.
+  (function () {
+    const FOCUSABLE = "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])";
+    let elementoQueAbrio = null;
+    let modalAbierto = null;
+
+    const modalesVisibles = () =>
+      Array.from(document.querySelectorAll(".modal-overlay"))
+        .filter(m => m.style.display === "flex" || m.style.display === "block");
+
+    const enfocablesDe = (modal) =>
+      Array.from(modal.querySelectorAll(FOCUSABLE))
+        .filter(el => !el.disabled && el.offsetParent !== null);
+
+    function observar(mutaciones) {
+      const visibles = modalesVisibles();
+      if (visibles.length && !modalAbierto) {
+        modalAbierto = visibles[0];
+        elementoQueAbrio = document.activeElement;
+        const primeros = enfocablesDe(modalAbierto);
+        if (primeros.length) primeros[0].focus();
+      } else if (!visibles.length && modalAbierto) {
+        modalAbierto = null;
+        if (elementoQueAbrio && typeof elementoQueAbrio.focus === "function") {
+          try { elementoQueAbrio.focus(); } catch (e) { /* ya no existe */ }
+        }
+        elementoQueAbrio = null;
+      }
+    }
+
+    document.addEventListener("keydown", (e) => {
+      if (!modalAbierto || modalAbierto.style.display === "none") return;
+      if (e.key === "Escape") {
+        // el reproductor tiene su propio cierre (detiene el video)
+        if (modalAbierto.id === "player-panel" && typeof cerrarReproductor === "function") {
+          cerrarReproductor();
+          return;
+        }
+        modalAbierto.style.display = "none";
+        observar();
+        return;
+      }
+      if (e.key === "Tab") {
+        const elems = enfocablesDe(modalAbierto);
+        if (!elems.length) return;
+        const primero = elems[0];
+        const ultimo = elems[elems.length - 1];
+        if (e.shiftKey && document.activeElement === primero) {
+          e.preventDefault(); ultimo.focus();
+        } else if (!e.shiftKey && document.activeElement === ultimo) {
+          e.preventDefault(); primero.focus();
+        }
+      }
+    });
+
+    new MutationObserver(observar).observe(document.body,
+      { attributes: true, attributeFilter: ["style"], subtree: true });
+  })();
+
+  // ==========================================================================
   // IN-APP AUTO-UPDATER CONTROLLER (UI/UX 2.0)
   // ==========================================================================
   let estadoActualizacionActual = null;
+  let ultimaVersionDisponible = null;   // recuerda la v pendiente ante un error
 
   function actualizarUIActualizacion(data) {
     if (!data || !data.estado) return;
@@ -5646,6 +5762,7 @@
     }
 
     if (data.estado === "disponible") {
+      ultimaVersionDisponible = data.version || ultimaVersionDisponible;
       if (pill) {
         pill.style.display = "inline-flex";
         if (txtPill) txtPill.textContent = t("update.pill.nueva", { v: data.version || "" });
@@ -5690,6 +5807,22 @@
       if (panel) panel.style.display = "flex";
     } else if (data.estado === "al-dia") {
       if (pill) pill.style.display = "none";
+    } else if (data.estado === "error") {
+      // el error debe ser VISIBLE y accionable: se muestra el panel con el
+      // mensaje y el botón pasa a "Reintentar" (si hay versión pendiente)
+      if (title) title.textContent = t("update.error.title");
+      if (desc) desc.textContent = t("update.error.desc", { error: data.error || "" });
+      if (progSection) progSection.style.display = "none";
+      if (ultimaVersionDisponible && btnAction) {
+        btnAction.disabled = false;
+        if (txtAction) txtAction.textContent = t("update.error.action");
+        if (badge) badge.textContent = t("update.badge.nueva", { v: ultimaVersionDisponible });
+        if (pill) {
+          pill.style.display = "inline-flex";
+          if (txtPill) txtPill.textContent = t("update.pill.nueva", { v: ultimaVersionDisponible });
+        }
+        if (panel) panel.style.display = "flex";
+      }
     }
   }
 
@@ -5755,6 +5888,14 @@
   if (btnUpdateAction) {
     btnUpdateAction.onclick = () => {
       if (!estadoActualizacionActual) return;
+      if (estadoActualizacionActual.estado === "error" && ultimaVersionDisponible) {
+        // reintentar la descarga de la versión pendiente
+        if (window.electronAPI && typeof window.electronAPI.descargarActualizacion === "function") {
+          window.electronAPI.descargarActualizacion();
+        }
+        actualizarUIActualizacion({ estado: "descargando", progreso: 0 });
+        return;
+      }
       if (estadoActualizacionActual.estado === "disponible") {
         if (window.electronAPI && typeof window.electronAPI.descargarActualizacion === "function") {
           window.electronAPI.descargarActualizacion();
