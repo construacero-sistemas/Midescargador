@@ -216,6 +216,42 @@
     margin-bottom: 12px;
     padding: 0 2px;
   }
+
+  /* ---------- modo de captura de enlaces ---------- */
+  .modo-captura {
+    background: var(--bg-surface-2);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 9px 11px;
+    margin-bottom: 10px;
+  }
+  .modo-captura label {
+    display: block;
+    font-size: 10.5px;
+    font-weight: 700;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+  }
+  .modo-captura select {
+    width: 100%;
+    background: var(--bg-base);
+    color: var(--text-primary);
+    border: 1px solid var(--border-strong);
+    border-radius: 9px;
+    padding: 7px 9px;
+    font: 600 11.5px "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif;
+    cursor: pointer;
+  }
+  .modo-captura select:focus-visible {
+    outline: 2px solid rgba(96, 165, 250, 0.8);
+    outline-offset: 1px;
+  }
+  .modo-captura .nota {
+    font-size: 9.5px;
+    color: var(--text-muted);
+    line-height: 1.4;
+    margin-top: 6px;
+  }
 </style>
 </head>
 <body>
@@ -249,6 +285,15 @@
   </header>
 
   <p class="intro">Pasa el ratón sobre un video y verás la pestaña <b>“Descargar”</b> (como IDM): elige la resolución y se envía al gestor.</p>
+
+  <div class="modo-captura">
+    <label for="modo-captura">Al hacer clic en un enlace de descarga</label>
+    <select id="modo-captura">
+      <option value="auto">Enviar solo a MiDescargador</option>
+      <option value="preguntar">Preguntar: MiDescargador o navegador</option>
+    </select>
+    <div class="nota">En el modo “Preguntar”, el clic abre un selector para elegir quién descarga. ALT+clic siempre descarga con el navegador.</div>
+  </div>
 
   <div class="status-box busy" id="status-box" role="status">
     <span class="dot" id="status-dot"></span>

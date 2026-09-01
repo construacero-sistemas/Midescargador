@@ -79,6 +79,31 @@
     .mdm-opc:last-child { border-bottom: none; }
     .mdm-opc:hover { background: rgba(59, 130, 246, 0.14); }
     .mdm-opc .mdm-tam { margin-left: auto; color: #93a4bd; font-size: 12px; }
+    .mdm-elegir {
+      position: fixed;
+      z-index: 2147483647;
+      display: none;
+      flex-direction: column;
+      min-width: 220px;
+      background: rgba(18, 24, 38, 0.97);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 11px;
+      box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+      overflow: hidden;
+      user-select: none;
+      font: 500 13px "Plus Jakarta Sans", "Segoe UI", system-ui, sans-serif;
+    }
+    .mdm-elegir-titulo {
+      padding: 9px 14px 7px;
+      color: #93a4bd;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.03em;
+      text-transform: uppercase;
+      background: rgba(255, 255, 255, 0.04);
+    }
     .mdm-cab {
       display: flex;
       align-items: center;
@@ -604,6 +629,76 @@
   let fuerzaTimer = null;
   let chip = null;
 
+  // ---- modo de captura de enlaces (ajustable desde el popup) ----
+  // "auto": el takeover envía todo a MiDescargador sin preguntar (clásico).
+  // "preguntar": al clicar un enlace de descarga aparece el selector
+  // MiDescargador / Navegador. Se cachea en la página y storage.onChanged lo
+  // actualiza en vivo (sin recargar).
+  let modoCaptura = "auto";
+  try {
+    chrome.storage.local.get("mdm_modo_captura", (d) => {
+      if (d && d.mdm_modo_captura === "preguntar") modoCaptura = "preguntar";
+    });
+    chrome.storage.onChanged.addListener((cambios, area) => {
+      if (area === "local" && cambios.mdm_modo_captura) {
+        modoCaptura = cambios.mdm_modo_captura.nuevoValor === "preguntar"
+          ? "preguntar" : "auto";
+      }
+    });
+  } catch (_e) { /* storage opcional */ }
+
+  // ---- selector "¿Cómo descargar?" (modo preguntar) ----
+  let elegir = null;
+  let elegirRecienAbierta = false;
+
+  function descargarConNavegador(url) {
+    chrome.runtime.sendMessage({ tipo: "descargar", url }, (r) => {
+      if (chrome.runtime.lastError || (r && r.error)) {
+        mostrarChip("No se pudo descargar con el navegador");
+        setTimeout(ocultarChip, 2600);
+      } else {
+        mostrarChip("✓ Descargando con el navegador");
+        setTimeout(ocultarChip, 1800);
+      }
+    });
+  }
+
+  function mostrarElegir(x, y, url) {
+    if (!elegir) {
+      elegir = document.createElement("div");
+      elegir.className = "mdm-elegir";
+      // contenido estático (sin datos externos): innerHTML seguro
+      elegir.innerHTML =
+        '<div class="mdm-elegir-titulo">\u00bfC\u00f3mo descargar?</div>' +
+        '<div class="mdm-opc" data-el="mdm">\u2b07 MiDescargador</div>' +
+        '<div class="mdm-opc" data-el="nav">\ud83c\udf10 Navegador</div>' +
+        '<div class="mdm-opc" data-el="cancel">\u2715 Cancelar</div>';
+      (document.body || document.documentElement).appendChild(elegir);
+      elegir.addEventListener("click", (ev) => {
+        const op = ev.target.closest ? ev.target.closest("[data-el]") : null;
+        if (!op) return;
+        const que = op.dataset.el;
+        ocultarElegir();
+        if (que === "mdm") enviarCaptura(url, "elegido");
+        else if (que === "nav") descargarConNavegador(url);
+      });
+    }
+    elegir.style.left = Math.max(4, Math.min(x, window.innerWidth - 240)) + "px";
+    elegir.style.top = Math.max(4, Math.min(y, window.innerHeight - 150)) + "px";
+    elegir.style.display = "flex";
+    elegirRecienAbierta = true;
+  }
+  function ocultarElegir() {
+    if (elegir) elegir.style.display = "none";
+  }
+  // clic fuera del selector (o Esc) lo cierra; el mismo clic que la abrió
+  // no la cierra (los listeners corren en orden de registro)
+  document.addEventListener("click", (e) => {
+    if (!elegir || elegir.style.display !== "flex") return;
+    if (elegirRecienAbierta) { elegirRecienAbierta = false; return; }
+    if (!elegir.contains(e.target)) ocultarElegir();
+  }, true);
+
   function mostrarChip(texto) {
     if (!chip) {
       chip = document.createElement("div");
@@ -630,6 +725,7 @@
       fuerzaTimer = setTimeout(desarmarFuerza, 4000);
     } else if (e.key === "Escape") {
       desarmarFuerza();
+      ocultarElegir();
     }
   });
 
@@ -676,7 +772,11 @@
         e.preventDefault();
         e.stopPropagation();
         e.stopImmediatePropagation();
-        enviarCaptura(objetivo, "auto");
+        if (modoCaptura === "preguntar") {
+          mostrarElegir(e.clientX, e.clientY, objetivo);
+        } else {
+          enviarCaptura(objetivo, "auto");
+        }
       }
       return;
     }

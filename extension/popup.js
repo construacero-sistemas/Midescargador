@@ -134,6 +134,20 @@ btnCarpeta.addEventListener("click", async () => {
   setTimeout(() => { btnCarpeta.disabled = false; }, 400);
 });
 
+// Modo de captura de enlaces (compartido con content.js vía storage):
+//   auto      → el takeover envía todo a MiDescargador sin preguntar
+//   preguntar → al clicar un enlace de descarga se elige MiDescargador/navegador
+// El cambio aplica EN VIVO en las pestañas abiertas (storage.onChanged).
+const selModo = $("modo-captura");
+try {
+  chrome.storage.local.get("mdm_modo_captura", (d) => {
+    selModo.value = (d && d.mdm_modo_captura === "preguntar") ? "preguntar" : "auto";
+  });
+  selModo.addEventListener("change", () => {
+    chrome.storage.local.set({ mdm_modo_captura: selModo.value });
+  });
+} catch (_e) { /* storage opcional */ }
+
 $("btn-recargar").addEventListener("click", () => {
   const t = $("btn-reload-text");
   try {
