@@ -444,5 +444,144 @@ class TestConsolidarResultadosSerie(unittest.TestCase):
         self.assertIn("no se proces", fallidos[0]["error"])
 
 
+class TestReintentoAutomatico(unittest.TestCase):
+    """Al terminar una extracción de serie con episodios fallidos, el backend
+    hace UNA pasada automática de reintento (en paralelo, sin pisar la caché
+    de la serie) antes de entregar el resultado."""
+
+    def tearDown(self):
+        servidor._ENLACES_TAREAS.clear()
+        servidor._ENLACES_CACHE.clear()
+
+    def test_fallidos_se_reintentan_una_vez(self):
+        serie = "https://zona-leros.com/series/serie"
+        url_caida = "https://zona-leros.com/series/episode/serie-4-2"
+        llamadas = []
+        originales = (servidor._pagina_enlaces, servidor._es_url_archivo,
+                      servidor._enlaces_extraer)
+
+        def fake_extraer(url, on_progreso=None, hosters_permitidos=None,
+                         episodios_permitidos=None, guardar_cache=True):
+            llamadas.append({"url": url, "eps": episodios_permitidos,
+                             "cache": guardar_cache})
+            if episodios_permitidos:
+                # pasada de reintento: el episodio caído ahora pasa
+                return {"servidores": [{"servidor": "MediaFire · 4x2",
+                                        "enlaces": [{"url": "u2"}]}]}
+            return {"servidores": [{"servidor": "MediaFire · 4x1",
+                                    "enlaces": [{"url": "u1"}]}],
+                    "titulo": "Serie",
+                    "episodios_fallidos": [{"label": "4x2", "url": url_caida,
+                                            "error": "Cloudflare"}],
+                    "incompleto": True}
+
+        servidor._pagina_enlaces = lambda u: object()
+        servidor._es_url_archivo = lambda u: False
+        servidor._enlaces_extraer = fake_extraer
+        try:
+            tid = servidor._enlaces_lanzar(serie)["tarea"]
+            fin = time.time() + 5
+            while time.time() < fin:
+                if servidor._ENLACES_TAREAS[tid]["estado"] == "listo":
+                    break
+                time.sleep(0.05)
+            res = servidor._ENLACES_TAREAS[tid]["resultado"]
+            # el reintento pidió SOLO los caídos y sin guardar caché
+            self.assertEqual(len(llamadas), 2)
+            self.assertEqual(llamadas[1]["eps"], [url_caida])
+            self.assertFalse(llamadas[1]["cache"])
+            # resultado final fusionado y SIN fallidos ni incompleto
+            self.assertEqual(len(res["servidores"]), 2)
+            self.assertNotIn("episodios_fallidos", res)
+            self.assertNotIn("incompleto", res)
+            # la caché de la serie NO fue pisada por el reintento
+            self.assertNotIn(serie, servidor._ENLACES_CACHE)
+        finally:
+            (servidor._pagina_enlaces,
+             servidor._es_url_archivo,
+             servidor._enlaces_extraer) = originales
+
+    def test_fallidos_que_persisten_quedan_reportados(self):
+        serie = "https://zona-leros.com/series/serie2"
+        url_caida = "https://zona-leros.com/series/episode/serie2-4-2"
+        originales = (servidor._pagina_enlaces, servidor._es_url_archivo,
+                      servidor._enlaces_extraer)
+
+        def fake_extraer(url, on_progreso=None, hosters_permitidos=None,
+                         episodios_permitidos=None, guardar_cache=True):
+            return {"servidores": [{"servidor": "MediaFire · 4x1",
+                                    "enlaces": [{"url": "u1"}]}],
+                    "titulo": "Serie",
+                    "episodios_fallidos": [{"label": "4x2", "url": url_caida,
+                                            "error": "Cloudflare"}],
+                    "incompleto": True}
+
+        servidor._pagina_enlaces = lambda u: object()
+        servidor._es_url_archivo = lambda u: False
+        servidor._enlaces_extraer = fake_extraer
+        try:
+            tid = servidor._enlaces_lanzar(serie)["tarea"]
+            fin = time.time() + 5
+            while time.time() < fin:
+                if servidor._ENLACES_TAREAS[tid]["estado"] == "listo":
+                    break
+                time.sleep(0.05)
+            res = servidor._ENLACES_TAREAS[tid]["resultado"]
+            self.assertEqual(len(res["episodios_fallidos"]), 1)
+            self.assertTrue(res["incompleto"])
+        finally:
+            (servidor._pagina_enlaces,
+             servidor._es_url_archivo,
+             servidor._enlaces_extraer) = originales
+
+
+class TestSeleccionFallidos(unittest.TestCase):
+    """Al resolver una selección de episodios, los que fallan deben quedar
+    reportados en episodios_fallidos (antes desaparecían sin aviso y no
+    había forma de reintentarlos desde el panel)."""
+
+    def tearDown(self):
+        servidor._ENLACES_TAREAS.clear()
+
+    def test_seleccion_reporta_episodios_fallidos(self):
+        buena = "https://zona-leros.com/series/episode/serie-4-1"
+        mala = "https://zona-leros.com/series/episode/serie-4-2"
+        originales = (servidor._pagina_enlaces, servidor._es_url_archivo,
+                      servidor._enlaces_extraer)
+
+        def fake_extraer(url, on_progreso=None, hosters_permitidos=None):
+            if url == buena:
+                return {"servidores": [{"servidor": "MediaFire · 4x1",
+                                        "hoster": "MediaFire",
+                                        "enlaces": [{"url": "u1"}]}],
+                        "titulo": "Serie"}
+            return {"error": "Cloudflare no dejó pasar la página"}
+
+        servidor._pagina_enlaces = lambda u: object()
+        servidor._es_url_archivo = lambda u: False
+        servidor._enlaces_extraer = fake_extraer
+        try:
+            tid = servidor._enlaces_lanzar(
+                "https://zona-leros.com/series/serie",
+                urls_seleccionadas=[buena, mala])["tarea"]
+            fin = time.time() + 5
+            while time.time() < fin:
+                if servidor._ENLACES_TAREAS[tid]["estado"] == "listo":
+                    break
+                time.sleep(0.05)
+            res = servidor._ENLACES_TAREAS[tid]["resultado"]
+            self.assertEqual(len(res["servidores"]), 1)
+            self.assertTrue(res["incompleto"])
+            self.assertEqual(len(res["episodios_fallidos"]), 1)
+            f = res["episodios_fallidos"][0]
+            self.assertEqual(f["url"], mala)
+            self.assertEqual(f["label"], "4x2")
+            self.assertIn("Cloudflare", f["error"])
+        finally:
+            (servidor._pagina_enlaces,
+             servidor._es_url_archivo,
+             servidor._enlaces_extraer) = originales
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

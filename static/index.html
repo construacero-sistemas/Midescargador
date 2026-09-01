@@ -1128,6 +1128,20 @@
       gap: 8px;
     }
 
+    /* casilla de selección de cada enlace (entra/sale del lote del servidor) */
+    .sel-enlace {
+      width: 15px;
+      height: 15px;
+      accent-color: #6366f1;
+      cursor: pointer;
+      flex-shrink: 0;
+    }
+
+    .part-chip:has(.sel-enlace:not(:checked)),
+    .part-row-detail:has(.sel-enlace:not(:checked)) {
+      opacity: 0.45;
+    }
+
     .part-chip:hover {
       background: var(--bg-surface-hover);
       border-color: rgba(59, 130, 246, 0.3);
@@ -3171,6 +3185,13 @@
       "enlaces.sinresultados": "No se encontraron enlaces de descarga.",
       "enlaces.sin.servidores": "No se encontraron servidores ni enlaces disponibles.",
       "enlaces.episodios_fallidos": "{n} episodios no devolvieron enlaces tras varios intentos:",
+      "enlaces.reintentar_fallidos": "Reintentar ({n})",
+      "enlaces.reintentar_fallidos.title": "Vuelve a extraer solo los episodios que fallaron; el resto ya está en la lista",
+      "enlaces.marcado.title": "Marcado: entra en “Descargar toda la temporada”. Desmárcalo para excluirlo",
+      "enlaces.sin_marcados": "No hay enlaces marcados: marca al menos uno con su casilla",
+      "enlaces.marcar_todo": "Marcar todo",
+      "enlaces.desmarcar_todo": "Quitar todo",
+      "enlaces.marcar_todo.title": "Marca o desmarca todos los enlaces para la descarga por servidor",
       "enlaces.sin.servidor": "No se encontraron enlaces para este servidor",
       "enlaces.titulo": "Enlaces de Descarga Extraídos",
       "nav.catalogo": "Cat\u00e1logo",
@@ -3473,6 +3494,13 @@
       "enlaces.sinresultados": "No download links were found.",
       "enlaces.sin.servidores": "No servers or available links were found.",
       "enlaces.episodios_fallidos": "{n} episodes did not return links after several attempts:",
+      "enlaces.reintentar_fallidos": "Retry ({n})",
+      "enlaces.reintentar_fallidos.title": "Re-extracts only the episodes that failed; the rest are already listed",
+      "enlaces.marcado.title": "Checked: included in “Download entire season”. Uncheck to exclude it",
+      "enlaces.sin_marcados": "No links are checked: mark at least one with its checkbox",
+      "enlaces.marcar_todo": "Mark all",
+      "enlaces.desmarcar_todo": "Unmark all",
+      "enlaces.marcar_todo.title": "Mark or unmark every link for download by server",
       "enlaces.sin.servidor": "No links were found for this server",
       "enlaces.titulo": "Extracted Download Links",
       "nav.catalogo": "Catalog",
@@ -4355,11 +4383,33 @@
     }
   }
 
-  function mostrarEnlaces(d, vivo) {
+  // selección de enlaces a descargar: se guardan solo los DESMARCADOS (por
+  // defecto todo entra). Así los parciales en vivo —que llegan cada pocos
+  // segundos— no re-marcan lo que el usuario quitó, y un resultado nuevo
+  // resetea la selección. Survive re-renders (pestañas, verificación).
+  let enlacesDesmarcados = new Set();
+
+  function enlaceMarcado(url) {
+    return !!url && !enlacesDesmarcados.has(url);
+  }
+
+  function _urlsDeDatos(d) {
+    const urls = [];
+    (d && d.servidores || []).forEach(s => (s.enlaces || []).forEach(e => {
+      const u = (typeof e === "string") ? e : e.url;
+      if (u) urls.push(u);
+    }));
+    return urls;
+  }
+
+  function mostrarEnlaces(d, vivo, conservarSel) {
     if (d && Array.isArray(d.servidores)) {
       d.servidores = ordenarServidores(d.servidores);
     }
     datosEnlacesActuales = d;
+    // un resultado fusionado (reintento) conserva lo que el usuario ya
+    // había desmarcado del resultado anterior
+    if (!vivo && !conservarSel) enlacesDesmarcados = new Set();
     urlEnlacesOrigen = $("#url").value.trim() || "";
     extrayendoVivo = !!vivo;
     renderizarPanelEnlaces();
@@ -4456,6 +4506,15 @@
 
         <div style="display:flex; align-items:center; gap:8px;">
           <span class="links-meta-badge">${gruposHoster.length} ${t("enlaces.servidores")} (${resumenConteo})</span>
+          ${totalEnlaces > 0 ? `
+          <button class="btn btn-ghost btn-sm" onclick="alternarTodosEnlaces()" title="${t("enlaces.marcar_todo.title")}" style="font-size:11.5px;">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="9 11 12 14 22 4"></polyline>
+              <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path>
+            </svg>
+            <span>${enlacesDesmarcados.size > 0 ? t("enlaces.marcar_todo") : t("enlaces.desmarcar_todo")}</span>
+          </button>
+          ` : ""}
           <button class="btn btn-ghost btn-sm" onclick="toggleExpandirTodos()" title="Expandir/Colapsar todo" style="font-size:11.5px;">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="7 13 12 18 17 13"></polyline>
@@ -4512,6 +4571,13 @@
         <div class="error-banner" style="margin:10px 0;">
           <span>${escapeHtml(t("enlaces.episodios_fallidos", { n: fallidos.length }))}</span>
           <span style="opacity:.8;">${escapeHtml(nombresFallidos)}</span>
+          <button class="btn btn-secondary btn-sm" style="margin-left:auto; flex-shrink:0;" title="${escapeHtml(t("enlaces.reintentar_fallidos.title"))}" onclick="reintentarFallidos()">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="23 4 23 10 17 10"></polyline>
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+            </svg>
+            <span>${escapeHtml(t("enlaces.reintentar_fallidos", { n: fallidos.length }))}</span>
+          </button>
         </div>
       `;
     }
@@ -4529,9 +4595,18 @@
       const detalle = esSerie
         ? t("enlaces.n_episodios", { n: g.nGrupos })
         : (separarServidor(servidores[g.idxs[0]] ? servidores[g.idxs[0]].servidor : g.nombre).detalle || "");
+      // cuántos enlaces de ESTA tarjeta siguen marcados: el botón de
+      // descarga solo encola los marcados
+      const selCant = enl.filter(e => {
+        const u = (typeof e === "string") ? e : e.url;
+        return enlaceMarcado(u);
+      }).length;
       const etiquetaBoton = esSerie
-        ? t("enlaces.descargar_temporada", { n: cant })
-        : t("enlaces.descargar_todo", { servidor: meta.label, n: cant });
+        ? t("enlaces.descargar_temporada", { n: selCant })
+        : t("enlaces.descargar_todo", { servidor: meta.label, n: selCant });
+      const tituloBoton = selCant === 0
+        ? t("enlaces.sin_marcados")
+        : escapeHtml(etiquetaBoton);
       const isHidden = (servidorFiltroActivo !== 'todos' && servidorFiltroActivo !== String(gi));
       const isOpen = !isHidden;
 
@@ -4561,7 +4636,7 @@
 
             <div class="server-header-right" onclick="event.stopPropagation();">
               ${cant > 0 ? `
-                <button class="btn-download-server" title="${escapeHtml(etiquetaBoton)}" onclick="descargarHosterLote(${gi})">
+                <button class="btn-download-server" title="${tituloBoton}" ${selCant === 0 ? "disabled style=\"opacity:.45;\"" : ""} onclick="descargarHosterLote(${gi})">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                     <polyline points="7 10 12 15 17 10"></polyline>
@@ -4593,8 +4668,10 @@
             : (nombre || t("enlaces.archivo", { n: numParte }));
           const cleanUrl = url.replace(/^https?:\/\/(www\.)?/, '');
           const shortUrl = cleanUrl.length > 28 ? cleanUrl.substring(0, 26) + '...' : cleanUrl;
+          const marcado = enlaceMarcado(url);
           html += `
             <div class="part-chip">
+              <input type="checkbox" class="sel-enlace" ${marcado ? "checked" : ""} title="${t("enlaces.marcado.title")}" onchange="toggleEnlaceSel('${encodeURIComponent(url)}')" onclick="event.stopPropagation()">
               <div class="part-chip-info">
                 <div class="part-chip-title">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="${meta.color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -4634,8 +4711,10 @@
           const etiqueta = parte > 0
             ? (total ? t("enlaces.parte_de", { n: parte, total }) : t("enlaces.parte", { n: parte }))
             : (nombre || t("enlaces.archivo", { n: pIdx + 1 }));
+          const marcado = enlaceMarcado(url);
           html += `
             <div class="part-row-detail">
+              <input type="checkbox" class="sel-enlace" ${marcado ? "checked" : ""} title="${t("enlaces.marcado.title")}" onchange="toggleEnlaceSel('${encodeURIComponent(url)}')" onclick="event.stopPropagation()">
               <span style="font-weight:700; font-size:12px; color:var(--text-secondary); width:110px;">${escapeHtml(etiqueta)}:</span>
               <span class="part-row-url">${escapeHtml(url)}</span>
               ${badgeEstado(url)}
@@ -4704,7 +4783,7 @@
   // anti-doble-clic: servidores/enlaces en proceso de encolado
   const encolando = new Set();
 
-  // Encola TODOS los enlaces de un hoster (una tarjeta agrupada): con un
+  // Encola los enlaces MARCADOS de un hoster (una tarjeta agrupada): con un
   // clic baja toda la temporada del servidor elegido, sin revisar tarjeta
   // por tarjeta. grupoIdx es el índice dentro de agruparPorHoster(...).
   async function descargarHosterLote(grupoIdx) {
@@ -4712,8 +4791,10 @@
     const grupos = agruparPorHoster(datosEnlacesActuales.servidores);
     const g = grupos[grupoIdx];
     if (!g || !g.enlaces.length) return;
-    const urls = g.enlaces.map(e => (typeof e === 'string') ? e : e.url).filter(Boolean);
-    if (!urls.length) return;
+    const urls = g.enlaces
+      .map(e => (typeof e === 'string') ? e : e.url)
+      .filter(u => u && enlaceMarcado(u));
+    if (!urls.length) { alert(t("enlaces.sin_marcados")); return; }
     if (encolando.has("lote:" + grupoIdx)) return; // ya se está encolando
     encolando.add("lote:" + grupoIdx);
 
@@ -4749,6 +4830,91 @@
         if (original) btn.innerHTML = original;
       }
     }
+  }
+
+  // fusiona el resultado anterior con el de un reintento: los servidores
+  // se SUMAN (el render los reagrupa por hoster en su tarjeta) y quedan
+  // como fallidos los que no se reintentaron + los que volvieron a fallar
+  function _fusionarReintento(previo, nuevo, urlsReintentadas) {
+    const reintentadas = new Set(urlsReintentadas);
+    const fallidosPrevios = (Array.isArray(previo.episodios_fallidos)
+      ? previo.episodios_fallidos : []).filter(f => !reintentadas.has(f.url));
+    const fallidosNuevos = Array.isArray(nuevo.episodios_fallidos)
+      ? nuevo.episodios_fallidos : [];
+    const fallidos = fallidosPrevios.concat(fallidosNuevos);
+    const fusion = {
+      servidores: (previo.servidores || []).concat(nuevo.servidores || []),
+      titulo: previo.titulo || nuevo.titulo,
+      episodios_fallidos: fallidos,
+      seleccion: true,
+    };
+    // contadores del banner "en vivo" (parciales del reintento)
+    if (nuevo.n_total != null) {
+      fusion.n_total = nuevo.n_total;
+      fusion.n_resueltos = nuevo.n_resueltos;
+    }
+    if (fallidos.length) fusion.incompleto = true;
+    return fusion;
+  }
+
+  // Reintenta SOLO los episodios que fallaron en la última extracción y
+  // SUMA el resultado al panel actual (no lo reemplaza): los servidores
+  // nuevos entran en sus tarjetas por hoster y los que vuelven a fallar
+  // siguen en el banner con el botón para otra pasada.
+  async function reintentarFallidos() {
+    if (!datosEnlacesActuales) return;
+    const fallidos = Array.isArray(datosEnlacesActuales.episodios_fallidos)
+      ? datosEnlacesActuales.episodios_fallidos : [];
+    const urls = fallidos.map(f => f.url).filter(Boolean);
+    if (!urls.length) return;
+    const previo = datosEnlacesActuales;
+    // el panel queda COMO ESTÁ mientras reintenta: el primer parcial que
+    // llega fusiona los nuevos servidores con los anteriores, en vivo
+    try {
+      const r = await fetch("/api/enlaces", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: urls[0], seleccion: { urls, servidores: [] } })
+      });
+      const d = await r.json();
+      if (d.error) { panel.innerHTML = `<div class="error-banner">${escapeHtml(d.error)}</div>`; return; }
+      if (!d.tarea) { panel.innerHTML = `<div class="error-banner">${t("enlaces.respuesta")}</div>`; return; }
+      while (true) {
+        await new Promise(res => setTimeout(res, 1500));
+        const rr = await fetch("/api/enlaces/estado?tarea=" + encodeURIComponent(d.tarea));
+        const e = await rr.json();
+        if (e.parcial && (e.parcial.servidores || e.parcial.episodios_fallidos)) {
+          mostrarEnlaces(_fusionarReintento(previo, e.parcial, urls), true, true);
+        }
+        if (e.estado === "listo") {
+          if (e.resultado && !e.resultado.error) {
+            mostrarEnlaces(_fusionarReintento(previo, e.resultado, urls), false, true);
+          } else {
+            panel.innerHTML = `<div class="error-banner">${escapeHtml((e.resultado || {}).error || t("enlaces.sinresultados"))}</div>`;
+          }
+          break;
+        }
+      }
+    } catch (e) {
+      panel.innerHTML = `<div class="error-banner">${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // marca/desmarca un enlace para la descarga por lote (la casilla de cada
+  // enlace); no afecta a los botones individuales de descarga
+  function toggleEnlaceSel(encUrl) {
+    const url = decodeURIComponent(encUrl);
+    if (enlacesDesmarcados.has(url)) enlacesDesmarcados.delete(url);
+    else enlacesDesmarcados.add(url);
+    renderizarPanelEnlaces();   // refresca los contadores de los botones
+  }
+
+  // marca o desmarca TODOS los enlaces del resultado actual
+  function alternarTodosEnlaces() {
+    const urls = _urlsDeDatos(datosEnlacesActuales);
+    const todosMarcados = urls.every(u => enlaceMarcado(u));
+    enlacesDesmarcados = todosMarcados ? new Set(urls) : new Set();
+    renderizarPanelEnlaces();
   }
 
   async function descargarEnlace(encUrl) {

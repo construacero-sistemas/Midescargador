@@ -1432,7 +1432,8 @@ def _escaneo_cancelar(tid):
     return True
 
 
-def _enlaces_extraer(url, on_progreso=None, hosters_permitidos=None, episodios_permitidos=None):
+def _enlaces_extraer(url, on_progreso=None, hosters_permitidos=None,
+                     episodios_permitidos=None, guardar_cache=True):
     """(síncrono) Lista los enlaces de descarga de una página de juego
     (zona-leros.com, pivigames.blog o karanpc.com). Usa el Chrome real del usuario para
     pasar Cloudflare; el resultado se guarda en caché 12 horas (la
@@ -1466,7 +1467,11 @@ def _enlaces_extraer(url, on_progreso=None, hosters_permitidos=None, episodios_p
         # solo se cachea si salió al menos un enlace (una extracción vacía
         # no merece quedar guardada) y el resultado no quedó incompleto
         # (las series parciales se reintentan para completar episodios)
-        if (not resultado.get("error") and not resultado.get("incompleto")
+        # El reintento automático pasa guardar_cache=False: su resultado
+        # cubre SOLO los episodios fallidos y pisa la caché de la serie.
+        if (guardar_cache
+                and not resultado.get("error")
+                and not resultado.get("incompleto")
                 and any(s.get("enlaces")
                         for s in resultado.get("servidores", []))):
             _ENLACES_CACHE[url] = (time.time(), resultado)
@@ -1483,6 +1488,17 @@ def _filtrar_servidores(resultados, servidores_seleccionados=None):
     if not permitidos:
         return resultados
     return [s for s in resultados if (s.get("hoster") or "").lower() in permitidos]
+
+
+def _label_de_url_episodio(url):
+    """Etiqueta legible de una URL de episodio para el reporte de fallidos:
+    .../ataque-a-los-titanes-4-2 -> "4x2" (de los dos últimos números del
+    slug); si no tiene ese formato, el último segmento de la URL."""
+    slug = (url or "").rstrip("/").rsplit("/", 1)[-1]
+    m = re.search(r"-(\d{1,2})-(\d{1,3})$", slug)
+    if m:
+        return "%dx%d" % (int(m.group(1)), int(m.group(2)))
+    return slug or (url or "?")
 
 
 def _enlaces_lanzar(url, urls_seleccionadas=None, servidores_seleccionados=None):
@@ -1537,6 +1553,7 @@ def _enlaces_lanzar(url, urls_seleccionadas=None, servidores_seleccionados=None)
             urls = _ENLACES_TAREAS[tid].get("urls_seleccionadas") or []
             if urls:
                 resultados = []
+                fallidos = []
                 total = len(urls)
                 for i, una_url in enumerate(urls):
                     r = _enlaces_extraer(
@@ -1544,16 +1561,59 @@ def _enlaces_lanzar(url, urls_seleccionadas=None, servidores_seleccionados=None)
                         hosters_permitidos=_ENLACES_TAREAS[tid].get("servidores_seleccionados"))
                     if r.get("servidores"):
                         resultados.extend(r["servidores"])
-                    _progreso(resultados, i + 1, total, r.get("titulo") or "")
+                    else:
+                        # sin este reporte, los episodios que fallan en la
+                        # selección desaparecen sin aviso (no se puede
+                        # reintentarlos desde el panel)
+                        fallidos.append({
+                            "label": _label_de_url_episodio(una_url),
+                            "url": una_url,
+                            "error": r.get("error") or "sin enlaces de descarga"})
+                    _progreso(resultados, i + 1, total,
+                              r.get("titulo") or "", fallidos)
                 # coincidencia EXACTA por hoster real (para que "Mega" no
                 # arrastre "MegaUp"). hoster lo pone zonaleros_copia.
                 resultados = _filtrar_servidores(
                     resultados, _ENLACES_TAREAS[tid].get("servidores_seleccionados"))
-                _ENLACES_TAREAS[tid]["resultado"] = {"servidores": resultados, "titulo": "Selección de enlaces",
-                                                        "seleccion": True}
+                resultado_sel = {"servidores": resultados, "titulo": "Selección de enlaces",
+                                 "seleccion": True}
+                if fallidos:
+                    resultado_sel["episodios_fallidos"] = fallidos
+                    resultado_sel["incompleto"] = True
+                _ENLACES_TAREAS[tid]["resultado"] = resultado_sel
             else:
-                _ENLACES_TAREAS[tid]["resultado"] = _enlaces_extraer(
-                    url, on_progreso=_progreso)
+                resultado = _enlaces_extraer(url, on_progreso=_progreso)
+                # Reintento automático (UNA pasada): los episodios que
+                # quedaron como fallidos se re-extraen en paralelo sobre la
+                # misma página de la serie antes de entregar el resultado.
+                # La mayoría de los fallos son transitorios (Cloudflare,
+                # navegación) y con la segunda pasada pasan; los que siguen
+                # fallando quedan en el banner con el botón manual.
+                fallos = (resultado.get("episodios_fallidos") or []) \
+                    if isinstance(resultado, dict) else []
+                if fallos:
+                    urls_fallidas = [f.get("url") for f in fallos if f.get("url")]
+                    _log_servidor("reintento automático de %d episodios caídos"
+                                  % len(urls_fallidas))
+                    reintento = _enlaces_extraer(
+                        url, on_progreso=None,
+                        episodios_permitidos=urls_fallidas,
+                        guardar_cache=False)
+                    if reintento.get("servidores"):
+                        resultado = dict(resultado)
+                        resultado["servidores"] = (
+                            (resultado.get("servidores") or [])
+                            + reintento["servidores"])
+                        siguen = {f.get("url") for f in
+                                  (reintento.get("episodios_fallidos") or [])}
+                        quedan = [f for f in fallos if f.get("url") in siguen]
+                        if quedan:
+                            resultado["episodios_fallidos"] = quedan
+                            resultado["incompleto"] = True
+                        else:
+                            resultado.pop("episodios_fallidos", None)
+                            resultado.pop("incompleto", None)
+                _ENLACES_TAREAS[tid]["resultado"] = resultado
             # Serie resuelta completa: registrar los hosters detectados en el
             # catálogo (por URL de su página) para que los próximos escaneos
             # ofrezcan en el panel solo los servidores que usa ESTA serie.
