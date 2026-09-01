@@ -3556,6 +3556,14 @@ class Manejador(BaseHTTPRequestHandler):
             self._json(_catalogo().estado_publico())
         elif ruta == "/api/catalogo/pausar":
             _catalogo().pausar()
+        elif ruta == "/api/catalogo/rescatar":
+            # rescate sin re-escanear: descartados → pendiente (la próxima
+            # reanudación los procesa primero, por prioridad de categoría)
+            n = _catalogo().rescatar_descartados()
+            d = _catalogo().estado_publico()
+            d["rescatados"] = n
+            d["carpeta"] = CATALOGO_CARPETA
+            self._json(d)
             d = _catalogo().estado_publico()
             d["carpeta"] = CATALOGO_CARPETA
             self._json(d)

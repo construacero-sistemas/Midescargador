@@ -207,6 +207,26 @@ class Catalogo:
             return it.get("reintentos", 0) < tope
         return False
 
+    def rescatar_descartados(self):
+        """Devuelve los ítems descartados a la cola (pendiente, sin
+        reintentos). NO re-escanea índices: solo re-encola lo ya conocido.
+        Se puede llamar con el catálogo corriendo — los rescatados entran en
+        la próxima reanudación; si está detenido, con Reanudar arrancan.
+        Devuelve cuántos rescató."""
+        with self._lock:
+            n = 0
+            for it in self._progreso["items"].values():
+                if it.get("estado") == "descartado":
+                    it["estado"] = "pendiente"
+                    it["reintentos"] = 0
+                    it.pop("error", None)
+                    n += 1
+            if n:
+                self._guardar()
+        if n:
+            _log("rescate: %d ítems descartados vuelven a la cola" % n)
+        return n
+
     def corriendo(self):
         return self._hilo is not None and self._hilo.is_alive()
 
@@ -235,6 +255,8 @@ class Catalogo:
             s = conteo("series")
             ep = conteo("series_ep")
             pend = sum(1 for it in items.values() if self._es_pendiente(it))
+            descartados = sum(1 for it in items.values()
+                              if it.get("estado") == "descartado")
             r = {
                 "estado": self._estado,
                 "juegos": j,
@@ -242,6 +264,7 @@ class Catalogo:
                 "series": {"total": s["total"], "hecho": s["hecho"],
                            "episodios": ep},
                 "pendientes": pend,
+                "descartados": descartados,
                 "estimado_seg": int(pend * self._t_media_item),
                 "ultimo_item": self._ultimo_item,
                 "ruta": self.root,

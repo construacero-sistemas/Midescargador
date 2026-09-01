@@ -159,6 +159,44 @@ class ErrorTransitorioTests(CatalogoBase):
         self.assertEqual(b["estado"], "hecho")   # los hechos no se tocan
 
 
+class RescatarDescartadosTests(CatalogoBase):
+    def _preparar(self):
+        with self.cat._lock:
+            self.cat._progreso["items"] = {
+                "https://x/juegos/a": {"cat": "juegos", "estado": "descartado",
+                                     "reintentos": 2, "error": "sin botones",
+                                     "carpeta": "c/a"},
+                "https://x/juegos/b": {"cat": "juegos", "estado": "hecho",
+                                     "reintentos": 0, "carpeta": "c/b"},
+                "https://x/juegos/c": {"cat": "juegos", "estado": "error",
+                                     "reintentos": 1, "error": "socket",
+                                     "carpeta": "c/c"},
+            }
+
+    def test_rescata_solo_los_descartados(self):
+        self._preparar()
+        n = self.cat.rescatar_descartados()
+        self.assertEqual(n, 1)
+        with self.cat._lock:
+            items = self.cat._progreso["items"]
+        self.assertEqual(items["https://x/juegos/a"]["estado"], "pendiente")
+        self.assertEqual(items["https://x/juegos/a"]["reintentos"], 0)
+        self.assertNotIn("error", items["https://x/juegos/a"])
+        self.assertEqual(items["https://x/juegos/b"]["estado"], "hecho")
+        self.assertEqual(items["https://x/juegos/c"]["estado"], "error")
+
+    def test_segunda_pasada_rescata_cero(self):
+        self._preparar()
+        self.assertEqual(self.cat.rescatar_descartados(), 1)
+        self.assertEqual(self.cat.rescatar_descartados(), 0)
+
+    def test_estado_publico_cuenta_descartados(self):
+        self._preparar()
+        self.assertEqual(self.cat.estado_publico()["descartados"], 1)
+        self.cat.rescatar_descartados()
+        self.assertEqual(self.cat.estado_publico()["descartados"], 0)
+
+
 class AgregarItemsTests(CatalogoBase):
     def test_agrega_sin_duplicados(self):
         n1 = self.cat._agregar_items("series", ["https://zona-leros.com/series/ataque-a-los-titanes"])

@@ -3191,6 +3191,10 @@
       "catalogo.series": "Series",
       "catalogo.episodios": "Episodios",
       "catalogo.pendientes": "Pendientes",
+      "catalogo.descartados": "Descartados",
+      "catalogo.rescatar": "Rescatar {n} descartados",
+      "catalogo.rescatar.title": "Los devuelve a la cola como pendientes, sin re-escanear el sitio. Con Reanudar se procesan primero (por prioridad).",
+      "catalogo.rescatados.msg": "{n} ítems descartados vuelven a la cola. Pulsa Reanudar para procesarlos.",
       "catalogo.ultimo": "\u00daltimo",
       "catalogo.carpeta.label": "Carpeta destino",
       "catalogo.carpeta.guardar": "Guardar carpeta",
@@ -3487,6 +3491,10 @@
       "catalogo.series": "Series",
       "catalogo.episodios": "Episodes",
       "catalogo.pendientes": "Pending",
+      "catalogo.descartados": "Discarded",
+      "catalogo.rescatar": "Rescue {n} discarded",
+      "catalogo.rescatar.title": "Puts them back in the queue as pending, without re-scanning the site. Resuming processes them first (by priority).",
+      "catalogo.rescatados.msg": "{n} discarded items are back in the queue. Press Resume to process them.",
       "catalogo.ultimo": "Last",
       "catalogo.carpeta.label": "Destination folder",
       "catalogo.carpeta.guardar": "Save folder",
@@ -4787,7 +4795,13 @@
         <div class="catalogo-stat"><div class="k">${t("catalogo.series")}</div><div class="v">${s.hecho || 0} / ${s.total || 0}</div></div>
         <div class="catalogo-stat"><div class="k">${t("catalogo.episodios")}</div><div class="v">${ep.hecho || 0} / ${ep.total || 0}</div></div>
         <div class="catalogo-stat"><div class="k">${t("catalogo.pendientes")}</div><div class="v">${d.pendientes || 0}</div></div>
+        <div class="catalogo-stat"><div class="k">${t("catalogo.descartados")}</div><div class="v">${d.descartados || 0}</div></div>
       </div>
+      ${(d.descartados || 0) > 0 ? `
+      <button class="btn btn-ghost btn-sm" style="margin-top:8px;" onclick="rescatarDescartados()" title="${t("catalogo.rescatar.title")}">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+        <span>${t("catalogo.rescatar", { n: d.descartados || 0 })}</span>
+      </button>` : ""}
       ${d.ultimo_item ? `<div class="catalogo-ultimo">${t("catalogo.ultimo")}: ${escapeHtml(d.ultimo_item)}</div>` : ""}
     `;
     const pre = $("#catalogo-logs");
@@ -4825,6 +4839,26 @@
   $("#btn-catalogo-iniciar").onclick = () => _catalogoAccion("/api/catalogo/iniciar");
   $("#btn-catalogo-pausar").onclick = () => _catalogoAccion("/api/catalogo/pausar");
   $("#btn-catalogo-reanudar").onclick = () => _catalogoAccion("/api/catalogo/iniciar");
+
+  // Rescate de descartados sin re-escanear índices: los vuelve a poner
+  // pendientes; con el catálogo detenido, Reanudar los procesa primero
+  // (la cola ordena por prioridad de categoría).
+  async function rescatarDescartados() {
+    try {
+      const r = await fetch("/api/catalogo/rescatar", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}"
+      });
+      const d = await r.json();
+      if (!r.ok) { alert(t("error.generico", { msg: d.error || "" })); return; }
+      pintarCatalogo(d);
+      if (d.rescatados > 0) alert(t("catalogo.rescatados.msg", { n: d.rescatados }));
+    } catch (e) {
+      alert(t("error.generico", { msg: (e && e.message) || "" }));
+    }
+  }
+  window.rescatarDescartados = rescatarDescartados;   // onclick inline
 
   $("#btn-catalogo-carpeta").onclick = async () => {
     const inp = $("#catalogo-carpeta-input");
