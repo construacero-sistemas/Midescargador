@@ -33,6 +33,19 @@ _PESTANAS = 3            # pestanas que procesan items a la vez
 _MAX_PAGINA = 300
 _MAX_REINTENTOS = 3      # reintentos antes de descartar un item que falla
 
+# Orden en que la cola procesa categorías: los episodios (baratos, muchos) y
+# las series primero, los juegos (el grueso) al final. Antes la cola era el
+# orden de inserción y miles de juegos dejaban películas/series sin tocar
+# durante días.
+_PRIORIDAD_COLA = {"series_ep": 0, "series": 1, "peliculas": 2, "juegos": 3}
+
+# Bitácora persistente: además de la memoria, cada línea se agrega a
+# <root>/catalogo.log para que el registro sobreviva reinicios de la app
+# (antes era solo en memoria y el panel mostraba "no hay registros" tras
+# abrir de nuevo).
+_RUTA_LOG = None
+_RUTA_LOG_MAX = 1_000_000   # recorte del log en disco (bytes)
+
 
 def _sanitizar(nombre):
     """Nombre de carpeta valido en Windows."""
@@ -75,12 +88,23 @@ _BITACORA_LOCK = threading.Lock()
 _MAX_BITACORA = 500
 
 def _log(mensaje):
-    """Registro en memoria del catalogo; el backend lo vuelca a disco."""
+    """Registro en memoria + append a catalogo.log (si ya hay carpeta)."""
     linea = "[%s] %s" % (time.strftime("%H:%M:%S"), mensaje)
     with _BITACORA_LOCK:
         _BITACORA.append(linea)
         if len(_BITACORA) > _MAX_BITACORA:
             del _BITACORA[:len(_BITACORA) - _MAX_BITACORA]
+    try:
+        if _RUTA_LOG:
+            if os.path.exists(_RUTA_LOG) and \
+                    os.path.getsize(_RUTA_LOG) > _RUTA_LOG_MAX:
+                with open(_RUTA_LOG, "w", encoding="utf-8") as f:
+                    f.write(linea + "\n")
+            else:
+                with open(_RUTA_LOG, "a", encoding="utf-8") as f:
+                    f.write(linea + "\n")
+    except Exception:
+        pass   # el log en disco es lo de menos
     return linea
 
 class Catalogo:
@@ -94,6 +118,8 @@ class Catalogo:
         self._estado = "inactivo"  # inactivo|enumerando|procesando|pausado|terminado|error
         self._ultimo_item = ""
         self._t_media_item = 60.0  # media movil de segundos por item (estimar)
+        global _RUTA_LOG
+        _RUTA_LOG = os.path.join(root, "catalogo.log")
         self._cargar()
 
     # ---------------- progreso / estado ----------------
@@ -107,6 +133,7 @@ class Catalogo:
             self._progreso = {"items": {}}
         self._progreso.setdefault("items", {})
         self._progreso.setdefault("hosters_serie", {})
+        self._progreso.setdefault("enumerado", {})
 
     # ---------------- hosters detectados por serie ----------------
     def registrar_hosters(self, url, hosters):
@@ -204,6 +231,12 @@ class Catalogo:
             return
         self._detener = False
         _log("iniciando catálogo")
+        if revisar:
+            # revisar re-recorre TODOS los índices: limpiar las marcas para
+            # que ninguna categoría se salte aunque ya estuviera enumerada
+            with self._lock:
+                self._progreso["enumerado"] = {}
+                self._guardar()
         self._hilo = threading.Thread(
             target=self._correr, kwargs={"revisar": bool(revisar)}, daemon=True)
         self._hilo.start()
@@ -223,8 +256,11 @@ class Catalogo:
             cdp = None
             try:
                 cdp = zc._Cdp(ws)
-                if revisar or not self._progreso.get("items"):
-                    self._enumerar(cdp)
+                # enumerar SIEMPRE las categorías que falten: antes solo se
+                # enumeraba si no había items, así que una corrida cortada a
+                # mitad (p. ej. antes de llegar a series) dejaba esa categoría
+                # en 0 para siempre aunque reanudaras mil veces.
+                self._enumerar(cdp, self._categorias_a_enumerar(revisar))
                 if not self._detener:
                     self._procesar(cdp, ws)
             finally:
@@ -234,8 +270,9 @@ class Catalogo:
                     except Exception:
                         pass
                 zc._finalizar()
-        except Exception:
+        except Exception as e:
             self._estado = "error"
+            _log("ERROR: %s: %s" % (type(e).__name__, e))
             self._guardar()
             return
         if self._detener:
@@ -247,13 +284,28 @@ class Catalogo:
         self._guardar()
 
     # ---------------- enumeracion del catalogo ----------------
-    def _enumerar(self, cdp):
-        for cat in CATEGORIAS:
+    def _categorias_a_enumerar(self, revisar=False):
+        """Categorías cuyo índice falta recorrer: las ya marcadas como
+        enumeradas se saltan (reanudar es barato); con revisar=True se
+        re-recorren todas. La marca se guarda en progreso.json."""
+        if revisar:
+            return list(CATEGORIAS)
+        with self._lock:
+            hechos = self._progreso.get("enumerado") or {}
+            faltantes = [c for c in CATEGORIAS if not hechos.get(c)]
+        # las categorías que interesan primero: si una corrida anterior quedó
+        # cortada, series se enumera antes que re-escanear todo el índice de
+        # juegos
+        return sorted(faltantes, key=lambda c: _PRIORIDAD_COLA.get(c, 9))
+
+    def _enumerar(self, cdp, categorias=None):
+        for cat in (categorias or list(CATEGORIAS)):
             if self._detener:
                 break
             base = INDICES[cat]
             pagina = 1
             sin_nuevos = 0
+            completa = False
             while pagina <= _MAX_PAGINA:
                 if self._detener:
                     break
@@ -265,6 +317,7 @@ class Catalogo:
                         tiempo_max=60):
                     sin_nuevos += 1
                     if sin_nuevos >= 2:
+                        completa = True   # el índice se acabó (no hay más páginas)
                         break
                     pagina += 1
                     continue
@@ -280,11 +333,19 @@ class Catalogo:
                 if not enlaces or nuevos == 0:
                     sin_nuevos += 1
                     if sin_nuevos >= 2:
+                        completa = True   # dos páginas sin items nuevos: fin
                         break
                 else:
                     sin_nuevos = 0
                 pagina += 1
                 time.sleep(1)   # ritmo suave en los indices
+            if completa and not self._detener:
+                # solo se marca la categoría COMPLETA (recorrió su índice
+                # entero sin pausa): una pausa a mitad vuelve a enumerarla
+                with self._lock:
+                    self._progreso.setdefault("enumerado", {})[cat] = True
+                    self._guardar()
+                _log("enumeración de %s completa" % cat)
 
     def _agregar_items(self, cat, enlaces):
         nuevos = 0
@@ -307,10 +368,8 @@ class Catalogo:
         pestanas = zc._crear_pestanas(_PESTANAS)
         conexiones = [(ws_maestro, None)] + pestanas
         q = queue.Queue()
-        with self._lock:
-            for u, it in self._progreso["items"].items():
-                if self._es_pendiente(it):
-                    q.put(u)
+        for u in self._pendientes_ordenados():
+            q.put(u)
         hilos = []
         for ws_url, tid in conexiones:
             h = threading.Thread(target=self._trabajador,
@@ -327,6 +386,20 @@ class Catalogo:
             except queue.Empty:
                 break
             self._procesar_uno(cdp, u, q)
+
+    def _pendientes_ordenados(self):
+        """URLs pendientes ordenadas por prioridad de categoría: episodios →
+        series → películas → juegos. Antes era el orden de inserción y el
+        grueso de juegos ahogaba el resto."""
+        with self._lock:
+            pend = [u for u, it in self._progreso["items"].items()
+                    if self._es_pendiente(it)]
+
+            def prioridad(u):
+                it = self._progreso["items"].get(u) or {}
+                return _PRIORIDAD_COLA.get(it.get("cat"), 9)
+
+        return sorted(pend, key=prioridad)
 
     def _trabajador(self, ws_url, target_id, q):
         cdp = None
