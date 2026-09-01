@@ -31,7 +31,31 @@ INDICES = {
 }
 _PESTANAS = 3            # pestanas que procesan items a la vez
 _MAX_PAGINA = 300
-_MAX_REINTENTOS = 3      # reintentos antes de descartar un item que falla
+# Reintentos ANTES de descartar un item, según el tipo de fallo: un error
+# transitorio (Cloudflare, conexión CDP cortada) insiste más; un error
+# permanente (la página cargó bien y no tiene botones) insiste poco, porque
+# repetir idéntico solo quema tiempo (~2.5 min de espera por intento).
+_MAX_REINTENTOS = 2                    # permanentes
+_MAX_REINTENTOS_TRANSITORIOS = 5      # transitorios
+
+_PATRON_ESPERA_CLOUDFLARE = re.compile(
+    r"un momento|just a moment|verificando|attention required|"
+    r"security check|checking your browser", re.I)
+
+
+def _es_error_transitorio(error):
+    """True si el fallo parece del entorno (Cloudflare, conexión CDP cortada,
+    página que no abrió): vale la pena insistir varias veces. False si la
+    página cargó bien pero no tiene lo que buscamos: reintentar idéntico
+    rara vez cambia el resultado."""
+    e = (error or "").strip().lower()
+    if not e:
+        return True   # sin datos: asumir transitorio y reintentar
+    if e.startswith("sin botones"):
+        return False
+    if e.startswith("sin episodios"):
+        return False
+    return True
 
 # Orden en que la cola procesa categorías: los episodios (baratos, muchos) y
 # las series primero, los juegos (el grueso) al final. Antes la cola era el
@@ -177,7 +201,10 @@ class Catalogo:
         if st == "pendiente":
             return True
         if st == "error":
-            return it.get("reintentos", 0) < _MAX_REINTENTOS
+            tope = (_MAX_REINTENTOS_TRANSITORIOS
+                    if _es_error_transitorio(it.get("error"))
+                    else _MAX_REINTENTOS)
+            return it.get("reintentos", 0) < tope
         return False
 
     def corriendo(self):
@@ -233,10 +260,23 @@ class Catalogo:
         _log("iniciando catálogo")
         if revisar:
             # revisar re-recorre TODOS los índices: limpiar las marcas para
-            # que ninguna categoría se salte aunque ya estuviera enumerada
+            # que ninguna categoría se salte aunque ya estuviera enumerada.
+            # Además devuelve los DESCARTADOS a la cola: es la palanca para
+            # recuperar ítems que fallaron 2+ veces (p. ej. los juegos que
+            # Cloudflare no dejó procesar en corridas anteriores).
             with self._lock:
                 self._progreso["enumerado"] = {}
+                reseteados = 0
+                for it in self._progreso["items"].values():
+                    if it.get("estado") == "descartado":
+                        it["estado"] = "pendiente"
+                        it["reintentos"] = 0
+                        it.pop("error", None)
+                        reseteados += 1
                 self._guardar()
+            if reseteados:
+                _log("revisar: %d ítems descartados vuelven a la cola"
+                     % reseteados)
         self._hilo = threading.Thread(
             target=self._correr, kwargs={"revisar": bool(revisar)}, daemon=True)
         self._hilo.start()
@@ -460,11 +500,28 @@ class Catalogo:
                 it["estado"] = "error"
                 it["reintentos"] = it.get("reintentos", 0) + 1
                 it["error"] = (error or "")[:200]
-                _log("error (%d/%d): %s" % (it["reintentos"], _MAX_REINTENTOS, error))
-                if it["reintentos"] >= _MAX_REINTENTOS:
+                tope = (_MAX_REINTENTOS_TRANSITORIOS
+                        if _es_error_transitorio(error) else _MAX_REINTENTOS)
+                _log("error (%d/%d): %s" % (it["reintentos"], tope, error))
+                if it["reintentos"] >= tope:
                     it["estado"] = "descartado"
             self._ultimo_item = url
             self._guardar()
+
+    def _motivo_sin_botones(self, cdp):
+        """Por qué la página terminó sin botones de descarga: si el título
+        sigue en el reto de Cloudflare el fallo es del entorno (transitorio,
+        vale reintentar); si la página cargó de verdad y no tiene botones, es
+        permanente y conviene registrar el título para diagnosticarlo."""
+        try:
+            titulo = (cdp.eval("document.title") or "").strip()
+        except Exception:
+            titulo = ""
+        if _PATRON_ESPERA_CLOUDFLARE.search(titulo):
+            return "cloudflare no dejó cargar la página (espera agotada)"
+        if titulo:
+            return "sin botones de descarga (página cargada: %s)" % titulo[:80]
+        return "sin botones de descarga"
 
     # ---------------- ficha de un juego / pelicula ----------------
     def _extraer_ficha(self, cdp, url, cat, carpeta):
@@ -478,7 +535,7 @@ class Catalogo:
             time.sleep(3)
         if not cdp.eval(
                 "document.querySelectorAll('a[id=\"download-link\"]').length > 0"):
-            return "", "sin botones de descarga"
+            return "", self._motivo_sin_botones(cdp)
         datos = self._scrape_ficha(cdp, "games_tumbl|movies_tumbl")
         datos["_portada_bytes"] = self._portada_bytes(cdp, datos.get("portada"))
         botones = zc._extraer_botones(cdp) or []
@@ -516,7 +573,7 @@ class Catalogo:
             time.sleep(3)
         if not cdp.eval(
                 "document.querySelectorAll('a[href*=\"anomizador\"]').length > 0"):
-            return "", "sin botones de descarga"
+            return "", self._motivo_sin_botones(cdp)
         datos = self._scrape_ficha(cdp, "episodes_tumbl")
         datos["_portada_bytes"] = self._portada_bytes(cdp, datos.get("portada"))
         label = (datos.get("titulo") or os.path.basename(carpeta)
@@ -554,6 +611,10 @@ class Catalogo:
             time.sleep(3)
         episodios = zc._extraer_episodios(cdp) or []
         if not episodios:
+            # distinguir: ¿Cloudflare no dejó cargar o la serie no lista episodios?
+            titulo = (cdp.eval("document.title") or "").strip()
+            if _PATRON_ESPERA_CLOUDFLARE.search(titulo):
+                return "", "cloudflare no dejó cargar la página de la serie", []
             return "", "sin episodios", []
         datos = self._scrape_ficha(cdp, "series_tumbl")
         titulo = (datos.get("titulo") or os.path.basename(carpeta)

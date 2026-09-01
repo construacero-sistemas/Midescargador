@@ -51,7 +51,6 @@ class CategoriasAEnumerarTests(CatalogoBase):
             self.assertEqual(self.cat._progreso.get("enumerado"), {})
 
     def test_marca_se_persiste_en_progreso_json(self):
-        self.cat._enumerar_marca_manual = True
         with self.cat._lock:
             self.cat._progreso.setdefault("enumerado", {})["series"] = True
             self.cat._guardar()
@@ -92,12 +91,72 @@ class PendientesOrdenadosTests(CatalogoBase):
         self.assertEqual(self.cat._pendientes_ordenados(), ["https://x/juegos/a"])
 
     def test_descartados_no_vuelven(self):
-        self._agregar([("https://x/juegos/a", "juegos")])
+        self._agregar([("https://x/juegos/a", "juegos"),
+                       ("https://x/juegos/b", "juegos")])
         with self.cat._lock:
+            # permanente agotado (2 reintentos)
             it = self.cat._progreso["items"]["https://x/juegos/a"]
             it["estado"] = "error"
             it["reintentos"] = catalogo._MAX_REINTENTOS
-        self.assertEqual(self.cat._pendientes_ordenados(), [])
+            it["error"] = "sin botones de descarga (página cargada: Juego X)"
+            # transitorio agotado (5 reintentos)
+            it2 = self.cat._progreso["items"]["https://x/juegos/b"]
+            it2["estado"] = "error"
+            it2["reintentos"] = catalogo._MAX_REINTENTOS_TRANSITORIOS
+            it2["error"] = "cloudflare no dejó cargar la página (espera agotada)"
+        self.assertEqual(self.cat._pendientes_ordenados(), []
+                         )
+
+    def test_transitorio_insiste_mas_que_permanente(self):
+        self._agregar([("https://x/juegos/a", "juegos"),
+                       ("https://x/juegos/b", "juegos")])
+        with self.cat._lock:
+            a = self.cat._progreso["items"]["https://x/juegos/a"]
+            b = self.cat._progreso["items"]["https://x/juegos/b"]
+            a["estado"] = b["estado"] = "error"
+            a["reintentos"] = b["reintentos"] = catalogo._MAX_REINTENTOS
+            a["error"] = "sin botones de descarga (página cargada: X)"
+            b["error"] = "error interno: socket is already closed."
+        pendientes = self.cat._pendientes_ordenados()
+        # el permanente ya se descartó (2/2); el transitorio sigue (2/5)
+        self.assertEqual(pendientes, ["https://x/juegos/b"])
+
+
+class ErrorTransitorioTests(CatalogoBase):
+    def test_entorno_es_transitorio(self):
+        for err in ("cloudflare no dejó cargar la página (espera agotada)",
+                    "no se pudo abrir la pagina",
+                    "error interno: socket is already closed.",
+                    "error interno: [WinError 10053] Se ha anulado una conexión",
+                    ""):
+            self.assertTrue(catalogo._es_error_transitorio(err), err)
+
+    def test_pagina_cargada_sin_botones_es_permanente(self):
+        for err in ("sin botones de descarga",
+                    "sin botones de descarga (página cargada: Juego X)",
+                    "sin episodios"):
+            self.assertFalse(catalogo._es_error_transitorio(err), err)
+
+    def test_revisar_rescata_descartados(self):
+        with self.cat._lock:
+            self.cat._progreso["items"]["https://x/juegos/a"] = {
+                "cat": "juegos", "estado": "descartado", "reintentos": 2,
+                "error": "sin botones de descarga",
+                "carpeta": os.path.join(self.tmp, "juegos", "a"),
+            }
+            self.cat._progreso["items"]["https://x/juegos/b"] = {
+                "cat": "juegos", "estado": "hecho", "reintentos": 0,
+                "carpeta": os.path.join(self.tmp, "juegos", "b"),
+            }
+        self.cat.iniciar(revisar=True)
+        self.cat.pausar()   # no dejar el hilo trabajando
+        with self.cat._lock:
+            a = self.cat._progreso["items"]["https://x/juegos/a"]
+            b = self.cat._progreso["items"]["https://x/juegos/b"]
+        self.assertEqual(a["estado"], "pendiente")
+        self.assertEqual(a["reintentos"], 0)
+        self.assertNotIn("error", a)
+        self.assertEqual(b["estado"], "hecho")   # los hechos no se tocan
 
 
 class AgregarItemsTests(CatalogoBase):
