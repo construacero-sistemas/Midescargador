@@ -66,6 +66,17 @@ class ServidorApiTests(unittest.TestCase):
         self.assertEqual(estado, 401)
         self.assertEqual(datos, {"error": "no autorizado"})
 
+    def test_api_sesion_no_rompe_por_ensombrecimiento(self):
+        # regresión: la rama /api/drive/oauth asignaba una local "cuenta" que
+        # ensombrecía el módulo global y volaba /api/sesion con
+        # UnboundLocalError en TODA _api_get (errores.log 2026-09-01)
+        estado, datos = self._pedir(
+            "GET", "/api/sesion", {"X-MiDescargador-Token": servidor.TOKEN_API})
+        self.assertEqual(estado, 200)
+        self.assertIsInstance(datos, dict)
+        self.assertIn("youtube", datos)
+        self.assertIn("tiktok", datos)
+
     def test_drive_oauth_acepta_host_local_sin_token(self):
         # con un code falso el intercambio falla, pero la respuesta NUNCA
         # es 401: el check de host pasó y se llegó al handler real

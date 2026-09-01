@@ -3218,6 +3218,8 @@
       "enlaces.recomendado": "★ Recomendado",
       "enlaces.recomendado.title": "Servidor recomendado",
       "enlaces.descargar_todo": "Descargar todo {servidor} ({n})",
+      "enlaces.descargar_temporada": "Descargar toda la temporada ({n})",
+      "enlaces.n_episodios": "{n} episodios de esta serie",
       "enlaces.parte": "Parte {n}",
       "enlaces.parte_de": "Parte {n} de {total}",
       "enlaces.archivo": "Archivo {n}",
@@ -3518,6 +3520,8 @@
       "enlaces.recomendado": "★ Recommended",
       "enlaces.recomendado.title": "Recommended server",
       "enlaces.descargar_todo": "Download all {servidor} ({n})",
+      "enlaces.descargar_temporada": "Download entire season ({n})",
+      "enlaces.n_episodios": "{n} episodes of this series",
       "enlaces.parte": "Part {n}",
       "enlaces.parte_de": "Part {n} of {total}",
       "enlaces.archivo": "File {n}",
@@ -4265,24 +4269,14 @@
     return { nombre: n.substring(0, idx).trim(), detalle: n.substring(idx + sep.length).trim() };
   }
 
-  // Extrae el marcador de episodio (2x05, S02E05) del label de un grupo de
-  // servidores, para que los chips del filtro distingan "MediaFire · 2x1" de
-  // "MediaFire · 2x2" en vez de repetir "MediaFire 1" idénticos.
-  function episodioDeServidor(nombreServidor) {
-    const n = nombreServidor || "";
-    let m = n.match(/S(\d{1,2})\s*[\u00b7x\-]?\s*E(\d{1,3})/i);
-    if (m) return "S" + m[1].padStart(2, "0") + "E" + m[2].padStart(2, "0");
-    m = n.match(/\b(\d{1,2})x(\d{1,3})\b/i);
-    if (m) return m[1] + "x" + String(m[2]).padStart(2, "0");
-    return "";
-  }
-
   function getHosterMeta(nombreServidor) {
     const s = (nombreServidor || "").toLowerCase();
     if (s.includes("mediafire")) return { color: "#3b82f6", bg: "rgba(59, 130, 246, 0.14)", border: "rgba(59, 130, 246, 0.35)", label: "MediaFire" };
+    // "megaup" ANTES que "mega": si no, MegaUp matchea el includes("mega")
+    // y sale con el color/etiqueta de Mega.nz
+    if (s.includes("megaup")) return { color: "#f59e0b", bg: "rgba(245, 158, 11, 0.14)", border: "rgba(245, 158, 11, 0.35)", label: "MegaUp" };
     if (s.includes("mega")) return { color: "#ef4444", bg: "rgba(239, 68, 68, 0.14)", border: "rgba(239, 68, 68, 0.35)", label: "Mega.nz" };
     if (s.includes("rootz")) return { color: "#06b6d4", bg: "rgba(6, 182, 212, 0.14)", border: "rgba(6, 182, 212, 0.35)", label: "Rootz" };
-    if (s.includes("megaup")) return { color: "#f59e0b", bg: "rgba(245, 158, 11, 0.14)", border: "rgba(245, 158, 11, 0.35)", label: "MegaUp" };
     if (s.includes("transfer")) return { color: "#8b5cf6", bg: "rgba(139, 92, 246, 0.14)", border: "rgba(139, 92, 246, 0.35)", label: "Transfer" };
     if (s.includes("gofile")) return { color: "#10b981", bg: "rgba(16, 185, 129, 0.14)", border: "rgba(16, 185, 129, 0.35)", label: "GoFile" };
     if (s.includes("1fichier")) return { color: "#f97316", bg: "rgba(249, 115, 22, 0.14)", border: "rgba(249, 115, 22, 0.35)", label: "1Fichier" };
@@ -4377,11 +4371,39 @@
     return "zonaleros";
   }
 
+  // Agrupa los grupos de servidores por hoster: en series el extractor trae
+  // un grupo por episodio ("MediaFire · 4x03", "MediaFire · 4x04", ...) y
+  // agrupar permite una sola tarjeta por servidor con un botón que encola
+  // TODA la temporada de ese hoster. Es pura para reutilizarla al encolar.
+  function agruparPorHoster(servidores) {
+    const grupos = [];
+    const porClave = new Map();
+    (servidores || []).forEach((s) => {
+      const ss = separarServidor(s.servidor);
+      const nombre = s.hoster || ss.nombre || getHosterMeta(s.servidor).label;
+      const clave = nombre.toLowerCase();
+      let g = porClave.get(clave);
+      if (!g) {
+        g = { clave, nombre, meta: getHosterMeta(nombre), idxs: [], enlaces: [], nGrupos: 0, multi: false };
+        porClave.set(clave, g);
+        grupos.push(g);
+      }
+      g.idxs.push(s.__idx);
+      g.nGrupos++;
+      g.multi = g.multi || !!s.es_multipartes;
+      (s.enlaces || []).forEach(e => g.enlaces.push(e));
+    });
+    return grupos;
+  }
+
   function renderizarPanelEnlaces() {
     const panel = $("#panel-enlaces");
     if (!datosEnlacesActuales) return;
     const d = datosEnlacesActuales;
-    const servidores = d.servidores || [];
+    // copias con __idx: los botones por enlace y "verificar" siguen
+    // operando sobre datosEnlacesActuales.servidores, no sobre los grupos
+    // combinados por hoster
+    const servidores = (d.servidores || []).map((s, i) => Object.assign({}, s, { __idx: i }));
 
     if (!servidores.length) {
       panel.innerHTML = `<div class="error-banner">${t("enlaces.sin.servidores")}</div>`;
@@ -4411,6 +4433,10 @@
       });
     }
 
+    // grupos por hoster: una pestaña y una tarjeta por SERVIDOR (no una por
+    // episodio), con un solo botón que encola toda la temporada de ese hoster
+    const gruposHoster = agruparPorHoster(servidores);
+
     let html = `
       <div class="links-panel-header">
         ${bannerVivo}
@@ -4429,7 +4455,7 @@
         </div>
 
         <div style="display:flex; align-items:center; gap:8px;">
-          <span class="links-meta-badge">${servidores.length} ${t("enlaces.servidores")} (${resumenConteo})</span>
+          <span class="links-meta-badge">${gruposHoster.length} ${t("enlaces.servidores")} (${resumenConteo})</span>
           <button class="btn btn-ghost btn-sm" onclick="toggleExpandirTodos()" title="Expandir/Colapsar todo" style="font-size:11.5px;">
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="7 13 12 18 17 13"></polyline>
@@ -4458,22 +4484,20 @@
         </div>
       </div>
 
-      <!-- Quick Server Filter Tabs -->
+      <!-- Quick Server Filter Tabs (una pestaña por hoster) -->
       <div class="server-tabs-bar">
         <button class="server-tab-btn ${servidorFiltroActivo === 'todos' ? 'active' : ''}" onclick="filtrarServidor('todos')">
           <span>${t("enlaces.todos")}</span>
-          <span class="tab-count">${servidores.length}</span>
+          <span class="tab-count">${gruposHoster.length}</span>
         </button>
     `;
 
-    servidores.forEach((s, idx) => {
-      const meta = getHosterMeta(s.servidor);
-      const ep = episodioDeServidor(s.servidor);
-      const cant = s.enlaces ? s.enlaces.length : 0;
-      const isAct = servidorFiltroActivo === String(idx);
+    gruposHoster.forEach((g, gi) => {
+      const cant = g.enlaces.length;
+      const isAct = servidorFiltroActivo === String(gi);
       html += `
-        <button class="server-tab-btn ${isAct ? 'active' : ''}" onclick="filtrarServidor('${idx}')" style="${isAct ? `border-color:${meta.color}; color:${meta.color};` : ''}" title="${escapeHtml(s.servidor || meta.label)}">
-          <span>${escapeHtml(ep ? meta.label + " \u00b7 " + ep : meta.label)}</span>
+        <button class="server-tab-btn ${isAct ? 'active' : ''}" onclick="filtrarServidor('${gi}')" style="${isAct ? `border-color:${g.meta.color}; color:${g.meta.color};` : ''}" title="${escapeHtml(g.nombre)}">
+          <span>${escapeHtml(g.meta.label)}</span>
           <span class="tab-count">${cant}</span>
         </button>
       `;
@@ -4492,22 +4516,28 @@
       `;
     }
 
-    // Accordions
-    servidores.forEach((s, idx) => {
-      const meta = getHosterMeta(s.servidor);
-      const ss = separarServidor(s.servidor);
-      const nombreCorto = ss.nombre || meta.label;
-      const detalle = ss.detalle;
-      const enl = s.enlaces || [];
+    // Accordions: una tarjeta por hoster con TODOS sus episodios juntos y
+    // un solo botón "Descargar toda la temporada" que encola cada enlace
+    gruposHoster.forEach((g, gi) => {
+      const meta = g.meta;
+      const enl = g.enlaces;
       const cant = enl.length;
-      const esMulti = !!s.es_multipartes;
+      const esMulti = g.multi;
+      const esSerie = g.nGrupos > 1;
       const textoConteo = cant === 0 ? t('enlaces.sin_enlaces') : (cant === 1 ? t('enlaces.1_archivo') : (esMulti ? t('enlaces.n_partes', { n: cant }) : t('enlaces.n_archivos', { n: cant })));
-      const isHidden = (servidorFiltroActivo !== 'todos' && servidorFiltroActivo !== String(idx));
+      // detalle: el del grupo único, o cuántos episodios aporta el hoster
+      const detalle = esSerie
+        ? t("enlaces.n_episodios", { n: g.nGrupos })
+        : (separarServidor(servidores[g.idxs[0]] ? servidores[g.idxs[0]].servidor : g.nombre).detalle || "");
+      const etiquetaBoton = esSerie
+        ? t("enlaces.descargar_temporada", { n: cant })
+        : t("enlaces.descargar_todo", { servidor: meta.label, n: cant });
+      const isHidden = (servidorFiltroActivo !== 'todos' && servidorFiltroActivo !== String(gi));
       const isOpen = !isHidden;
 
       html += `
-        <div class="server-accordion ${isOpen ? 'open' : ''}" id="servidor-card-${idx}" style="${isHidden ? 'display:none;' : ''}; border-left: 3px solid ${meta.color};">
-          <div class="server-accordion-header" onclick="toggleServidor(${idx})">
+        <div class="server-accordion ${isOpen ? 'open' : ''}" id="servidor-card-${gi}" style="${isHidden ? 'display:none;' : ''}; border-left: 3px solid ${meta.color};">
+          <div class="server-accordion-header" onclick="toggleServidor(${gi})">
             <div class="server-header-info">
               <div class="server-header-title-row">
                 <span class="accordion-chevron">
@@ -4521,9 +4551,9 @@
                     <line x1="2" y1="12" x2="22" y2="12"></line>
                     <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
                   </svg>
-                  ${escapeHtml(nombreCorto)}
+                  ${escapeHtml(meta.label)}
                 </span>
-                ${esRecomendado(s.servidor) ? `<span class="recomendado-badge" title="${t("enlaces.recomendado.title")}">${t("enlaces.recomendado")}</span>` : ''}
+                ${esRecomendado(g.nombre) ? `<span class="recomendado-badge" title="${t("enlaces.recomendado.title")}">${t("enlaces.recomendado")}</span>` : ''}
                 <span class="server-parts-count">${textoConteo}</span>
               </div>
               ${detalle ? `<div class="server-name-detail" title="${escapeHtml(detalle)}">${escapeHtml(detalle)}</div>` : ''}
@@ -4531,13 +4561,13 @@
 
             <div class="server-header-right" onclick="event.stopPropagation();">
               ${cant > 0 ? `
-                <button class="btn-download-server" title="${t("enlaces.descargar_todo", { servidor: nombreCorto, n: cant })}" onclick="descargarServidorLote(${idx})">
+                <button class="btn-download-server" title="${escapeHtml(etiquetaBoton)}" onclick="descargarHosterLote(${gi})">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
                     <polyline points="7 10 12 15 17 10"></polyline>
                     <line x1="12" y1="15" x2="12" y2="3"></line>
                   </svg>
-                  <span>${t("enlaces.descargar_todo", { servidor: nombreCorto, n: cant })}</span>
+                  <span>${escapeHtml(etiquetaBoton)}</span>
                 </button>
               ` : ""}
             </div>
@@ -4547,7 +4577,8 @@
       `;
 
       if (!enl.length) {
-        html += `<div class="error-banner">${escapeHtml(s.error || t("enlaces.sin.servidor"))}</div>`;
+        const grupoVacio = servidores[g.idxs[0]];
+        html += `<div class="error-banner">${escapeHtml((grupoVacio && grupoVacio.error) || t("enlaces.sin.servidor"))}</div>`;
       } else if (vistaModoCompacto) {
         // Grid View
         html += `<div class="parts-grid">`;
@@ -4673,22 +4704,26 @@
   // anti-doble-clic: servidores/enlaces en proceso de encolado
   const encolando = new Set();
 
-  async function descargarServidorLote(servidorIdx) {
+  // Encola TODOS los enlaces de un hoster (una tarjeta agrupada): con un
+  // clic baja toda la temporada del servidor elegido, sin revisar tarjeta
+  // por tarjeta. grupoIdx es el índice dentro de agruparPorHoster(...).
+  async function descargarHosterLote(grupoIdx) {
     if (!datosEnlacesActuales || !datosEnlacesActuales.servidores) return;
-    const serv = datosEnlacesActuales.servidores[servidorIdx];
-    if (!serv || !serv.enlaces || !serv.enlaces.length) return;
-    const urls = serv.enlaces.map(e => (typeof e === 'string') ? e : e.url).filter(Boolean);
+    const grupos = agruparPorHoster(datosEnlacesActuales.servidores);
+    const g = grupos[grupoIdx];
+    if (!g || !g.enlaces.length) return;
+    const urls = g.enlaces.map(e => (typeof e === 'string') ? e : e.url).filter(Boolean);
     if (!urls.length) return;
-    if (encolando.has("lote:" + servidorIdx)) return; // ya se está encolando
-    encolando.add("lote:" + servidorIdx);
+    if (encolando.has("lote:" + grupoIdx)) return; // ya se está encolando
+    encolando.add("lote:" + grupoIdx);
 
     // feedback: deshabilitar el botón mientras se encola
-    const btn = document.querySelector(`#servidor-card-${servidorIdx} .btn-download-server`);
+    const btn = document.querySelector(`#servidor-card-${grupoIdx} .btn-download-server`);
     const original = btn ? btn.innerHTML : null;
     if (btn) {
       btn.disabled = true;
       btn.style.opacity = "0.6";
-      btn.innerHTML = `<span>${t("encolando", { servidor: escapeHtml(serv.servidor) })}</span>`;
+      btn.innerHTML = `<span>${t("encolando", { servidor: escapeHtml(g.nombre) })}</span>`;
     }
     try {
       const r = await fetch("/api/lote", {
@@ -4707,7 +4742,7 @@
         alert(t("error.encolar", { msg: d.error || t("error.desconocido") }));
       }
     } finally {
-      encolando.delete("lote:" + servidorIdx);
+      encolando.delete("lote:" + grupoIdx);
       if (btn) {
         btn.disabled = false;
         btn.style.opacity = "";

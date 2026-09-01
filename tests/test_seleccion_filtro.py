@@ -423,6 +423,26 @@ class TestConsolidarResultadosSerie(unittest.TestCase):
         self.assertFalse(incompleto)
         self.assertEqual(fallidos, [])
 
+    def test_episodio_nunca_procesado_se_reporta(self):
+        # regresión: si el presupuesto global se agotó antes de intentar un
+        # episodio, ese episodio no estaba en "resultados" y desaparecía del
+        # listado sin ningún aviso (el usuario veía capítulos que faltaban
+        # sin explicación)
+        episodios = [
+            {"label": "S04E01", "url": "https://example/1"},
+            {"label": "S04E02", "url": "https://example/2"},
+            {"label": "S04E03", "url": "https://example/3"},
+        ]
+        resultados = [
+            (0, [{"servidor": "MediaFire", "enlaces": [{"url": "u1"}]}], False, None),
+            (2, [{"servidor": "MediaFire", "enlaces": [{"url": "u3"}]}], False, None),
+        ]
+        servidores, incompleto, fallidos = zonaleros._consolidar_resultados_serie(
+            resultados, episodios)
+        self.assertTrue(incompleto)
+        self.assertEqual([x["label"] for x in fallidos], ["S04E02"])
+        self.assertIn("no se proces", fallidos[0]["error"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -3422,12 +3422,15 @@ class Manejador(BaseHTTPRequestHandler):
                           "</p></div></body></html>")
             else:
                 try:
-                    cuenta = drive.intercambiar_codigo(code)
+                    # "cuenta" es el módulo global (sesiones YouTube/TikTok):
+                    # no ensombrecerlo acá o /api/sesion rompe con
+                    # UnboundLocalError en toda _api_get.
+                    nombre_cuenta = drive.intercambiar_codigo(code)
                     cuerpo = ("<html><body style='font-family:sans-serif;"
                               "background:#111622;color:#e5e7eb;display:flex;"
                               "align-items:center;justify-content:center;height:100vh;'>"
                               "<div style='text-align:center'><h2>✓ Conectado: " +
-                              cuenta + "</h2><p>Ya podés cerrar esta pestaña.</p>"
+                              nombre_cuenta + "</h2><p>Ya podés cerrar esta pestaña.</p>"
                               "</div></body></html>")
                 except Exception as e:
                     cuerpo = ("<html><body style='font-family:sans-serif;"

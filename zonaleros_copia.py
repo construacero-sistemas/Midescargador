@@ -1251,6 +1251,7 @@ def _consolidar_resultados_serie(resultados, episodios):
     servidores vacíos. Es pura para poder probarla sin Chrome/CDP."""
     servidores = []
     episodios_fallidos = []
+    procesados = {item[0] for item in resultados}
     # si el presupuesto cortó antes de recorrerlos todos, va "incompleto"
     incompleto = len(resultados) < len(episodios)
     for item in sorted(resultados):
@@ -1267,6 +1268,15 @@ def _consolidar_resultados_serie(resultados, episodios):
                 "error": motivo or "sin enlaces de descarga"})
             incompleto = True
         incompleto = incompleto or inc
+    # episodios que el presupuesto NUNCA alcanzó a procesar: sin esto el
+    # usuario ve un listado con capítulos que faltan y ningún aviso de por qué
+    for i, ep in enumerate(episodios):
+        if i not in procesados:
+            episodios_fallidos.append({
+                "indice": i, "label": ep.get("label") or "?",
+                "url": ep.get("url") or "",
+                "error": "no se procesó (tiempo agotado)"})
+    episodios_fallidos.sort(key=lambda x: x.get("indice", 0))
     return servidores, incompleto, episodios_fallidos
 
 
