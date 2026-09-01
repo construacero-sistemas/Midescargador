@@ -6,7 +6,7 @@
 // sin ventana) para que las descargas continúen al encender la PC. Incluye
 // auto-actualización vía electron-updater (solo en la versión instalada; el
 // portable no puede auto-actualizarse).
-const { app, BrowserWindow, dialog, shell, Menu, ipcMain, Tray, nativeImage, Notification } = require("electron");
+const { app, BrowserWindow, dialog, shell, Menu, ipcMain, Tray, nativeImage, Notification, net: netElectron } = require("electron");
 const updateLogic = require("./update_logic");
 const { spawn } = require("child_process");
 const path = require("path");
@@ -203,6 +203,9 @@ function crearTray() {
     actualizarMenuTray();
     tray.on("click", alternarVentana);
     tray.on("double-click", () => { mostrarVentana(); });
+    // refresco del indicador del catálogo en la bandeja (barato: una
+    // consulta local cada 30 s solo si el backend responde)
+    setInterval(actualizarMenuTray, 30000);
   } catch (e) {
     log("no se pudo crear el tray: " + (e && e.message));
   }
@@ -210,7 +213,75 @@ function crearTray() {
 
 function actualizarMenuTray() {
   if (!tray) return;
-  tray.setContextMenu(Menu.buildFromTemplate([
+  tray.setContextMenu(Menu.buildFromTemplate(menuBaseTray()));
+  // estado del catálogo: cuando llega (en background), reconstruye el menú
+  // con el indicador y el acceso rápido a Pausar/Reanudar
+  estadoCatalogo().then(est => {
+    if (!tray || !est) return;
+    const items = [];
+    const activo = est.estado === "enumerando" || est.estado === "procesando";
+    if (activo) {
+      items.push({ label: "Catálogo: procesando… (" + (est.pendientes || 0) + " pendientes)", enabled: false });
+      items.push({
+        label: "Pausar catálogo",
+        click: async () => { await accionCatalogo("/api/catalogo/pausar"); actualizarMenuTray(); }
+      });
+    } else if (est.estado === "pausado" && (est.pendientes || 0) > 0) {
+      items.push({ label: "Catálogo: en pausa (" + est.pendientes + " pendientes)", enabled: false });
+      items.push({
+        label: "Reanudar catálogo",
+        click: async () => { await accionCatalogo("/api/catalogo/iniciar"); actualizarMenuTray(); }
+      });
+    } else if (est.estado === "terminado") {
+      items.push({ label: "Catálogo: terminado", enabled: false });
+    }
+    if (items.length) items.push({ type: "separator" });
+    tray.setContextMenu(Menu.buildFromTemplate(items.concat(menuBaseTray())));
+    tray.setToolTip(activo
+      ? "MiDescargador — catálogo procesando (" + (est.pendientes || 0) + " pendientes)"
+      : "MiDescargador");
+  });
+}
+
+// ---- catálogo desde la bandeja: token + estado + pausa/reanudación ----
+let tokenAPI = null;
+
+async function tokenBackend() {
+  if (tokenAPI) return tokenAPI;
+  try {
+    const r = await netElectron.fetch("http://127.0.0.1:" + PUERTO + "/api/token");
+    const d = await r.json();
+    if (d && d.token) { tokenAPI = d.token; return tokenAPI; }
+  } catch (e) {}
+  return null;
+}
+
+async function estadoCatalogo() {
+  const tok = await tokenBackend();
+  if (!tok) return null;
+  try {
+    const r = await netElectron.fetch("http://127.0.0.1:" + PUERTO + "/api/catalogo", {
+      headers: { "X-MiDescargador-Token": tok }
+    });
+    if (r.status === 401) { tokenAPI = null; return null; }  // token regenerado
+    return await r.json();
+  } catch (e) { return null; }
+}
+
+async function accionCatalogo(ruta) {
+  const tok = await tokenBackend();
+  if (!tok) return;
+  try {
+    await netElectron.fetch("http://127.0.0.1:" + PUERTO + ruta, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-MiDescargador-Token": tok },
+      body: "{}"
+    });
+  } catch (e) {}
+}
+
+function menuBaseTray() {
+  return [
     { label: "Abrir MiDescargador", click: mostrarVentana },
     { type: "separator" },
     {
@@ -230,7 +301,7 @@ function actualizarMenuTray() {
     }] : []),
     { type: "separator" },
     { label: "Salir", click: () => app.quit() }
-  ]));
+  ];
 }
 
 // Al relanzar tras una actualización, la app hereda el stdout del instalador;
@@ -689,4 +760,15 @@ app.on("before-quit", () => {
     } catch (e) {}
     log("backend detenido (árbol completo)");
   }
+  // Chrome de extracciones que quedó huérfano (a veces escapa al /T si
+  // estaba a mitad de arranque, o era de un backend anterior ya muerto):
+  // solo perfiles temporales "midesc-chrome-...", el Chrome del usuario
+  // nunca coincide.
+  try {
+    require("child_process").execFileSync("powershell", [
+      "-NoProfile", "-Command",
+      "Get-CimInstance -Query \"SELECT ProcessId FROM Win32_Process WHERE Name='chrome.exe' AND CommandLine LIKE '%midesc-chrome-%'\" | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+    ], { stdio: "ignore", timeout: 20000 });
+    log("chrome temporal de extracciones cerrado");
+  } catch (e) {}
 });

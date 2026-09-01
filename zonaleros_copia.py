@@ -40,6 +40,45 @@ _MODO_ACTIVO = None     # "junction" (Chrome cerrado) o "copia" (Chrome abierto)
 _LOG = None             # hook opcional: servidor.py lo conecta a errores.log
 
 
+def limpiar_chrome_huerfanos():
+    """Cierra instancias de Chrome lanzadas por la app que quedaron huérfanas.
+
+    Pasa cuando la app se cierra (o se la mata, p. ej. una actualización)
+    en medio de una extracción o del catálogo: el Chrome de la copia temporal
+    no es hijo que muera con el padre y queda vivo, mostrando icono en la
+    barra de tareas "con el descargador cerrado".
+
+    SOLO toca procesos cuyo user-data-dir es un perfil temporal de
+    MiDescargador ("midesc-chrome-..."); el Chrome normal del usuario nunca
+    coincide. Además borra carpetas de copias viejas de %TEMP% (> 1 día)."""
+    guion = (
+        "Get-CimInstance -Query \"SELECT ProcessId FROM Win32_Process "
+        "WHERE Name='chrome.exe' AND CommandLine LIKE '%midesc-chrome-%'\" | "
+        "ForEach-Object { Stop-Process -Id $_.ProcessId -Force "
+        "-ErrorAction SilentlyContinue }")
+    try:
+        subprocess.run(
+            ["powershell", "-NoProfile", "-Command", guion],
+            capture_output=True, timeout=30,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except Exception:
+        pass  # best effort: si no pudo, no bloquea el arranque
+    temp = tempfile.gettempdir()
+    ahora = time.time()
+    try:
+        for nombre in os.listdir(temp):
+            if not nombre.startswith("midesc-chrome-copia-"):
+                continue
+            ruta = os.path.join(temp, nombre)
+            try:
+                if ahora - os.path.getmtime(ruta) > 86400:
+                    shutil.rmtree(ruta, ignore_errors=True)
+            except OSError:
+                pass
+    except OSError:
+        pass
+
+
 def _log(msg):
     """Registra un evento del modo híbrido (qué rama se usó y por qué) si el
     hook está conectado. Sin hook no hace nada (p. ej. en el CLI de prueba)."""

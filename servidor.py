@@ -3559,6 +3559,9 @@ class Manejador(BaseHTTPRequestHandler):
             self._json(_catalogo().estado_publico())
         elif ruta == "/api/catalogo/pausar":
             _catalogo().pausar()
+            # sin respuesta el cliente ve "socket hang up" (la bandeja y
+            # _catalogoAccion esperan un JSON)
+            self._json({"ok": True})
         elif ruta == "/api/catalogo/rescatar":
             # rescate sin re-escanear: descartados → pendiente (la próxima
             # reanudación los procesa primero, por prioridad de categoría)
@@ -3900,6 +3903,12 @@ def main():
     _cargar_config()   # restaura toggle/contraseña guardados en config.json
     _restaurar_cola()  # recarga la cola persistida (reanuda lo vivo)
     threading.Thread(target=_hilo_reintentos, daemon=True).start()
+    # Chrome huérfanos de una corrida anterior (app cerrada/caída a mitad de
+    # una extracción): quedaban vivos con icono en la barra de tareas
+    try:
+        zonaleros.limpiar_chrome_huerfanos()
+    except Exception:
+        pass
 
     try:
         srv = ThreadingHTTPServer(("127.0.0.1", PUERTO), Manejador)
