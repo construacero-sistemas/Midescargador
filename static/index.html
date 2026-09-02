@@ -84,6 +84,10 @@
       --switch-knob-off: #94a3b8;
       --log-bg: #060910;
 
+      /* fondo de la tarjeta superior (gradiente) y de la barra de hosters */
+      --hero-input-bg-2: rgba(15, 21, 35, 0.95);
+      --hosters-bg: rgba(15, 21, 35, 0.6);
+
       --radius-sm: 8px;
       --radius-md: 12px;
       --radius-lg: 16px;
@@ -176,6 +180,9 @@
       --switch-track-bg: #dbe3ee;
       --switch-knob-off: #ffffff;
       --log-bg: #ffffff;
+
+      --hero-input-bg-2: rgba(248, 250, 252, 0.98);
+      --hosters-bg: rgba(255, 255, 255, 0.6);
     }
 
 
@@ -482,7 +489,7 @@
        HERO INPUT COMPONENT
        ========================================================================== */
     .hero-input-card {
-      background: linear-gradient(180deg, var(--bg-surface) 0%, rgba(15, 21, 35, 0.95) 100%);
+      background: linear-gradient(180deg, var(--bg-surface) 0%, var(--hero-input-bg-2) 100%);
       border: 1px solid var(--border-subtle);
       position: relative;
     }
@@ -1793,7 +1800,7 @@
     .hosters-container {
       margin-top: 24px;
       padding: 16px 20px;
-      background: rgba(15, 21, 35, 0.6);
+      background: var(--hosters-bg);
       border: 1px solid var(--border-subtle);
       border-radius: var(--radius-md);
       display: flex;
