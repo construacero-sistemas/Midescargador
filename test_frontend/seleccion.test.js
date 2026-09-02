@@ -27,12 +27,16 @@ const { crearSeleccion } = require("../static/seleccion.js");
 function crearAmbiente() {
   const dom = new JSDOM(
     `<div id="panel-analisis-enlaces"></div>
-     <div id="panel-enlaces"></div>`,
+     <div id="panel-enlaces"></div>
+     <input id="url" value="https://www.zona-leros.com/juegos-pc/el-juego">`,
     { runScripts: "outside-only", url: "http://127.0.0.1:17890/" }
   );
   const { window } = dom;
   const doc = window.document;
   const fetchCalls = [];
+  // respuesta del escaneo y resultado de la tarea, configurables por prueba
+  let escaneoRespuesta = null;
+  let escaneoResultado = { tipo: "pagina" };
 
   // Helpers idénticos a los del index.html
   const escapeHtml = (s) =>
@@ -51,12 +55,26 @@ function crearAmbiente() {
     verEnlaces: () => { window.__verEnlaces = true; },
     mostrarEnlaces: (d) => { mostrado.valores.push(d); },
     // fetch espiado: el POST inicial a /api/enlaces responde listo al instante
-    // para que verEnlacesSeleccionados retorne sin bucle de sondeo.
+    // para que verEnlacesSeleccionados retorne sin bucle de sondeo. El escaneo
+    // (/api/enlaces/escaneo) se configura aparte con un resultado por defecto.
     fetch: (url, opts) => {
       opts = opts || {};
       let body = null;
       try { body = opts.body ? JSON.parse(opts.body) : null; } catch (_) {}
       fetchCalls.push({ url, method: opts.method || "GET", body });
+      if (url === "/api/enlaces/escaneo") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => (typeof escaneoRespuesta === "function"
+            ? escaneoRespuesta() : { tarea: "scan1" }),
+        });
+      }
+      if (/\/api\/enlaces\/estado/.test(url)) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ estado: "listo", resultado: escaneoResultado }),
+        });
+      }
       return Promise.resolve({
         ok: true,
         json: async () => ({
@@ -74,6 +92,8 @@ function crearAmbiente() {
     renderAnalisisEnlaces: s.renderAnalisisEnlaces,
     resolverSeleccionAnalisis: s.resolverSeleccionAnalisis,
     verEnlacesSeleccionados: s.verEnlacesSeleccionados,
+    analizarEnlaceNormal: s.analizarEnlaceNormal,
+    setEscaneo: (resp, resultado) => { escaneoRespuesta = resp; escaneoResultado = resultado; },
   };
 }
 
@@ -237,6 +257,32 @@ function probarResolverSinServidorEnviaListaVacia() {
   console.log("ok  sin servidor marcado se envía lista vacía (todos)");
 }
 
+async function probarPaginaDeJuegoNoSeQuedaEnFlujoNormal() {
+  const { analizarEnlaceNormal, window, doc, setEscaneo } = crearAmbiente();
+  // Una página de juego de ZonaLeros: el escaneo no encuentra temporadas, así
+  // que devuelve tipo "pagina". La app debe pasar DIRECTAMENTE a extraer los
+  // enlaces reales (verEnlaces) en vez de quedarse en "flujo normal".
+  setEscaneo(() => ({ tarea: "scan-juego" }), { tipo: "pagina", url: "https://x" });
+  window.__verEnlaces = false;   // bandera que setea el stub verEnlaces
+  await analizarEnlaceNormal();
+  assert.strictEqual(window.__verEnlaces, true,
+    "una página de juego (tipo 'pagina') debe disparar verEnlaces() para extraer los enlaces");
+  console.log("ok  una página de juego dispara verEnlaces() en vez de quedarse en 'flujo normal'");
+}
+
+async function probarPaginaDePeliculaNoSeQuedaEnFlujoNormal() {
+  const { analizarEnlaceNormal, window, doc, setEscaneo } = crearAmbiente();
+  // Una película de ZonaLeros (/peliculas/...) TAMPOCO es una serie: el escaneo
+  // devuelve tipo "pagina" y la app debe pasar directo a extraer los enlaces.
+  doc.querySelector("#url").value = "https://www.zona-leros.com/peliculas/chernobil-la-pelicula";
+  setEscaneo(() => ({ tarea: "scan-peli" }), { tipo: "pagina", url: "https://www.zona-leros.com/peliculas/chernobil-la-pelicula" });
+  window.__verEnlaces = false;
+  await analizarEnlaceNormal();
+  assert.strictEqual(window.__verEnlaces, true,
+    "una página de película (tipo 'pagina') debe disparar verEnlaces() para extraer los enlaces");
+  console.log("ok  una página de película dispara verEnlaces() en vez de quedarse en 'flujo normal'");
+}
+
 let fallos = 0;
 const pruebas = [
   probarSoloServidoresDetectados,
@@ -244,17 +290,24 @@ const pruebas = [
   probarDesmarcarTemporada,
   probarResolverSoloEnviaSeleccion,
   probarResolverSinServidorEnviaListaVacia,
+  probarPaginaDeJuegoNoSeQuedaEnFlujoNormal,
+  probarPaginaDePeliculaNoSeQuedaEnFlujoNormal,
 ];
-for (const fn of pruebas) {
-  try { fn(); }
-  catch (e) {
-    fallos++;
-    console.error("FAIL", fn.name, "\n  ", e && e.message);
+(async () => {
+  for (const fn of pruebas) {
+    try {
+      const r = fn();
+      if (r && typeof r.then === "function") await r;
+    }
+    catch (e) {
+      fallos++;
+      console.error("FAIL", fn.name, "\n  ", e && e.message);
+    }
   }
-}
 
-if (fallos > 0) {
-  console.error(`\n${fallos} prueba(s) fallaron.`);
-  process.exit(1);
-}
-console.log("\nTodas las pruebas de frontend pasaron.");
+  if (fallos > 0) {
+    console.error(`\n${fallos} prueba(s) fallaron.`);
+    process.exit(1);
+  }
+  console.log("\nTodas las pruebas de frontend pasaron.");
+})();

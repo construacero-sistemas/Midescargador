@@ -166,7 +166,17 @@
           await new Promise(res => setTimeout(res, 1200));
           const rr = await fetch("/api/enlaces/estado?tarea=" + encodeURIComponent(tareaAnalisisEnlaces));
           const e = await rr.json();
-          if (e.estado === "listo") { tareaAnalisisEnlaces = null; datosAnalisisEnlaces = e.resultado; renderAnalisisEnlaces(e.resultado); break; }
+          if (e.estado === "listo") {
+            tareaAnalisisEnlaces = null;
+            const res = e.resultado;
+            datosAnalisisEnlaces = res;
+            // La página es de un juego/película/episodio (no una serie): no hay
+            // temporadas que seleccionar, así que pasamos directo a extraer los
+            // enlaces reales (el backend ya sabe resolver esas páginas).
+            if (!res || res.tipo !== "serie") return verEnlaces();
+            renderAnalisisEnlaces(res);
+            break;
+          }
           if (e.estado === "cancelando") break;
         }
       } catch (e) {

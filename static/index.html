@@ -51,6 +51,39 @@
       --info-bg: rgba(6, 182, 212, 0.12);
       --info-border: rgba(6, 182, 212, 0.28);
 
+      /* Colores de acento para chips/badges (texto claro sobre fondo oscuro).
+         En el tema claro se invierten con valores más oscuros y legibles. */
+      --chip-megaupload-text: #f87171;
+      --chip-google-text: #93c5fd;
+      --chip-youtube-text: #fca5a5;
+      --chip-cine-text: #67e8f9;
+      --chip-instagram-text: #f9a8d4;
+      --chip-reddit-text: #fdba74;
+      --chip-pinterest-text: #fca5a5;
+      --chip-zonaleros-text: #c4b5fd;
+      --chip-amarillo-text: #fbbf24;
+      --chip-azulclaro-text: #93c5fd;
+      --chip-azulclaro2-text: #7cb0ff;
+      --chip-violeta-text: #c4b5fd;
+      --chip-verde-text: #6ee7b7;
+      --chip-dorado-text: #fcd34d;
+
+      /* vidrio de la barra superior y texto del logo (gradiente) */
+      --glass-1: rgba(22, 30, 49, 0.92);
+      --glass-2: rgba(15, 21, 35, 0.78);
+      --glass-border-top: rgba(59, 130, 246, 0.35);
+      --brand-gradient: linear-gradient(120deg, #ffffff 0%, #dbeafe 55%, #93c5fd 100%);
+      --hover-overlay: rgba(255, 255, 255, 0.06);
+      --hover-overlay-2: rgba(255, 255, 255, 0.10);
+
+      --bg-glow-1: rgba(59, 130, 246, 0.12);
+      --bg-glow-2: rgba(139, 92, 246, 0.10);
+      --bg-glow-3: rgba(14, 165, 233, 0.08);
+
+      --switch-track-bg: #20293d;
+      --switch-knob-off: #94a3b8;
+      --log-bg: #060910;
+
       --radius-sm: 8px;
       --radius-md: 12px;
       --radius-lg: 16px;
@@ -63,9 +96,90 @@
       --shadow-glow: 0 0 28px rgba(59, 130, 246, 0.22);
 
       --transition-fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
-      --transition-base: 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-      --transition-smooth: 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+      --transition-base: 0.25s cubic-bezier(0.4, 0, 0.2, 1);      --transition-smooth: 0.35s cubic-bezier(0.16, 1, 0.3, 1);
     }
+
+    /* ==========================================================================
+       TEMA CLARO — se activa con data-theme="light" en <html>
+       (botón sol/luna en la barra superior; por defecto sigue al sistema).
+       ========================================================================== */
+    [data-theme="light"] {
+      --bg-base: #f1f5f9;
+      --bg-surface: #ffffff;
+      --bg-surface-elevated: #f8fafc;
+      --bg-surface-hover: #eef2f7;
+      --bg-input: #ffffff;
+
+      --border-subtle: rgba(15, 23, 42, 0.08);
+      --border-medium: rgba(15, 23, 42, 0.16);
+      --border-glow: rgba(59, 130, 246, 0.40);
+
+      --text-primary: #0f172a;
+      --text-secondary: #475569;
+      --text-muted: #5b6673;
+      --text-inverse: #ffffff;
+
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --primary-glow: rgba(37, 99, 235, 0.20);
+      --secondary: #7c3aed;
+      --accent-gradient: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+      --accent-gradient-hover: linear-gradient(135deg, #1d4ed8 0%, #6d28d9 100%);
+
+      --success: #047857;
+      --success-bg: rgba(5, 150, 105, 0.14);
+      --success-border: rgba(5, 150, 105, 0.32);
+      --warning: #92400e;
+      --warning-bg: rgba(217, 119, 6, 0.14);
+      --warning-border: rgba(217, 119, 6, 0.32);
+      --danger: #b91c1c;
+      --danger-bg: rgba(220, 38, 38, 0.14);
+      --danger-border: rgba(220, 38, 38, 0.32);
+      --info: #0e7490;
+      --info-bg: rgba(8, 145, 178, 0.14);
+      --info-border: rgba(8, 145, 178, 0.32);
+
+      --shadow-sm: 0 2px 8px rgba(15, 23, 42, 0.10);
+      --shadow-md: 0 8px 24px rgba(15, 23, 42, 0.14);
+      --shadow-lg: 0 16px 36px rgba(15, 23, 42, 0.18);
+      --shadow-glow: 0 0 24px rgba(59, 130, 246, 0.18);
+
+      /* text + badges sobre fondo claro: tonos más oscuros y legibles */
+      --chip-megaupload-text: #dc2626;
+      --chip-google-text: #1d4ed8;
+      --chip-youtube-text: #b91c1c;
+      --chip-cine-text: #0e7490;
+      --chip-instagram-text: #be185d;
+      --chip-reddit-text: #c2410c;
+      --chip-pinterest-text: #be185d;
+      --chip-zonaleros-text: #6d28d9;
+      --chip-amarillo-text: #b45309;
+      --chip-azulclaro-text: #1d4ed8;
+      --chip-azulclaro2-text: #1d4ed8;
+      --chip-violeta-text: #6d28d9;
+      --chip-verde-text: #059669;
+      --chip-dorado-text: #b45309;
+
+      /* vidrio + logo en claro */
+      --glass-1: rgba(255, 255, 255, 0.88);
+      --glass-2: rgba(248, 250, 252, 0.80);
+      --glass-border-top: rgba(37, 99, 235, 0.35);
+      --brand-gradient: linear-gradient(120deg, #0f172a 0%, #1d4ed8 55%, #2563eb 100%);
+      --hover-overlay: rgba(15, 23, 42, 0.06);
+      --hover-overlay-2: rgba(15, 23, 42, 0.10);
+
+      /* fondo: resplandores suaves y claros en vez de los oscuros */
+      --bg-glow-1: rgba(59, 130, 246, 0.10);
+      --bg-glow-2: rgba(139, 92, 246, 0.08);
+      --bg-glow-3: rgba(14, 165, 233, 0.08);
+
+      --switch-track-bg: #dbe3ee;
+      --switch-knob-off: #ffffff;
+      --log-bg: #ffffff;
+    }
+
+
+
 
     /* ==========================================================================
        RESET & BASE STYLES
@@ -78,16 +192,16 @@
 
     html {
       scroll-behavior: smooth;
-      scrollbar-color: #1e293b transparent;
+      scrollbar-color: var(--border-medium) transparent;
       scrollbar-width: thin;
     }
 
     body {
       background-color: var(--bg-base);
       background-image: 
-        radial-gradient(at 0% 0%, rgba(59, 130, 246, 0.12) 0px, transparent 50%),
-        radial-gradient(at 100% 0%, rgba(139, 92, 246, 0.10) 0px, transparent 50%),
-        radial-gradient(at 50% 100%, rgba(14, 165, 233, 0.08) 0px, transparent 50%);
+        radial-gradient(at 0% 0%, var(--bg-glow-1) 0px, transparent 50%),
+        radial-gradient(at 100% 0%, var(--bg-glow-2) 0px, transparent 50%),
+        radial-gradient(at 50% 100%, var(--bg-glow-3) 0px, transparent 50%);
       background-attachment: fixed;
       color: var(--text-primary);
       font-family: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -114,11 +228,11 @@
       justify-content: space-between;
       gap: 16px;
       padding: 16px 20px 15px;
-      background: linear-gradient(180deg, rgba(22,30,49,0.92) 0%, rgba(15,21,35,0.78) 100%);
+      background: linear-gradient(180deg, var(--glass-1) 0%, var(--glass-2) 100%);
       backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
       border: 1px solid var(--border-medium);
-      border-top: 1px solid rgba(59,130,246,0.35);
+      border-top: 1px solid var(--glass-border-top);
       border-radius: var(--radius-xl);
       margin-bottom: 24px;
       box-shadow: var(--shadow-md), 0 -1px 0 rgba(59,130,246,0.18) inset;
@@ -171,9 +285,9 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      color: #f8fafc;
+      color: var(--text-primary);
       line-height: 1.15;
-      background: linear-gradient(120deg, #ffffff 0%, #dbeafe 55%, #93c5fd 100%);
+      background: var(--brand-gradient);
       -webkit-background-clip: text;
       background-clip: text;
       -webkit-text-fill-color: transparent;
@@ -189,7 +303,7 @@
       font-weight: 800;
       letter-spacing: .04em;
       text-transform: uppercase;
-      color: #fbbf24;
+      color: var(--chip-amarillo-text);
       background: rgba(251, 191, 36, 0.12);
       border: 1px solid rgba(251, 191, 36, 0.4);
       border-radius: 999px;
@@ -266,6 +380,13 @@
       outline: 2px solid #60a5fa;
       outline-offset: 2px;
     }
+
+    /* Botón de tema: en oscuro muestra el sol (para pasar a claro) y en
+       claro muestra la luna (para volver a oscuro). */
+    #btn-tema { padding: 8px 10px; justify-content: center; }
+    #icon-tema-luna { display: none; }
+    [data-theme="light"] #icon-tema-sol { display: none; }
+    [data-theme="light"] #icon-tema-luna { display: inline; }
     /* Respeta la preferencia del sistema de reducir el movimiento: quita
        animaciones/transiciones largas que pueden marear. */
     @media (prefers-reduced-motion: reduce) {
@@ -427,20 +548,20 @@
       font-size: 11px;
       font-weight: 700;
       background: rgba(59, 130, 246, 0.12);
-      color: #93c5fd;
+      color: var(--chip-google-text);
       border: 1px solid rgba(59, 130, 246, 0.28);
       animation: fadeIn 0.2s ease-out;
     }
 
-    .host-chip.youtube { background: rgba(239, 68, 68, 0.12); color: #fca5a5; border-color: rgba(239, 68, 68, 0.28); }
-    .host-chip.mega { background: rgba(239, 68, 68, 0.12); color: #f87171; border-color: rgba(239, 68, 68, 0.28); }
-    .host-chip.mediafire { background: rgba(59, 130, 246, 0.12); color: #93c5fd; border-color: rgba(59, 130, 246, 0.28); }
-    .host-chip.tiktok { background: rgba(6, 182, 212, 0.12); color: #67e8f9; border-color: rgba(6, 182, 212, 0.28); }
-    .host-chip.instagram { background: rgba(236, 72, 153, 0.12); color: #f9a8d4; border-color: rgba(236, 72, 153, 0.28); }
-    .host-chip.facebook { background: rgba(59, 130, 246, 0.12); color: #93c5fd; border-color: rgba(59, 130, 246, 0.28); }
-    .host-chip.reddit { background: rgba(249, 115, 22, 0.12); color: #fdba74; border-color: rgba(249, 115, 22, 0.28); }
-    .host-chip.pinterest { background: rgba(239, 68, 68, 0.12); color: #fca5a5; border-color: rgba(239, 68, 68, 0.28); }
-    .host-chip.zonaleros { background: rgba(139, 92, 246, 0.14); color: #c4b5fd; border-color: rgba(139, 92, 246, 0.32); }
+    .host-chip.youtube { background: rgba(239, 68, 68, 0.12); color: var(--chip-youtube-text); border-color: rgba(239, 68, 68, 0.28); }
+    .host-chip.mega { background: rgba(239, 68, 68, 0.12); color: var(--chip-megaupload-text); border-color: rgba(239, 68, 68, 0.28); }
+    .host-chip.mediafire { background: rgba(59, 130, 246, 0.12); color: var(--chip-google-text); border-color: rgba(59, 130, 246, 0.28); }
+    .host-chip.tiktok { background: rgba(6, 182, 212, 0.12); color: var(--chip-cine-text); border-color: rgba(6, 182, 212, 0.28); }
+    .host-chip.instagram { background: rgba(236, 72, 153, 0.12); color: var(--chip-instagram-text); border-color: rgba(236, 72, 153, 0.28); }
+    .host-chip.facebook { background: rgba(59, 130, 246, 0.12); color: var(--chip-google-text); border-color: rgba(59, 130, 246, 0.28); }
+    .host-chip.reddit { background: rgba(249, 115, 22, 0.12); color: var(--chip-reddit-text); border-color: rgba(249, 115, 22, 0.28); }
+    .host-chip.pinterest { background: rgba(239, 68, 68, 0.12); color: var(--chip-pinterest-text); border-color: rgba(239, 68, 68, 0.28); }
+    .host-chip.zonaleros { background: rgba(139, 92, 246, 0.14); color: var(--chip-zonaleros-text); border-color: rgba(139, 92, 246, 0.32); }
 
     .input-actions {
       display: flex;
@@ -503,7 +624,7 @@
     .btn-secondary:hover:not(:disabled) {
       background: var(--bg-surface-hover);
       border-color: var(--border-medium);
-      color: #ffffff;
+      color: var(--text-primary);
       transform: translateY(-1px);
     }
 
@@ -513,19 +634,19 @@
     }
 
     .btn-ghost:hover:not(:disabled) {
-      background: rgba(255, 255, 255, 0.06);
+      background: var(--hover-overlay);
       color: var(--text-primary);
     }
 
     .btn-danger {
       background: var(--danger-bg);
-      color: #fca5a5;
+      color: var(--danger);
       border-color: var(--danger-border);
     }
 
     .btn-danger:hover:not(:disabled) {
       background: var(--danger);
-      color: #ffffff;
+      color: var(--text-inverse);
       border-color: var(--danger);
     }
 
@@ -700,7 +821,7 @@
     }
     .md-dd-opt:hover { background: var(--bg-surface-hover); }
     .md-dd-opt.selected { background: rgba(59, 130, 246, 0.14); font-weight: 600; }
-    .md-dd-check { margin-left: auto; color: #7cb0ff; display: none; flex-shrink: 0; }
+    .md-dd-check { margin-left: auto; color: var(--chip-azulclaro2-text); display: none; flex-shrink: 0; }
     .md-dd-opt.selected .md-dd-check { display: inline-flex; }
     .md-dd-list::-webkit-scrollbar { width: 8px; }
     .md-dd-list::-webkit-scrollbar-thumb { background: var(--border-medium); border-radius: 9999px; }
@@ -756,7 +877,7 @@
     .switch-track {
       position: absolute;
       inset: 0;
-      background: #20293d;
+      background: var(--switch-track-bg);
       border-radius: var(--radius-pill);
       border: 1px solid var(--border-subtle);
       transition: all var(--transition-fast);
@@ -769,7 +890,7 @@
       height: 18px;
       left: 2px;
       top: 2px;
-      background: #94a3b8;
+      background: var(--switch-knob-off);
       border-radius: 50%;
       box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
       transition: transform var(--transition-fast), background var(--transition-fast);
@@ -808,7 +929,7 @@
     .smart-notice.info {
       background: var(--info-bg);
       border: 1px solid var(--info-border);
-      color: #67e8f9;
+      color: var(--chip-cine-text);
     }
 
     .smart-notice.warning {
@@ -894,7 +1015,7 @@
       border-radius: 10px;
       background: rgba(139, 92, 246, 0.12);
       border: 1px solid rgba(139, 92, 246, 0.35);
-      color: #c4b5fd;
+      color: var(--chip-zonaleros-text);
       font-size: 12.5px;
       font-weight: 600;
     }
@@ -950,7 +1071,7 @@
 
     .server-tab-btn.active {
       background: var(--primary-glow);
-      color: #93c5fd;
+      color: var(--chip-google-text);
       border-color: var(--primary);
       box-shadow: 0 0 12px var(--primary-glow);
     }
@@ -1195,8 +1316,8 @@
       cursor: default;
     }
     .link-verif.link-ok { background: rgba(16, 185, 129, 0.14); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.35); }
-    .link-verif.link-bad { background: rgba(239, 68, 68, 0.14); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.35); }
-    .link-verif.link-warn { background: rgba(245, 158, 11, 0.14); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.35); }
+    .link-verif.link-bad { background: rgba(239, 68, 68, 0.14); color: var(--danger); border: 1px solid rgba(239, 68, 68, 0.35); }
+    .link-verif.link-warn { background: rgba(245, 158, 11, 0.14); color: var(--chip-amarillo-text); border: 1px solid rgba(245, 158, 11, 0.35); }
 
     .part-chip-actions {
       display: flex;
@@ -1400,7 +1521,7 @@
 
     .status-badge.descargando, .status-badge.esperando {
       background: rgba(59, 130, 246, 0.14);
-      color: #60a5fa;
+      color: var(--chip-azulclaro2-text);
       border: 1px solid rgba(59, 130, 246, 0.35);
     }
 
@@ -1430,7 +1551,7 @@
 
     .status-badge.uniendo {
       background: rgba(139, 92, 246, 0.14);
-      color: #c4b5fd;
+      color: var(--chip-zonaleros-text);
       border: 1px solid rgba(139, 92, 246, 0.35);
     }
 
@@ -1503,7 +1624,7 @@
     }
 
     .speed-chip {
-      color: #60a5fa;
+      color: var(--chip-azulclaro2-text);
       font-weight: 600;
     }
 
@@ -1528,7 +1649,7 @@
 
     .decompression-badge.ok { background: var(--success-bg); color: var(--success); }
     .decompression-badge.error { background: var(--danger-bg); color: var(--danger); }
-    .decompression-badge.extrayendo, .decompression-badge.esperando { background: rgba(59, 130, 246, 0.12); color: #93c5fd; }
+    .decompression-badge.extrayendo, .decompression-badge.esperando { background: rgba(59, 130, 246, 0.12); color: var(--chip-google-text); }
 
     .error-banner {
       margin-top: 10px;
@@ -1536,7 +1657,7 @@
       border-radius: var(--radius-sm);
       background: var(--danger-bg);
       border: 1px solid var(--danger-border);
-      color: #fca5a5;
+      color: var(--danger);
       font-size: 12px;
       word-break: break-all;
       display: flex;
@@ -1548,9 +1669,9 @@
       margin-top: 4px;
       padding: 12px;
       border-radius: var(--radius-md);
-      background: rgba(127, 29, 29, 0.18);
-      border: 1px dashed rgba(248, 113, 113, 0.4);
-      color: #fca5a5;
+      background: rgba(239, 68, 68, 0.14);
+      border: 1px dashed rgba(239, 68, 68, 0.4);
+      color: var(--danger);
       font-size: 12px;
       justify-content: center;
       font-weight: 600;
@@ -1592,7 +1713,7 @@
       border-radius: var(--radius-sm);
       background: rgba(59, 130, 246, 0.12);
       border: 1px solid rgba(59, 130, 246, 0.35);
-      color: #93c5fd;
+      color: var(--chip-google-text);
       font-size: 12px;
       display: flex;
       align-items: center;
@@ -1605,7 +1726,7 @@
       border-radius: var(--radius-sm);
       background: rgba(245, 158, 11, 0.12);
       border: 1px solid rgba(245, 158, 11, 0.35);
-      color: #fbbf24;
+      color: var(--chip-amarillo-text);
       font-size: 12px;
       word-break: break-word;
       display: flex;
@@ -1772,7 +1893,7 @@
     }
 
     .log-viewer {
-      background: #060910;
+      background: var(--log-bg);
       border: 1px solid var(--border-subtle);
       border-radius: var(--radius-md);
       padding: 16px;
@@ -1804,14 +1925,14 @@
     }
 
     .config-nota a.info-link {
-      color: #60a5fa;
+      color: var(--chip-azulclaro2-text);
       text-decoration: none;
       border-bottom: 1px dashed rgba(96, 165, 250, 0.45);
       transition: color 0.15s, border-color 0.15s;
     }
 
     .config-nota a.info-link:hover {
-      color: #93c5fd;
+      color: var(--chip-google-text);
       border-bottom-style: solid;
     }
 
@@ -1846,8 +1967,8 @@
       flex-shrink: 0;
     }
 
-    .session-logo.youtube { background: rgba(239, 68, 68, 0.14); color: #f87171; }
-    .session-logo.tiktok { background: rgba(6, 182, 212, 0.14); color: #67e8f9; }
+    .session-logo.youtube { background: rgba(239, 68, 68, 0.14); color: var(--chip-megaupload-text); }
+    .session-logo.tiktok { background: rgba(6, 182, 212, 0.14); color: var(--chip-cine-text); }
 
     .session-name {
       font-weight: 700;
@@ -2003,7 +2124,7 @@
       </div>
 
       <!-- Update Pill (Visible when update is ready or downloading) -->
-      <button class="nav-pill active-state" id="pill-actualizacion" style="display:none; border-color:rgba(59,130,246,0.5); background:rgba(59,130,246,0.15); color:#93c5fd;" data-i18n-attr="title:nav.update.title" title="Actualización de MiDescargador disponible">
+      <button class="nav-pill active-state" id="pill-actualizacion" style="display:none; border-color:rgba(59,130,246,0.5); background:var(--primary-glow); color:var(--chip-google-text);" data-i18n-attr="title:nav.update.title" title="Actualización de MiDescargador disponible">
         <span class="pulse-dot" style="background:var(--primary); box-shadow: 0 0 8px var(--primary);"></span>
         <span id="txt-actualizacion" data-i18n="nav.update.txt">Actualización lista</span>
       </button>
@@ -2052,6 +2173,20 @@
           <line x1="12" y1="8" x2="12.01" y2="8"></line>
         </svg>
         <span data-i18n="nav.info">Info</span>
+      </button>
+
+      <!-- Theme toggle (claro / oscuro) -->
+      <button class="nav-pill" id="btn-tema" data-i18n-attr="title:nav.tema.title" title="Cambiar tema (claro / oscuro)">
+        <svg id="icon-tema-sol" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="4"></circle>
+          <path d="M12 2v2"></path><path d="M12 20v2"></path>
+          <path d="m4.93 4.93 1.41 1.41"></path><path d="m17.66 17.66 1.41 1.41"></path>
+          <path d="M2 12h2"></path><path d="M20 12h2"></path>
+          <path d="m6.34 17.66-1.41 1.41"></path><path d="m19.07 4.93-1.41 1.41"></path>
+        </svg>
+        <svg id="icon-tema-luna" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"></path>
+        </svg>
       </button>
     </div>
   </nav>
@@ -2985,6 +3120,7 @@
       "nav.log": "Registro",
       "nav.info.title": "Qué es MiDescargador y cómo funciona",
       "nav.info": "Info",
+      "nav.tema.title": "Cambiar tema (claro / oscuro)",
       "url.placeholder": "Pega aquí uno o varios enlaces: YouTube, TikTok, Instagram, Facebook, Reddit, MediaFire, Mega, ZonaLeros, archivos directos...",
       "btn.paste.title": "Pegar desde el portapapeles",
       "btn.paste": "Pegar",
@@ -3294,6 +3430,7 @@
       "nav.log": "Log",
       "nav.info.title": "What MiDescargador is and how it works",
       "nav.info": "Info",
+      "nav.tema.title": "Toggle theme (light / dark)",
       "url.placeholder": "Paste one or more links here: YouTube, TikTok, Instagram, Facebook, Reddit, MediaFire, Mega, ZonaLeros, direct files...",
       "btn.paste.title": "Paste from clipboard",
       "btn.paste": "Paste",
@@ -3727,15 +3864,15 @@
             <div class="file-badges">
               <span class="badge">${dato.tipo === "yt-dlp" ? t("badge.video") : dato.tipo === "torrent" ? t("badge.torrent") : t("badge.http")}</span>
               ${dato.categoria && !(dato.tipo === "yt-dlp" && dato.categoria === "Videos") ? `<span class="badge">${escapeHtml(dato.categoria)}</span>` : ""}
-              ${dato.servidor ? `<span class="badge" style="color:#60a5fa;">${escapeHtml(dato.servidor)}</span>` : ""}
+              ${dato.servidor ? `<span class="badge" style="color:var(--chip-azulclaro2-text);">${escapeHtml(dato.servidor)}</span>` : ""}
               ${dato.calidad_real && dato.calidad_real === dato.calidad
-                ? `<span class="badge" style="color:#6ee7b7;">✓ ${escapeHtml(dato.calidad_real)}</span>`
+                ? `<span class="badge" style="color:var(--chip-verde-text);">✓ ${escapeHtml(dato.calidad_real)}</span>`
                 : dato.calidad_real && dato.calidad
-                  ? `<span class="badge" style="color:#c4b5fd;">${escapeHtml(dato.calidad)}</span><span class="badge" style="color:#fcd34d;">${t("badge.real", { q: escapeHtml(dato.calidad_real) })}</span>`
+                  ? `<span class="badge" style="color:var(--chip-violeta-text);">${escapeHtml(dato.calidad)}</span><span class="badge" style="color:var(--chip-dorado-text);">${t("badge.real", { q: escapeHtml(dato.calidad_real) })}</span>`
                   : dato.calidad
-                    ? `<span class="badge" style="color:#c4b5fd;">${escapeHtml(dato.calidad)}</span>`
+                    ? `<span class="badge" style="color:var(--chip-violeta-text);">${escapeHtml(dato.calidad)}</span>`
                     : dato.calidad_real
-                      ? `<span class="badge" style="color:#6ee7b7;">${escapeHtml(dato.calidad_real)}</span>`
+                      ? `<span class="badge" style="color:var(--chip-verde-text);">${escapeHtml(dato.calidad_real)}</span>`
                       : ""}
             </div>
           </div>
@@ -6154,6 +6291,49 @@
       }
     };
   }
+
+  // ==========================================================================
+  // TEMA — claro / oscuro. Se persiste en localStorage("md_tema").
+  // Valores: "auto" (sigue al sistema), "light", "dark". Por defecto "auto".
+  // ==========================================================================
+  function temaActual() {
+    const g = localStorage.getItem("md_tema");
+    if (g === "light" || g === "dark") return g;
+    return "auto";
+  }
+
+  function aplicarTema(tema) {
+    localStorage.setItem("md_tema", tema);
+    const el = document.documentElement;
+    let efectivo;
+    if (tema === "auto") {
+      efectivo = (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) ? "light" : "dark";
+    } else {
+      efectivo = tema;
+    }
+    el.setAttribute("data-theme", efectivo);
+  }
+
+  // Navegador: alterna entre claro y oscuro directo (ignora auto en el clic;
+  // primero resuelve auto y luego alterna).
+  const btnTema = $("#btn-tema");
+  if (btnTema) {
+    btnTema.onclick = () => {
+      const efectivo = document.documentElement.getAttribute("data-theme") === "light" ? "dark" : "light";
+      aplicarTema(efectivo);
+    };
+  }
+
+  // Sigue al sistema en tiempo real si el usuario dejó "auto".
+  if (window.matchMedia) {
+    window.matchMedia("(prefers-color-scheme: light)").addEventListener("change", (e) => {
+      if (temaActual() === "auto") aplicarTema("auto");
+    });
+  }
+
+  // Aplicar tema guardado (o del sistema) al arrancar — antes de aplicar el
+  // idioma para que el primer render ya tenga el fondo correcto.
+  aplicarTema(temaActual());
 
   // Aplicar idioma guardado (o el del navegador) y cargar la versión. Va al
   // final porque usa variables (estadoActualizacionActual) declaradas arriba.
