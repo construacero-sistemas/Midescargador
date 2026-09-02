@@ -1914,7 +1914,135 @@
       overflow-y: auto;
     }
 
-    /* Zona de configuración: sesiones por plataforma */
+    /* Zona de configuración: tarjetas por bloque con encabezado y filas */
+    .config-card {
+      background: var(--bg-surface-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-lg);
+      padding: 16px 18px;
+      margin-bottom: 18px;
+    }
+
+    .config-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 12px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+
+    .config-head-icon {
+      width: 30px;
+      height: 30px;
+      border-radius: 9px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      background: var(--primary-glow);
+      color: var(--primary);
+    }
+
+    .config-head-text {
+      min-width: 0;
+    }
+
+    .config-head-title {
+      font-size: 13.5px;
+      font-weight: 700;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      line-height: 1.2;
+    }
+
+    .config-head-sub {
+      font-size: 11.5px;
+      color: var(--text-muted);
+      margin-top: 2px;
+      line-height: 1.3;
+    }
+
+    /* fila label + control, con separador entre filas */
+    .config-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .config-row:last-child {
+      border-bottom: none;
+      padding-bottom: 4px;
+    }
+
+    .config-row-label {
+      flex: 1 1 180px;
+      min-width: 140px;
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      padding-top: 9px;
+      line-height: 1.35;
+    }
+    .config-row-label small {
+      display: block;
+      font-weight: 400;
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .config-row-control {
+      flex: 1 1 320px;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .config-row-control > * {
+      flex: 1 1 auto;
+      min-width: 0;
+    }
+
+    /* inputs de texto de configuración */
+    .input-config {
+      background: var(--bg-input);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-md);
+      padding: 9px 12px;
+      font-size: 13px;
+      color: var(--text-primary);
+      font-family: "JetBrains Mono", monospace;
+      outline: none;
+      transition: all var(--transition-fast);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    }
+    .input-config:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-glow);
+    }
+    .input-config::placeholder {
+      color: var(--text-muted);
+    }
+
+    /* estado (texto de feedback) alineado a la derecha de la fila */
+    .config-status {
+      flex: 0 1 auto;
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.4;
+      padding-top: 9px;
+    }
+    .config-status.ok { color: var(--success); }
+    .config-status.warn { color: var(--warning); }
+    .config-status.err { color: var(--danger); }
+
+    /* título de sección heredado (info modal) */
     .config-section-title {
       font-size: 12px;
       font-weight: 700;
@@ -1929,6 +2057,12 @@
       color: var(--text-secondary);
       margin-bottom: 16px;
       line-height: 1.55;
+    }
+    .config-card .config-nota {
+      margin-bottom: 14px;
+    }
+    .config-card .config-nota:last-child {
+      margin-bottom: 0;
     }
 
     .config-nota a.info-link {
@@ -1947,39 +2081,45 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
+      gap: 14px;
       padding: 14px 16px;
       border: 1px solid var(--border-subtle);
       border-radius: var(--radius-lg);
-      background: var(--bg-surface-elevated);
+      background: var(--bg-surface);
       margin-bottom: 12px;
+      transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+    }
+    .session-card:hover {
+      border-color: var(--border-glow);
+      box-shadow: 0 0 0 3px var(--primary-glow);
     }
 
     .session-card-left {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 13px;
       min-width: 0;
     }
 
     .session-logo {
-      width: 38px;
-      height: 38px;
-      border-radius: 10px;
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
       display: flex;
       align-items: center;
       justify-content: center;
       font-weight: 800;
-      font-size: 16px;
+      font-size: 18px;
       flex-shrink: 0;
     }
 
-    .session-logo.youtube { background: rgba(239, 68, 68, 0.14); color: var(--chip-megaupload-text); }
-    .session-logo.tiktok { background: rgba(6, 182, 212, 0.14); color: var(--chip-cine-text); }
+    .session-logo.youtube { background: linear-gradient(135deg, rgba(239,68,68,0.20), rgba(239,68,68,0.08)); color: var(--chip-megaupload-text); box-shadow: 0 2px 10px rgba(239,68,68,0.22); }
+    .session-logo.tiktok { background: linear-gradient(135deg, rgba(6,182,212,0.20), rgba(6,182,212,0.08)); color: var(--chip-cine-text); box-shadow: 0 2px 10px rgba(6,182,212,0.22); }
 
     .session-name {
       font-weight: 700;
       font-size: 13.5px;
+      color: var(--text-primary);
       white-space: nowrap;
     }
 
@@ -1992,6 +2132,7 @@
 
     .session-card-actions {
       display: flex;
+      align-items: center;
       gap: 8px;
       flex-shrink: 0;
     }
@@ -2615,118 +2756,186 @@
       </button>
     </div>
     <div class="modal-body">
-      <div class="config-section-title" data-i18n="config.lang.title">Idioma / Language</div>
-      <div class="config-nota" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:18px;">
-        <span style="flex:1; min-width:200px;" data-i18n="config.lang.aviso">Elige el idioma de la interfaz (se guarda en tu navegador).</span>
-        <div class="custom-select-container" style="min-width:180px; max-width:240px;">
-          <select id="lang-select" class="custom-select">
-            <option value="es">Español</option>
-            <option value="en">English</option>
-          </select>
-          <span class="custom-select-icon">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="6 9 12 15 18 9"></polyline>
+      <div class="config-card">
+        <div class="config-head">
+          <div class="config-head-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"></circle>
+              <line x1="2" y1="12" x2="22" y2="12"></line>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
             </svg>
-          </span>
+          </div>
+          <div class="config-head-text">
+            <div class="config-head-title" data-i18n="config.lang.title">Idioma / Language</div>
+          </div>
+        </div>
+        <div class="config-row">
+          <div class="config-row-label" data-i18n="config.lang.aviso">Elige el idioma de la interfaz (se guarda en tu navegador).</div>
+          <div class="config-row-control" style="max-width:240px;">
+            <div class="custom-select-container">
+              <select id="lang-select" class="custom-select">
+                <option value="es">Español</option>
+                <option value="en">English</option>
+              </select>
+              <span class="custom-select-icon">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="config-section-title" data-i18n="config.velocidad">Límite de velocidad</div>
-      <div class="config-nota" data-i18n="config.velocidad.nota">
-        Límite global para todas las descargas (se puede limitar por descarga desde el formulario). Aplica en vivo a las descargas en curso.
-      </div>
-      <div class="config-nota" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:18px;">
-        <span style="flex:1; min-width:200px;" data-i18n="config.velocidad.elige">Elige el límite global de descarga.</span>
-        <div class="custom-select-container" style="min-width:180px; max-width:240px;">
-          <select id="config-limite" class="custom-select">
-            <option value="0" data-i18n="limite.sin">Sin límite</option>
-            <option value="512">512 KB/s</option>
-            <option value="1024">1 MB/s</option>
-            <option value="2048">2 MB/s</option>
-            <option value="5120">5 MB/s</option>
-            <option value="10240">10 MB/s</option>
-            <option value="20480">20 MB/s</option>
-          </select>
-          <span class="custom-select-icon">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="6 9 12 15 18 9"></polyline>
+      <div class="config-card">
+        <div class="config-head">
+          <div class="config-head-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path>
             </svg>
-          </span>
+          </div>
+          <div class="config-head-text">
+            <div class="config-head-title" data-i18n="config.velocidad">Límite de velocidad</div>
+            <div class="config-head-sub" data-i18n="config.velocidad.nota">Límite global para todas las descargas (se puede limitar por descarga desde el formulario). Aplica en vivo a las descargas en curso.</div>
+          </div>
+        </div>
+        <div class="config-row">
+          <div class="config-row-label" data-i18n="config.velocidad.elige">Elige el límite global de descarga.</div>
+          <div class="config-row-control" style="max-width:240px;">
+            <div class="custom-select-container">
+              <select id="config-limite" class="custom-select">
+                <option value="0" data-i18n="limite.sin">Sin límite</option>
+                <option value="512">512 KB/s</option>
+                <option value="1024">1 MB/s</option>
+                <option value="2048">2 MB/s</option>
+                <option value="5120">5 MB/s</option>
+                <option value="10240">10 MB/s</option>
+                <option value="20480">20 MB/s</option>
+              </select>
+              <span class="custom-select-icon">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </span>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div class="config-section-title" data-i18n="config.update.titulo">Actualizaciones</div>
-      <div class="config-nota" data-i18n="config.update.nota">
-        La aplicación busca actualizaciones automáticamente al abrir y cada 4 horas. También puedes comprobarlas ahora.
-      </div>
-      <div class="config-nota" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:18px;">
-        <button class="btn btn-secondary btn-sm" id="btn-buscar-actualizaciones">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="23 4 23 10 17 10"></polyline>
-            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-          </svg>
-          <span data-i18n="config.update.buscar">Buscar actualizaciones</span>
-        </button>
-        <span id="txt-estado-update" style="flex:1; min-width:180px; font-size:13px; color:var(--text-secondary);"></span>
-      </div>
-
-      <div class="config-section-title" data-i18n="config.drive.titulo">Google Drive</div>
-      <div class="config-nota" data-i18n="config.drive.nota">
-        Sube los archivos descargados a tu Google Drive en vez de (o además de) dejarlos en disco.
-      </div>
-      <div class="config-nota" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px;">
-        <label style="flex:1; min-width:220px; font-size:12.5px; color:var(--text-secondary);" data-i18n="config.drive.client_id">Client ID (Google Cloud)</label>
-        <input type="text" id="drive-client-id" class="input-config" placeholder="1234-xxxx.apps.googleusercontent.com" style="flex:2; min-width:260px;" />
-      </div>
-      <div class="config-nota" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px;">
-        <label style="flex:1; min-width:220px; font-size:12.5px; color:var(--text-secondary);" data-i18n="config.drive.client_secret">Client Secret</label>
-        <input type="password" id="drive-client-secret" class="input-config" placeholder="GOCSPX-…" style="flex:2; min-width:260px;" />
-      </div>
-      <div class="config-nota" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px;">
-        <button class="btn btn-secondary btn-sm" id="btn-drive-guardar-creds">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
-          <span data-i18n="config.drive.guardar">Guardar credenciales</span>
-        </button>
-        <button class="btn btn-primary btn-sm" id="btn-drive-conectar" style="display:none;">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
-          <span data-i18n="config.drive.conectar">Conectar Google Drive</span>
-        </button>
-        <button class="btn btn-ghost btn-sm" id="btn-drive-desconectar" style="display:none;">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
-          <span data-i18n="config.drive.desconectar">Desconectar</span>
-        </button>
-        <span id="txt-drive-estado" style="flex:1; min-width:180px; font-size:13px; color:var(--text-secondary);"></span>
-      </div>
-      <div class="config-nota" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px;">
-        <span style="flex:1; min-width:200px; font-size:12.5px; color:var(--text-secondary);" data-i18n="config.drive.auto">Subir automáticamente cada descarga terminada a Drive</span>
-        <label class="switch">
-          <input type="checkbox" id="drive-subir-auto" />
-          <span class="slider"></span>
-        </label>
-      </div>
-      <div class="config-nota" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:18px;">
-        <span style="flex:1; min-width:200px; font-size:12.5px; color:var(--text-secondary);" data-i18n="config.drive.modo">Después de subir a Drive:</span>
-        <div class="custom-select-container" style="min-width:220px; max-width:280px;">
-          <select id="drive-modo" class="custom-select">
-            <option value="borrar_local" data-i18n="config.drive.modo.borrar">Borrar el archivo local</option>
-            <option value="conservar_local" data-i18n="config.drive.modo.conservar">Conservar el archivo local</option>
-            <option value="solo_subir" data-i18n="config.drive.modo.solo">Solo subir (no guardar en disco)</option>
-          </select>
-          <span class="custom-select-icon">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="6 9 12 15 18 9"></polyline>
+      <div class="config-card">
+        <div class="config-head">
+          <div class="config-head-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="23 4 23 10 17 10"></polyline>
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
             </svg>
-          </span>
+          </div>
+          <div class="config-head-text">
+            <div class="config-head-title" data-i18n="config.update.titulo">Actualizaciones</div>
+            <div class="config-head-sub" data-i18n="config.update.nota">La aplicación busca actualizaciones automáticamente al abrir y cada 4 horas. También puedes comprobarlas ahora.</div>
+          </div>
+        </div>
+        <div class="config-row">
+          <div class="config-row-control">
+            <button class="btn btn-secondary btn-sm" id="btn-buscar-actualizaciones" style="flex:0 0 auto;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="23 4 23 10 17 10"></polyline>
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
+              </svg>
+              <span data-i18n="config.update.buscar">Buscar actualizaciones</span>
+            </button>
+            <span id="txt-estado-update" class="config-status" style="flex:1;"></span>
+          </div>
         </div>
       </div>
 
-      <div class="config-section-title" id="config-seccion-sesiones" data-i18n="config.sesiones">Sesiones de descarga</div>
-      <div class="config-nota" data-i18n="config.sesiones.nota">
-        Iniciar sesión permite descargar videos que exigen cuenta (anti-bot de YouTube,
-        mayor calidad y menos bloqueos en TikTok). Al pulsar «Iniciar sesión» se abre
-        Chrome: completa el login en la ventana y la sesión se guarda automáticamente
-        (las cookies no salen de tu equipo). Requiere Chrome cerrado.
+      <div class="config-card">
+        <div class="config-head">
+          <div class="config-head-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path>
+              <polyline points="15 3 21 3 21 9"></polyline>
+              <line x1="10" y1="14" x2="21" y2="3"></line>
+            </svg>
+          </div>
+          <div class="config-head-text">
+            <div class="config-head-title" data-i18n="config.drive.titulo">Google Drive</div>
+            <div class="config-head-sub" data-i18n="config.drive.nota">Sube los archivos descargados a tu Google Drive en vez de (o además de) dejarlos en disco.</div>
+          </div>
+        </div>
+        <div class="config-row">
+          <div class="config-row-label" data-i18n="config.drive.client_id">Client ID (Google Cloud)</div>
+          <div class="config-row-control">
+            <input type="text" id="drive-client-id" class="input-config" placeholder="1234-xxxx.apps.googleusercontent.com" />
+          </div>
+        </div>
+        <div class="config-row">
+          <div class="config-row-label" data-i18n="config.drive.client_secret">Client Secret</div>
+          <div class="config-row-control">
+            <input type="password" id="drive-client-secret" class="input-config" placeholder="GOCSPX-…" />
+          </div>
+        </div>
+        <div class="config-row">
+          <div class="config-row-label">&nbsp;</div>
+          <div class="config-row-control">
+            <button class="btn btn-secondary btn-sm" id="btn-drive-guardar-creds" style="flex:0 0 auto;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path><polyline points="17 21 17 13 7 13 7 21"></polyline><polyline points="7 3 7 8 15 8"></polyline></svg>
+              <span data-i18n="config.drive.guardar">Guardar credenciales</span>
+            </button>
+            <button class="btn btn-primary btn-sm" id="btn-drive-conectar" style="display:none; flex:0 0 auto;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"></path><polyline points="15 3 21 3 21 9"></polyline><line x1="10" y1="14" x2="21" y2="3"></line></svg>
+              <span data-i18n="config.drive.conectar">Conectar Google Drive</span>
+            </button>
+            <button class="btn btn-ghost btn-sm" id="btn-drive-desconectar" style="display:none; flex:0 0 auto;">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+              <span data-i18n="config.drive.desconectar">Desconectar</span>
+            </button>
+            <span id="txt-drive-estado" class="config-status" style="flex:1;"></span>
+          </div>
+        </div>
+        <div class="config-row">
+          <div class="config-row-label" data-i18n="config.drive.auto">Subir automáticamente cada descarga terminada a Drive</div>
+          <div class="config-row-control" style="flex:0 0 auto;">
+            <label class="switch">
+              <input type="checkbox" id="drive-subir-auto" />
+              <span class="slider"></span>
+            </label>
+          </div>
+        </div>
+        <div class="config-row">
+          <div class="config-row-label" data-i18n="config.drive.modo">Después de subir a Drive:</div>
+          <div class="config-row-control" style="max-width:280px;">
+            <div class="custom-select-container">
+              <select id="drive-modo" class="custom-select">
+                <option value="borrar_local" data-i18n="config.drive.modo.borrar">Borrar el archivo local</option>
+                <option value="conservar_local" data-i18n="config.drive.modo.conservar">Conservar el archivo local</option>
+                <option value="solo_subir" data-i18n="config.drive.modo.solo">Solo subir (no guardar en disco)</option>
+              </select>
+              <span class="custom-select-icon">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="6 9 12 15 18 9"></polyline>
+                </svg>
+              </span>
+            </div>
+          </div>
+        </div>
       </div>
+
+      <div class="config-card">
+        <div class="config-head">
+          <div class="config-head-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M15 9l6 6-6 6"></path>
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
+              <polyline points="16 17 21 12 16 7"></polyline>
+              <line x1="21" y1="12" x2="9" y2="12"></line>
+            </svg>
+          </div>
+          <div class="config-head-text">
+            <div class="config-head-title" id="config-seccion-sesiones" data-i18n="config.sesiones">Sesiones de descarga</div>
+            <div class="config-head-sub" data-i18n="config.sesiones.nota">Iniciar sesión permite descargar videos que exigen cuenta (anti-bot de YouTube, mayor calidad y menos bloqueos en TikTok). Al pulsar «Iniciar sesión» se abre Chrome: completa el login en la ventana y la sesión se guarda automáticamente (las cookies no salen de tu equipo). Requiere Chrome cerrado.</div>
+          </div>
+        </div>
 
       <div class="session-card">
         <div class="session-card-left">
@@ -2737,8 +2946,8 @@
           </div>
         </div>
         <div class="session-card-actions">
-          <button class="btn btn-secondary btn-sm" id="sesion-login-youtube"><span data-i18n="sesion.iniciar">Iniciar sesión</span></button>
-          <button class="btn btn-ghost btn-sm" id="sesion-borrar-youtube" style="display:none;"><span data-i18n="sesion.cerrar">Cerrar sesión</span></button>
+          <button class="btn btn-secondary btn-sm" id="sesion-login-youtube" style="flex:0 0 auto;"><span data-i18n="sesion.iniciar">Iniciar sesión</span></button>
+          <button class="btn btn-ghost btn-sm" id="sesion-borrar-youtube" style="display:none; flex:0 0 auto;"><span data-i18n="sesion.cerrar">Cerrar sesión</span></button>
         </div>
       </div>
 
@@ -2759,9 +2968,10 @@
           </div>
         </div>
         <div class="session-card-actions">
-          <button class="btn btn-secondary btn-sm" id="sesion-login-tiktok"><span data-i18n="sesion.iniciar">Iniciar sesión</span></button>
-          <button class="btn btn-ghost btn-sm" id="sesion-borrar-tiktok" style="display:none;"><span data-i18n="sesion.cerrar">Cerrar sesión</span></button>
+          <button class="btn btn-secondary btn-sm" id="sesion-login-tiktok" style="flex:0 0 auto;"><span data-i18n="sesion.iniciar">Iniciar sesión</span></button>
+          <button class="btn btn-ghost btn-sm" id="sesion-borrar-tiktok" style="display:none; flex:0 0 auto;"><span data-i18n="sesion.cerrar">Cerrar sesión</span></button>
         </div>
+      </div>
       </div>
     </div>
   </div>
@@ -2789,14 +2999,31 @@
       </button>
     </div>
     <div class="modal-body">
-      <div class="config-section-title" data-i18n="info.quees.titulo">¿Qué es MiDescargador?</div>
+      <div class="config-card">
+        <div class="config-head">
+          <div class="config-head-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+          </div>
+          <div class="config-head-text">
+            <div class="config-head-title" data-i18n="info.quees.titulo">¿Qué es MiDescargador?</div>
+          </div>
+        </div>
       <div class="config-nota" data-i18n-html="info.quees.nota">
         Es un programa para <strong>bajar archivos más rápido y sin complicaciones</strong>: gratis, sin
         anuncios, sin límites y sin registrarse. Todo pasa en tu propia computadora: nadie ve
         tus enlaces, no se envían datos a ningún sitio y no se espía nada de lo que haces.
       </div>
+      </div>
 
-      <div class="config-section-title" data-i18n="info.quepuedo.titulo">¿Qué puedo descargar?</div>
+      <div class="config-card">
+        <div class="config-head">
+          <div class="config-head-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+          </div>
+          <div class="config-head-text">
+            <div class="config-head-title" data-i18n="info.quepuedo.titulo">¿Qué puedo descargar?</div>
+          </div>
+        </div>
       <div class="config-nota" data-i18n-html="info.quepuedo.nota">
         <strong>Prácticamente cualquier cosa:</strong> archivos y programas, <strong>videos</strong> (YouTube,
         TikTok, Instagram, Facebook, Twitter/X, Twitch…), <strong>música</strong>, archivos de sitios
@@ -2804,8 +3031,17 @@
         y también los <strong>juegos y películas de ZonaLeros y PiviGames</strong> (más abajo te
         explicamos esos dos).
       </div>
+      </div>
 
-      <div class="config-section-title" data-i18n="info.como.titulo">¿Cómo lo uso?</div>
+      <div class="config-card">
+        <div class="config-head">
+          <div class="config-head-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+          </div>
+          <div class="config-head-text">
+            <div class="config-head-title" data-i18n="info.como.titulo">¿Cómo lo uso?</div>
+          </div>
+        </div>
       <div class="config-nota" data-i18n-html="info.como.nota">
         1. <strong>Copia el enlace</strong> del archivo, video o página que quieras bajar.<br>
         2. <strong>Pégalo</strong> en el cuadro de arriba (puedes pegar varios a la vez, uno por
@@ -2813,23 +3049,50 @@
         3. Pulsa <strong>Descargar</strong> y listo: el archivo aparece en la lista con su progreso.
         Cuando termine, lo encontrarás en tu carpeta <code>Descargas\MiDescargador</code>.
       </div>
+      </div>
 
-      <div class="config-section-title" data-i18n="info.rapido.titulo">¿Por qué es más rápido?</div>
+      <div class="config-card">
+        <div class="config-head">
+          <div class="config-head-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"></path></svg>
+          </div>
+          <div class="config-head-text">
+            <div class="config-head-title" data-i18n="info.rapido.titulo">¿Por qué es más rápido?</div>
+          </div>
+        </div>
       <div class="config-nota" data-i18n-html="info.rapido.nota">
         En lugar de bajar el archivo de una sola vez, lo <strong>parte en pedazos y baja varios al
         mismo tiempo</strong> (el número de «Conexiones» del panel). Si se corta la red o apagas
         la computadora, la próxima vez <strong>continúa donde iba</strong>, sin empezar de cero.
       </div>
+      </div>
 
-      <div class="config-section-title" data-i18n="info.videos.titulo">Videos (YouTube, TikTok, etc.)</div>
+      <div class="config-card">
+        <div class="config-head">
+          <div class="config-head-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect><polygon points="23 7 16 12 23 17 23 7"></polygon></svg>
+          </div>
+          <div class="config-head-text">
+            <div class="config-head-title" data-i18n="info.videos.titulo">Videos (YouTube, TikTok, etc.)</div>
+          </div>
+        </div>
       <div class="config-nota" data-i18n-html="info.videos.nota">
         Solo pega el enlace del video y pulsa Descargar: el programa baja la <strong>mejor
         calidad disponible</strong> y te lo deja listo como un solo archivo, con audio y todo.
         Si un sitio te pide iniciar sesión para ver el video, ve a <strong>Configuración →
         Sesiones</strong> y entra con tu cuenta (tus datos quedan solo en tu equipo).
       </div>
+      </div>
 
-      <div class="config-section-title" data-i18n="info.zona.titulo">Juegos, películas y programas compatibles</div>
+      <div class="config-card">
+        <div class="config-head">
+          <div class="config-head-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="11" x2="10" y2="11"></line><line x1="8" y1="9" x2="8" y2="13"></line><line x1="15" y1="12" x2="15.01" y2="12"></line><line x1="18" y1="10" x2="18.01" y2="10"></line><path d="M17.32 5H6.68a4 4 0 0 0-3.98 3.6L2 18a2 2 0 0 0 3.5 1.4L6.5 18h11l1 1.4A2 2 0 0 0 22 18l-.7-9.4A4 4 0 0 0 17.32 5z"></path></svg>
+          </div>
+          <div class="config-head-text">
+            <div class="config-head-title" data-i18n="info.zona.titulo">Juegos, películas y programas compatibles</div>
+          </div>
+        </div>
       <div class="config-nota" data-i18n-html="info.zona.nota">
         <strong><a href="https://zona-leros.com" target="_blank" class="info-link">zona-leros.com</a></strong> es un sitio de juegos y películas. En vez de estar copiando
         enlace por enlace, haz esto:<br>
@@ -2844,8 +3107,17 @@
         cerrado; ella lo abre sola un momento para pasar los controles del sitio y lo vuelve
         a cerrar.
       </div>
+      </div>
 
-      <div class="config-section-title" data-i18n="info.pivi.titulo">Juegos de PiviGames</div>
+      <div class="config-card">
+        <div class="config-head">
+          <div class="config-head-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" y1="11" x2="10" y2="11"></line><line x1="8" y1="9" x2="8" y2="13"></line><line x1="15" y1="12" x2="15.01" y2="12"></line><line x1="18" y1="10" x2="18.01" y2="10"></line><path d="M17.32 5H6.68a4 4 0 0 0-3.98 3.6L2 18a2 2 0 0 0 3.5 1.4L6.5 18h11l1 1.4A2 2 0 0 0 22 18l-.7-9.4A4 4 0 0 0 17.32 5z"></path></svg>
+          </div>
+          <div class="config-head-text">
+            <div class="config-head-title" data-i18n="info.pivi.titulo">Juegos de PiviGames</div>
+          </div>
+        </div>
       <div class="config-nota" data-i18n-html="info.pivi.nota">
         <strong><a href="https://pivigames.blog" target="_blank" class="info-link">pivigames.blog</a></strong> es un sitio de juegos de PC. Funciona igual que
         ZonaLeros:<br>
@@ -2858,22 +3130,49 @@
         ponerla en Configuración). Igual que con ZonaLeros: <strong>ten Chrome cerrado</strong>
         mientras extrae los enlaces.
       </div>
+      </div>
 
-      <div class="config-section-title" data-i18n="info.torrent.titulo">Torrents</div>
+      <div class="config-card">
+        <div class="config-head">
+          <div class="config-head-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+          </div>
+          <div class="config-head-text">
+            <div class="config-head-title" data-i18n="info.torrent.titulo">Torrents</div>
+          </div>
+        </div>
       <div class="config-nota" data-i18n-html="info.torrent.nota">
         Funciona con cualquier enlace que empiece por <code>magnet:</code> o con archivos
         <code>.torrent</code> (también con los enlaces TORRENT que traen las páginas de ZonaLeros):
         péguelo y pulse Descargar, como cualquier otra cosa.
       </div>
+      </div>
 
-      <div class="config-section-title" data-i18n="info.descomp.titulo">Descompresión automática</div>
+      <div class="config-card">
+        <div class="config-head">
+          <div class="config-head-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path></svg>
+          </div>
+          <div class="config-head-text">
+            <div class="config-head-title" data-i18n="info.descomp.titulo">Descompresión automática</div>
+          </div>
+        </div>
       <div class="config-nota" data-i18n-html="info.descomp.nota">
         Si el archivo baja comprimido (.rar, .zip, .7z), el programa <strong>lo descomprime solo</strong>
         al terminar y te deja la carpeta lista. Puedes apagar esto y poner tu propia
         contraseña en Configuración.
       </div>
+      </div>
 
-      <div class="config-section-title" data-i18n="info.consejos.titulo">Consejos rápidos</div>
+      <div class="config-card">
+        <div class="config-head">
+          <div class="config-head-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18h6"></path><path d="M10 22h4"></path><path d="M12 2a7 7 0 0 0-4 12.7c.6.5 1 1.3 1 2.3h6c0-1 .4-1.8 1-2.3A7 7 0 0 0 12 2z"></path></svg>
+          </div>
+          <div class="config-head-text">
+            <div class="config-head-title" data-i18n="info.consejos.titulo">Consejos rápidos</div>
+          </div>
+        </div>
       <div class="config-nota" data-i18n-html="info.consejos.nota">
         • Puedes pegar <strong>varias direcciones a la vez</strong> (una por línea) y se bajarán
         una tras otra.<br>
@@ -2886,8 +3185,17 @@
         • Si algo se ve lento, revisa que el archivo no esté en pausa y que la carpeta de
         destino tenga espacio.
       </div>
+      </div>
 
-      <div class="config-section-title" data-i18n="info.ext.titulo">Extensión de Chrome (para descargar videos desde la página)</div>
+      <div class="config-card">
+        <div class="config-head">
+          <div class="config-head-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="9" y1="21" x2="9" y2="9"></line></svg>
+          </div>
+          <div class="config-head-text">
+            <div class="config-head-title" data-i18n="info.ext.titulo">Extensión de Chrome (para descargar videos desde la página)</div>
+          </div>
+        </div>
       <div class="config-nota" data-i18n-html="info.ext.nota">
         Con la extensión instalada, al pasar el mouse por un <strong>video de YouTube</strong> (u
         otros sitios) aparece un <strong>botón de descarga</strong> sobre el video y, al hacer clic,
@@ -2907,8 +3215,17 @@
           <span data-i18n="info.ext.boton">Abrir carpeta de la extensión</span>
         </button>
       </div>
+      </div>
 
-      <div class="config-section-title" data-i18n="info.dona.titulo">Apoyar el proyecto</div>
+      <div class="config-card">
+        <div class="config-head">
+          <div class="config-head-icon">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path></svg>
+          </div>
+          <div class="config-head-text">
+            <div class="config-head-title" data-i18n="info.dona.titulo">Apoyar el proyecto</div>
+          </div>
+        </div>
       <div class="config-nota" data-i18n-html="info.dona.nota">
         MiDescargador es <strong>gratis, sin anuncios y sin telemetría</strong>. Si te es útil y
         querés que siga mejorando, podés invitarme un café con una donación voluntaria
@@ -2973,6 +3290,7 @@
             };
           })();
         </script>
+      </div>
       </div>
     </div>
   </div>
