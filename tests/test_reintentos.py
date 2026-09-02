@@ -59,6 +59,47 @@ class EsReintentableTests(unittest.TestCase):
             self.assertTrue(servidor._es_reintentable(err), err)
 
 
+class CableadoCallbacksTests(unittest.TestCase):
+    """Los errores de TODOS los motores (segmentado, mega, torrents, yt-dlp)
+    deben pasar por _al_error: si alguno solo loguea, su hueco de la cola no
+    se libera y los "en cola" quedan trabados hasta otro evento."""
+
+    def test_todos_los_motores_avisan_al_gestor(self):
+        self.assertIs(servidor.motor.on_error, servidor._al_error)
+        self.assertIs(servidor.mega.on_error, servidor._al_error)
+        self.assertIs(servidor.torrents.on_error, servidor._al_error)
+        self.assertIs(servidor.motor.on_completada, servidor._al_completar)
+        self.assertIs(servidor.mega.on_completada, servidor._al_completar)
+        self.assertIs(servidor.torrents.on_completada, servidor._al_completar)
+
+    def test_al_error_libera_hueco_y_arranca_siguiente(self):
+        class _T:
+            def __init__(self, tid, estado, error=None):
+                self.id = tid
+                self.url = "https://ejemplo/archivo.zip"
+                self.estado = estado
+                self.error = error
+
+            def iniciar(self):
+                self.estado = "descargando"
+
+        caida = _T("err", "error", error="yt-dlp falló")
+        en_cola = _T("c1", "en cola")
+        self._cola_original = servidor._RUTA_COLA
+        self.tmp = tempfile.mkdtemp()
+        servidor._RUTA_COLA = os.path.join(self.tmp, "cola.json")
+        with servidor.GESTOR._lock:
+            servidor.GESTOR.trabajos = {"err": caida, "c1": en_cola}
+        try:
+            servidor._al_error(caida)
+            # el error liberó el hueco y la "en cola" arrancó sola
+            self.assertEqual(en_cola.estado, "descargando")
+        finally:
+            with servidor.GESTOR._lock:
+                servidor.GESTOR.trabajos = {}
+            servidor._RUTA_COLA = self._cola_original
+
+
 class TickReintentosTests(unittest.TestCase):
     def setUp(self):
         self._cola_original = servidor._RUTA_COLA

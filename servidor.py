@@ -1911,7 +1911,10 @@ class _TrabajoYtdlp:
             self.estado = "error"
             self._aviso = None   # el banner de error explica el fallo final
             self.error = "yt-dlp falló: " + " // ".join(errores_resume[-3:])
-            _registrar_error(self)
+            # _al_error (no solo el log): libera el hueco de la cola y
+            # arranca la siguiente "en cola"; sin esto un fallo de yt-dlp
+            # con error permanente dejaba la cola trabada indefinidamente
+            _al_error(self)
             return
         # título real para mostrarlo en el panel en lugar de "watch"
         titulo = self._obtener_titulo()
@@ -2008,7 +2011,8 @@ class _TrabajoYtdlp:
                 f"Detalle: {resumen}")
         else:
             self.error = "yt-dlp falló en todos los intentos: " + resumen
-        _registrar_error(self)
+        # igual que arriba: liberar el hueco de la cola, no solo loguear
+        _al_error(self)
 
     def _altura_pedida(self):
         """La altura exacta que pidió el usuario (de un selector bv[height=N]),
@@ -3330,6 +3334,8 @@ motor.on_completada = _al_completar
 mega.on_completada = _al_completar
 torrents.on_completada = _al_completar
 motor.on_error = _al_error
+# mega también: con solo _registrar_error un fallo de Mega no liberaba el
+# hueco de la cola (los "en cola" quedaban esperando otro evento)
 mega.on_error = _al_error
 torrents.on_error = _al_error
 

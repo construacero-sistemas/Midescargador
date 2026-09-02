@@ -692,6 +692,9 @@ function crearVentana() {
     },
   });
   win.loadURL(URL_PANEL);
+  // usar toda la pantalla disponible: arranca maximizada (1280x840 queda
+  // como tamaño de respaldo si algo impide maximizar)
+  win.maximize();
   if (arranqueOculto) win.hide();   // autostart: arranca sin ventana (tray)
   // que la ventana no navegue fuera del panel local
   win.webContents.on("will-navigate", (e, url) => {
