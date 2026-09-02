@@ -4095,6 +4095,30 @@
     }[c]));
   }
 
+  // Peso legible de un archivo (bytes -> "1.2 GB"). "###" si no hay dato.
+  function formatearPeso(bytes) {
+    if (bytes == null) return null;
+    const b = Number(bytes);
+    if (!isFinite(b) || b < 0) return null;
+    const unidades = ["B", "KB", "MB", "GB", "TB"];
+    let i = 0, v = b;
+    while (v >= 1024 && i < unidades.length - 1) { v /= 1024; i++; }
+    const num = (v >= 100 ? Math.round(v) : v >= 10 ? v.toFixed(1) : v.toFixed(1));
+    return num + " " + unidades[i];
+  }
+
+  // Texto de la sub-línea de una tarjeta de enlace: el peso del archivo si se
+  // conoce, si no el nombre del archivo (más útil que la URL larga).
+  function subtituloEnlace(e, url) {
+    if (e && typeof e === "object") {
+      const peso = formatearPeso(e.tamano);
+      if (peso) return peso;
+      const nombre = e.nombre;
+      if (nombre) return nombre;
+    }
+    return url.replace(/^https?:\/\/(www\.)?/, "");
+  }
+
   let fallosServidor = 0;
 
   function mostrarServidorCaido(msg) {
@@ -4822,7 +4846,7 @@
             ? (total ? t("enlaces.parte_de", { n: numParte, total }) : t("enlaces.parte", { n: numParte }))
             : (nombre || t("enlaces.archivo", { n: numParte }));
           const cleanUrl = url.replace(/^https?:\/\/(www\.)?/, '');
-          const shortUrl = cleanUrl;   // URL completa: el CSS parte de línea
+          const shortUrl = subtituloEnlace((typeof e === 'object') ? e : null, url);
           const marcado = enlaceMarcado(url);
           html += `
             <div class="part-chip">
@@ -4871,7 +4895,7 @@
             <div class="part-row-detail">
               <input type="checkbox" class="sel-enlace" ${marcado ? "checked" : ""} title="${t("enlaces.marcado.title")}" onchange="toggleEnlaceSel('${encodeURIComponent(url)}')" onclick="event.stopPropagation()">
               <span style="font-weight:700; font-size:12px; color:var(--text-secondary); min-width:110px; max-width:280px; word-break:break-all;">${escapeHtml(etiqueta)}:</span>
-              <span class="part-row-url">${escapeHtml(url)}</span>
+              <span class="part-row-url" title="${escapeHtml(url)}">${escapeHtml(subtituloEnlace((typeof e === 'object') ? e : null, url))}</span>
               ${badgeEstado(url)}
               <div style="display:flex; gap:6px; flex-shrink:0;">
                 <button class="btn btn-ghost btn-sm" onclick="copiarAlPortapapeles('${encodeURIComponent(url)}', this)">

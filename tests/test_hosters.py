@@ -87,5 +87,38 @@ class NombreDeUrlTests(unittest.TestCase):
         self.assertEqual(zonaleros_copia._nombre_de_url("https://x.com/"), "")
 
 
+class AnadirPesosTests(unittest.TestCase):
+    def test_rellena_el_peso_de_cada_enlace(self):
+        servidores = [{
+            "servidor": "MEGA",
+            "enlaces": [
+                {"url": "https://www.mediafire.com/file/1/a.zip/file",
+                 "nombre": "a.zip", "parte": 1, "total": 2},
+                {"url": "https://www.mediafire.com/file/2/b.zip/file",
+                 "nombre": "b.zip", "parte": 2, "total": 2},
+            ]}]
+        with mock.patch.object(
+                hosters, "resolver",
+                side_effect=[{"url": "d", "nombre": "a", "tamano": 500},
+                             {"url": "d", "nombre": "b", "tamano": 3000}]) as m:
+            salida = zonaleros_copia._anadir_pesos(servidores)
+        self.assertIs(salida, servidores)
+        self.assertEqual(servidores[0]["enlaces"][0]["tamano"], 500)
+        self.assertEqual(servidores[0]["enlaces"][1]["tamano"], 3000)
+        self.assertEqual(m.call_count, 2)
+
+    def test_ignora_sin_tamano_y_sin_resolver(self):
+        servidores = [{"servidor": "X",
+                        "enlaces": [{"url": "https://x.com/f", "nombre": "f"}]}]
+        with mock.patch.object(hosters, "resolver",
+                               side_effect=Exception("boom")):
+            zonaleros_copia._anadir_pesos(servidores)
+        # no lanza y deja el enlace sin tamano
+        self.assertNotIn("tamano", servidores[0]["enlaces"][0])
+
+    def test_sin_servidores_no_hace_nada(self):
+        self.assertEqual(zonaleros_copia._anadir_pesos([]), [])
+
+
 if __name__ == "__main__":
     unittest.main()

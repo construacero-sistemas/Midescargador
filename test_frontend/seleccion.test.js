@@ -18,8 +18,30 @@
 
 "use strict";
 const assert = require("assert");
+const fs = require("fs");
+const path = require("path");
+const vm = require("vm");
 const { JSDOM } = require("jsdom");
 const { crearSeleccion } = require("../static/seleccion.js");
+
+// ---------------------------------------------------------------------------
+// Util: extrae una función pura del <script> inline de index.html y la ejecuta
+// en un VM aislado. Se usa para probar formatearPeso / subtituloEnlace, que
+// viven en el inline y no son exportables desde seleccion.js.
+// ---------------------------------------------------------------------------
+const _HTML = fs.readFileSync(path.join(__dirname, "..", "static", "index.html"), "utf8");
+function _funDelInline(nombreFn, siguiente) {
+  const a = _HTML.indexOf("function " + nombreFn);
+  const b = siguiente ? _HTML.indexOf("function " + siguiente) : _HTML.indexOf("  let fallosServidor = 0;");
+  if (a < 0 || b < 0 || b <= a) throw new Error("no se halló " + nombreFn + " en index.html");
+  return _HTML.slice(a, b);
+}
+function _cargarInline(bloque) {
+  const s = { console };
+  vm.createContext(s);
+  vm.runInContext(bloque, s);
+  return s;
+}
 
 // ---------------------------------------------------------------------------
 // Ambiente jsdom con stubs, alimentando crearSeleccion (como hace index.html)
@@ -283,6 +305,30 @@ async function probarPaginaDePeliculaNoSeQuedaEnFlujoNormal() {
   console.log("ok  una página de película dispara verEnlaces() en vez de quedarse en 'flujo normal'");
 }
 
+function probarFormatearPesoYSubtitulo() {
+  const sandbox = _cargarInline(
+    _funDelInline("formatearPeso", "subtituloEnlace")
+    + _funDelInline("subtituloEnlace", null)
+  );
+  const peso = sandbox.formatearPeso;
+  const sub = sandbox.subtituloEnlace;
+
+  // formatearPeso
+  assert.strictEqual(peso(734003200), "700 MB", "734MB -> 700 MB");
+  assert.strictEqual(peso(5242880), "5.0 MB", "5MB exacto");
+  assert.strictEqual(peso(null), null, "sin peso -> null");
+  assert.strictEqual(peso(0), "0.0 B", "0 -> 0.0 B");
+
+  // subtituloEnlace: con peso muestra peso, sin peso el nombre, string -> URL
+  assert.strictEqual(sub({ nombre: "a.part1.rar", tamano: 734003200 }, "https://x/f"), "700 MB");
+  assert.strictEqual(sub({ nombre: "a.part1.rar", tamano: null }, "https://x/f"), "a.part1.rar");
+  assert.strictEqual(
+    sub(null, "https://www.mediafire.com/file/1/nombre.rar/file"),
+    "mediafire.com/file/1/nombre.rar/file");
+
+  console.log("ok  la tarjeta muestra el peso (o el nombre) en vez de la URL");
+}
+
 let fallos = 0;
 const pruebas = [
   probarSoloServidoresDetectados,
@@ -292,6 +338,7 @@ const pruebas = [
   probarResolverSinServidorEnviaListaVacia,
   probarPaginaDeJuegoNoSeQuedaEnFlujoNormal,
   probarPaginaDePeliculaNoSeQuedaEnFlujoNormal,
+  probarFormatearPesoYSubtitulo,
 ];
 (async () => {
   for (const fn of pruebas) {

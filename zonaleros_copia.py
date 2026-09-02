@@ -24,6 +24,7 @@ import shutil
 import subprocess
 import tempfile
 import urllib.request
+import concurrent.futures
 
 try:
     import websocket as _ws
@@ -1369,6 +1370,45 @@ def _titulo_valido(titulo, fallback="ZonaLeros"):
     return t[:150]
 
 
+def _anadir_pesos(servidores, tope_seg=20):
+    """Rellena el campo 'tamano' (bytes) de cada enlace consultando el peso
+    real del archivo en el hoster (MediaFire, Rootz…). Es NO bloqueante para la
+    extracción: corre en paralelo y se abandona si tarda de más, dejando el
+    peso como None (el frontend entonces muestra el nombre del archivo).
+
+    hosters.resolver ya cachea resultados (antes se usó al verificar/descargar),
+    así que re-consultar aquí sale barato para enlaces ya resueltos."""
+    if not servidores:
+        return servidores
+    try:
+        import hosters
+    except Exception:
+        return servidores
+    enlaces = [e for s in servidores for e in (s.get("enlaces") or [])]
+    if not enlaces:
+        return servidores
+    fin = time.time() + tope_seg
+
+    def _peso(e):
+        if time.time() >= fin:
+            return e
+        url = e.get("url") or ""
+        # ya se resolvió antes (verificar/descargar/catálogo): reutilizar
+        if e.get("tamano"):
+            return e
+        try:
+            r = hosters.resolver(url)
+            if r and isinstance(r, dict) and r.get("tamano"):
+                e["tamano"] = r["tamano"]
+        except Exception:
+            pass
+        return e
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        list(ex.map(_peso, enlaces))
+    return servidores
+
+
 def extraer(url, on_progreso=None, hosters_permitidos=None, episodios_permitidos=None):
     """Flujo completo: abre la página (juego, episodio o serie) con el perfil
     de Chrome, resuelve el reto y saca los enlaces de cada servidor / episodio.
@@ -1445,6 +1485,7 @@ def extraer(url, on_progreso=None, hosters_permitidos=None, episodios_permitidos
             # Cloudflare, o traer un título de error genérico; nunca presentar
             # eso como "Página no encontrada" en la UI.
             titulo = _titulo_valido(titulo, "Serie ZonaLeros")
+            _anadir_pesos(servidores)
             resultado = {"servidores": servidores, "titulo": titulo[:150]}
             if incompleto or episodios_fallidos:
                 resultado["incompleto"] = True
@@ -1456,6 +1497,7 @@ def extraer(url, on_progreso=None, hosters_permitidos=None, episodios_permitidos
         if _es_pagina_episodio(url):
             servidores, incompleto, _motivo = _extraer_un_episodio(
                 cdp, url, None, fin_global)
+            _anadir_pesos(servidores)
             titulo = cdp.eval("document.title") or ""
             resultado = {"servidores": servidores,
                          "titulo": _titulo_valido(titulo, "Episodio ZonaLeros")[:150]}
@@ -1487,6 +1529,7 @@ def extraer(url, on_progreso=None, hosters_permitidos=None, episodios_permitidos
                 break   # se acabó el presupuesto: entregamos lo extraído
             clasificado["servidor"] = servidor
             servidores.append(clasificado)
+        _anadir_pesos(servidores)
         return {"servidores": servidores,
                 "titulo": _titulo_valido(titulo, "Juego ZonaLeros")[:150]}
     except Exception as e:
